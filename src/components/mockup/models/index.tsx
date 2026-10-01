@@ -1,7 +1,7 @@
 "use client";
 
-import { CardModel, StickerModel, BookModel, TentModel, SheetModel } from "./paper";
-import { PanelModel, AcrylicModel, KeychainModel, CanvasModel, MatModel, BoxModel } from "./rigid";
+import { CardModel, StickerModel, BookModel, TentModel, SheetModel, FoldedModel } from "./paper";
+import { PanelModel, AcrylicModel, KeychainModel, CanvasModel, MatModel, CoasterModel, BoxModel } from "./rigid";
 import { NeonModel, BannerModel, LightboxModel, RollupModel, FlagModel } from "./signage";
 import { ApronModel, BagModel, BandanaModel, CapModel, ClothModel, CushionModel, PetBedModel, TshirtModel } from "./textile";
 import { MugModel, TumblerModel, BottleModel } from "./drinkware";
@@ -13,6 +13,8 @@ export function MockupModel(props: ModelProps) {
   switch (props.spec.kind) {
     case "card":
       return <CardModel {...props} />;
+    case "folded":
+      return <FoldedModel {...props} />;
     case "sticker":
       return <StickerModel {...props} />;
     case "panel":
@@ -27,9 +29,10 @@ export function MockupModel(props: ModelProps) {
       return <CanvasModel {...props} />;
     case "mat":
     case "rug":
-    case "coaster":
     case "board":
       return <MatModel {...props} />;
+    case "coaster":
+      return <CoasterModel {...props} />;
     case "banner":
       return <BannerModel {...props} />;
     case "lightbox":

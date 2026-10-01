@@ -45,6 +45,8 @@ export type MockupSpec = {
   binding: "spiral" | "spine";
   /** Bolsa pequena com zíper (estojo, necessaire) em vez de sacola com alças. */
   pouch: boolean;
+  /** Verniz localizado: brilho só onde a arte é clara. */
+  spotVarnish: boolean;
   label: string;
 };
 
@@ -381,6 +383,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
     pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b|\bporta passaporte\b|\blancheira\b/.test(name),
+    spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),
     label: formatSize(widthCm, heightCm),
   };
 }

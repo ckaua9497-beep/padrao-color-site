@@ -153,6 +153,31 @@ export function MatModel({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
+/** Porta-copos: os pequenos vêm em jogo (pilha de 4); porta-jarra e sousplat aparecem sozinhos. */
+export function CoasterModel({ spec, art, label, showDims }: ModelProps) {
+  const set = Math.max(spec.widthCm, spec.heightCm) <= 12;
+  const { w, h } = fitFlat(spec, set ? 1.7 : 2.4);
+  const look = flatLook(spec);
+  const mask = spec.shape === "round" ? roundPath : undefined;
+  const front = useArtTexture(artAspect(spec), "front", art, label, mask);
+  const [lw, lh] = sizeLabels(spec);
+  const slab = (
+    <Slab w={w} h={h} d={look.thickness} spec={{ ...spec, finish: look.finish }} front={front} radius={look.radius} edgeColor={look.edge} backColor={look.back} />
+  );
+  return (
+    <group rotation={[look.tilt, 0, 0.35]}>
+      {set &&
+        [3, 2, 1].map((i) => (
+          <group key={i} position={[w * 0.55, h * 0.1, -look.thickness * 1.15 * i]} rotation-z={i * 0.18}>
+            {slab}
+          </group>
+        ))}
+      {slab}
+      {showDims && <Dimensions w={w} h={h} z={look.thickness / 2 + 0.01} labelW={lw} labelH={lh} />}
+    </group>
+  );
+}
+
 export function BoxModel({ spec, art, label }: ModelProps) {
   const { w, h } = fitFlat(spec, 2);
   const depth = Math.min(w, h) * 0.8;

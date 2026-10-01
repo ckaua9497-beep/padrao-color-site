@@ -4,7 +4,7 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { artAspect } from "@/lib/mockup-kinds";
-import { featherPath } from "../art";
+import { dropPath, featherPath, knifePath, sailPath } from "../art";
 import { useAnimate } from "../viewer-hooks";
 import {
   AcrylicMaterials,
@@ -22,6 +22,9 @@ import {
   useGeometryCleanup,
   type ModelProps,
 } from "./shared";
+
+/** Contorno do tecido de cada modelo de wind banner. */
+const FLAG_SHAPES = { pena: featherPath, faca: knifePath, gota: dropPath, vela: sailPath };
 
 export function NeonModel({ spec, art, label, showDims }: ModelProps) {
   const { w, h } = fitFlat(spec);
@@ -155,7 +158,8 @@ export function FlagModel({ spec, art, label }: ModelProps) {
   const scale = target / Math.max(spec.widthCm, spec.heightCm);
   const w = spec.widthCm * scale;
   const h = spec.heightCm * scale;
-  const texture = useArtTexture(spec.widthCm / spec.heightCm, "front", art, label, rect ? undefined : featherPath);
+  const mask = spec.flagStyle === "rect" ? undefined : FLAG_SHAPES[spec.flagStyle];
+  const texture = useArtTexture(spec.widthCm / spec.heightCm, "front", art, label, mask);
   const poleH = rect ? h * 2.2 : h + 0.15;
   return (
     <group rotation-y={0.4}>

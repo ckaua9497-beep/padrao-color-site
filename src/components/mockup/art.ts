@@ -414,6 +414,36 @@ export function featherPath(ctx: CanvasRenderingContext2D, w: number, h: number)
   ctx.closePath();
 }
 
+/** Wind banner modelo faca: topo inclinado e borda de fuga reta. */
+export function knifePath(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(0, h * 0.14);
+  ctx.lineTo(w * 0.72, 0);
+  ctx.quadraticCurveTo(w, 0, w, h * 0.1);
+  ctx.lineTo(w * 0.86, h);
+  ctx.closePath();
+}
+
+/** Wind banner modelo gota: bulbo arredondado em cima, afinando para baixo. */
+export function dropPath(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(0, h * 0.3);
+  ctx.bezierCurveTo(0, -h * 0.05, w * 1.05, -h * 0.02, w * 0.92, h * 0.36);
+  ctx.quadraticCurveTo(w * 0.8, h * 0.75, w * 0.32, h);
+  ctx.closePath();
+}
+
+/** Wind banner modelo vela: borda de ataque curva, base reta. */
+export function sailPath(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(0, 0);
+  ctx.quadraticCurveTo(w * 0.95, h * 0.12, w, h);
+  ctx.closePath();
+}
+
 export function roundPath(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.beginPath();
   ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);

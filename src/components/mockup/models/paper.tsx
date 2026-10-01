@@ -1,9 +1,76 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
+import * as THREE from "three";
 import { artAspect } from "@/lib/mockup-kinds";
 import { heartPath, roundPath } from "../art";
-import { useArtTexture, Slab, Dimensions, sizeLabels, type ModelProps, fitFlat, backVariant, Spiral } from "./shared";
+import { useArtTexture, Slab, Dimensions, sizeLabels, type ModelProps, fitFlat, backVariant, Spiral, PrintMaterial } from "./shared";
+
+/** Painel de uma folha dobrada: um plano que mostra só a faixa [u0, u1] da arte. */
+function panelGeometry(w: number, h: number, u0: number, u1: number) {
+  const g = new THREE.PlaneGeometry(w, h);
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i += 1) uv.setX(i, u0 + uv.getX(i) * (u1 - u0));
+  uv.needsUpdate = true;
+  return g;
+}
+
+/**
+ * Folder e cardápio: a arte é a folha aberta, dividida entre os painéis. Uma dobra fica em pé
+ * como um livro entreaberto; duas dobras viram o tríptico em U, abrindo para a câmera.
+ */
+export function FoldedModel({ spec, art, label }: ModelProps) {
+  const panels = Math.max(2, spec.folds + 1);
+  const { w, h } = fitFlat(spec, 2.8);
+  const panelW = w / panels;
+  const aspect = artAspect(spec);
+  const front = useArtTexture(aspect, "front", art, label);
+  const back = useArtTexture(aspect, backVariant(spec), art, label);
+  const fronts = useMemo(() => Array.from({ length: panels }, (_, i) => panelGeometry(panelW, h, i / panels, (i + 1) / panels)), [panels, panelW, h]);
+  // O verso é visto espelhado: a faixa da arte do verso anda no sentido contrário.
+  const backs = useMemo(() => Array.from({ length: panels }, (_, i) => panelGeometry(panelW, h, 1 - (i + 1) / panels, 1 - i / panels)), [panels, panelW, h]);
+  useEffect(() => () => [...fronts, ...backs].forEach((g) => g.dispose()), [fronts, backs]);
+
+  const angle = panels === 2 ? 0.42 : 0.62;
+  const panel = (i: number) => (
+    <group key={i}>
+      <mesh geometry={fronts[i]} position-z={0.002}>
+        <PrintMaterial map={front} spec={spec} />
+      </mesh>
+      <mesh geometry={backs[i]} rotation-y={Math.PI} position-z={-0.002}>
+        <PrintMaterial map={back} spec={spec} />
+      </mesh>
+    </group>
+  );
+
+  if (panels === 2) {
+    return (
+      <group rotation={[-0.08, 0, 0]}>
+        <group rotation-y={angle}>
+          <group position-x={-panelW / 2}>{panel(0)}</group>
+        </group>
+        <group rotation-y={-angle}>
+          <group position-x={panelW / 2}>{panel(1)}</group>
+        </group>
+      </group>
+    );
+  }
+  return (
+    <group rotation={[-0.08, 0, 0]}>
+      <group position-x={-panelW / 2}>
+        <group rotation-y={angle}>
+          <group position-x={-panelW / 2}>{panel(0)}</group>
+        </group>
+      </group>
+      {panel(1)}
+      <group position-x={panelW / 2}>
+        <group rotation-y={-angle}>
+          <group position-x={panelW / 2}>{panel(2)}</group>
+        </group>
+      </group>
+    </group>
+  );
+}
 
 export function CardModel({ spec, art, label, showDims }: ModelProps) {
   const { w, h } = fitFlat(spec, 2.2);

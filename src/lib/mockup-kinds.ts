@@ -55,7 +55,7 @@ export type KindInfo = {
 export const KIND_INFO: Record<MockupKind, KindInfo> = {
   card: { label: "Cartão", defaultSize: [9, 5, 0.04], sizeIsArtArea: false, dims: true, printable: true, scene: "light" },
   sheet: { label: "Impresso", defaultSize: [15, 21, 0.02], sizeIsArtArea: false, dims: true, printable: true, scene: "light" },
-  folded: { label: "Folder dobrado", defaultSize: [21, 29.7, 0.02], sizeIsArtArea: false, dims: true, printable: true, scene: "light" },
+  folded: { label: "Folder dobrado", defaultSize: [21, 29.7, 0.02], sizeIsArtArea: false, dims: false, printable: true, scene: "light" },
   sticker: { label: "Adesivo", defaultSize: [10, 10, 0.02], sizeIsArtArea: false, dims: true, printable: true, scene: "light" },
   panel: { label: "Placa", defaultSize: [40, 30, 0.5], sizeIsArtArea: false, dims: true, printable: true, scene: "light" },
   acrylic: { label: "Acrílico", defaultSize: [30, 20, 0.3], sizeIsArtArea: false, dims: true, printable: true, scene: "light" },
