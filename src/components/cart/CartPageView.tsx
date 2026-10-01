@@ -4,7 +4,7 @@ import Link from "next/link";
 import { formatBRL, quantityLabel } from "@/lib/format";
 import { CartThumb } from "./CartDrawer";
 import { useCart } from "./CartProvider";
-import QtyStepper from "./QtyStepper";
+import QtyStepper from "@/components/ui/QtyStepper";
 
 export default function CartPageView() {
   const { items, subtotal, remove, setQuantity } = useCart();

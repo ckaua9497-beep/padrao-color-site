@@ -72,3 +72,10 @@ export function availableValues(
   if (seen.size === 0) return new Set(options[key]);
   return seen;
 }
+
+/** Desconto no PIX sobre o preço de tabela (padrao-loja/BRIEFING.md). */
+export const PIX_DISCOUNT = 0.05;
+
+export function pixPrice(value: number): number {
+  return Math.round(value * (1 - PIX_DISCOUNT) * 100) / 100;
+}

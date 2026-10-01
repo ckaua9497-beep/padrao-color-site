@@ -7,7 +7,7 @@ import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
 import { DEFAULT_ART, fileToDataUrl, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { useCart } from "@/components/cart/CartProvider";
-import QtyStepper from "@/components/cart/QtyStepper";
+import QtyStepper from "@/components/ui/QtyStepper";
 import { IconClock, IconCube, IconTruck, IconUpload } from "@/components/icons";
 import type { Variation } from "@/lib/catalog";
 import { formatBRL, imageUrl, leadLabel, quantityLabel } from "@/lib/format";

@@ -24,8 +24,16 @@ export default function LojaLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <>
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-toast focus:rounded-full focus:bg-ink focus:px-5 focus:py-3 focus:font-bold focus:text-white"
+      >
+        Pular para o conteúdo
+      </a>
       <SiteHeader menu={menu} announcements={announcements} />
-      <main className="flex-1">{children}</main>
+      <main id="conteudo" tabIndex={-1} className="flex-1 outline-none">
+        {children}
+      </main>
       <SiteFooter />
       <WhatsAppFloat />
       <CartDrawer />

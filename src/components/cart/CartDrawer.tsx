@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { formatBRL, imageUrl, quantityLabel } from "@/lib/format";
 import { useCart } from "./CartProvider";
-import QtyStepper from "./QtyStepper";
+import QtyStepper from "@/components/ui/QtyStepper";
 
 export function CartThumb({ preview, image, name, className = "size-20" }: { preview: string | null; image: string; name: string; className?: string }) {
   return (

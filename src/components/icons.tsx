@@ -130,3 +130,21 @@ export const IconTiktok = (p: IconProps) => (
     <path d="M16.6 3h-3v12.2a2.7 2.7 0 1 1-2.7-2.7c.27 0 .53.04.78.12V9.5a5.8 5.8 0 1 0 4.9 5.7V9a7.3 7.3 0 0 0 4.4 1.4V7.3a4.4 4.4 0 0 1-4.4-4.3z" />
   </svg>
 );
+
+export const IconMinus = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M5 12h14" />
+  </svg>
+);
+
+export const IconPlus = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+export const IconCheck = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </svg>
+);
