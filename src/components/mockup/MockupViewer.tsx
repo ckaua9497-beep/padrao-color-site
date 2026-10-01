@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Canvas, useFrame, useThree, type RootState } from "@react-three/fiber";
 import { ContactShadows, Environment, Lightformer, OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -153,6 +153,8 @@ type StageProps = {
 
 function Stage({ spec, art, label, showDims, modelKey, resetToken, reducedMotion, ready, onReady }: StageProps) {
   const group = useRef<THREE.Group>(null);
+  // A arte leva o tipo da peça (escolhe o template) e as cores do LED (neon).
+  const renderArt = useMemo(() => ({ ...art, kind: spec.kind, ledColors: spec.ledColors }), [art, spec.kind, spec.ledColors]);
   const get = useThree((state) => state.get);
   const hasControls = useThree((state) => Boolean(state.controls));
   const invalidate = useThree((state) => state.invalidate);
@@ -245,7 +247,7 @@ function Stage({ spec, art, label, showDims, modelKey, resetToken, reducedMotion
 
   return (
     <group ref={group} visible={ready}>
-      <MockupModel key={modelKey} spec={spec} art={art} label={label} showDims={showDims} />
+      <MockupModel key={modelKey} spec={spec} art={renderArt} label={label} showDims={showDims} />
     </group>
   );
 }

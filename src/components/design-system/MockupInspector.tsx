@@ -6,6 +6,7 @@ import { DEFAULT_ART, fileToDataUrl, type ArtSettings } from "@/components/mocku
 import { mockupSpec, type MockupProduct } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
 import { cleanOptionLabel, optionKeys, type Selection } from "@/lib/pricing";
+import { TextField } from "@/components/ui/TextField";
 
 /** Visualizador da galeria de QA: um produto, suas opções e a spec resultante. */
 export default function MockupInspector({ product }: { product: MockupProduct & { slug: string; image?: string } }) {
@@ -19,6 +20,8 @@ export default function MockupInspector({ product }: { product: MockupProduct & 
     <div className="grid gap-5">
       <Mockup3D spec={spec} art={art} label={product.name} fallbackImage={product.image} className="aspect-square w-full" />
 
+      <TextField label="Texto da arte" value={art.text} maxLength={48} onChange={(text) => setArt((a) => ({ ...a, text }))} placeholder="Teste um texto no mockup" />
+
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-ink px-4 py-2 font-semibold text-white">
           Testar com uma imagem
@@ -30,7 +33,8 @@ export default function MockupInspector({ product }: { product: MockupProduct & 
               const file = e.target.files?.[0];
               if (!file) return;
               try {
-                setArt({ ...DEFAULT_ART, src: await fileToDataUrl(file) });
+                const src = await fileToDataUrl(file);
+                setArt((a) => ({ ...a, src }));
                 setArtError(null);
               } catch {
                 setArtError("Não foi possível ler essa imagem.");
@@ -39,7 +43,7 @@ export default function MockupInspector({ product }: { product: MockupProduct & 
           />
         </label>
         {art.src && (
-          <button type="button" onClick={() => setArt(DEFAULT_ART)} className="rounded-full bg-mist px-4 py-2 font-semibold">
+          <button type="button" onClick={() => setArt((a) => ({ ...a, src: null }))} className="rounded-full bg-mist px-4 py-2 font-semibold">
             Voltar à arte de exemplo
           </button>
         )}

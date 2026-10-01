@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Line } from "@react-three/drei";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
-import { type ArtSettings, type ArtVariant, canvasFor, fontFamily, loadImage, paintArt, shapeMask } from "../art";
+import { type ArtRender, type ArtVariant, canvasFor, fontFamily, loadArtFont, loadImage, paintArt, shapeMask } from "../art";
 import { useAnimate } from "../viewer-hooks";
 
 export type MaskPath = (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
@@ -52,7 +52,7 @@ export function createArtTexture(aspect: number) {
 export function repaintArt(
   target: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture },
   variant: ArtVariant,
-  art: ArtSettings,
+  art: ArtRender,
   image: HTMLImageElement | null,
   label: string,
   mask?: MaskPath,
@@ -67,21 +67,27 @@ export function repaintArt(
  * Textura de arte desenhada num canvas 2D. Repinta no máximo uma vez por quadro (o seletor de cor
  * dispara dezenas de eventos) e pede um novo frame, já que o viewer só renderiza sob demanda.
  */
-export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtSettings, label: string, mask?: MaskPath) {
+export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRender, label: string, mask?: MaskPath) {
   const image = useArtImage(art.src);
   const invalidate = useThree((state) => state.invalidate);
   const target = useMemo(() => createArtTexture(aspect), [aspect]);
-  const [fontsReady, setFontsReady] = useState(false);
+  // Repinta quando a fonte escolhida termina de carregar (o canvas não espera por ela sozinho).
+  const [fontsLoaded, setFontsLoaded] = useState("");
+  const fontKey = `${art.font}:${art.text}`;
   useEffect(() => {
-    document.fonts?.ready.then(() => setFontsReady(true));
-  }, []);
+    let alive = true;
+    loadArtFont(art).then(() => alive && setFontsLoaded(fontKey));
+    return () => {
+      alive = false;
+    };
+  }, [art, fontKey]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       repaintArt(target, variant, art, image, label, mask);
       invalidate();
     });
     return () => cancelAnimationFrame(frame);
-  }, [target, variant, art, image, label, mask, fontsReady, invalidate]);
+  }, [target, variant, art, image, label, mask, fontsLoaded, invalidate]);
   useEffect(() => () => target.texture.dispose(), [target]);
   return target.texture;
 }
@@ -311,7 +317,7 @@ export function sizeLabels(spec: MockupSpec): [string, string] {
 }
 
 
-export type ModelProps = { spec: MockupSpec; art: ArtSettings; label: string; showDims: boolean };
+export type ModelProps = { spec: MockupSpec; art: ArtRender; label: string; showDims: boolean };
 
 
 export function fitFlat(spec: MockupSpec, target = 2.4) {

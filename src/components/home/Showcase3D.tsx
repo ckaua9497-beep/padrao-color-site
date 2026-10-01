@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { DEFAULT_ART, fileToDataUrl, type ArtSettings } from "@/components/mockup/art";
 import { IconArrow, IconUpload } from "@/components/icons";
-import { mockupSpec } from "@/lib/mockup";
 import { Marker, Reveal } from "@/components/motion";
+import { Button } from "@/components/ui/Button";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { mockupSpec } from "@/lib/mockup";
 
 export type DemoProduct = {
   tab: string;
@@ -19,62 +20,76 @@ export type DemoProduct = {
 };
 
 export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState(demos[0]?.slug ?? "");
   const [art, setArt] = useState<ArtSettings>(DEFAULT_ART);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const demo = demos[active];
+  const demo = demos.find((d) => d.slug === active) ?? demos[0];
   const spec = useMemo(() => mockupSpec(demo, {}), [demo]);
 
   return (
-    <section id="mockup-3d" className="scroll-mt-28 bg-ink py-20 text-white md:py-28">
-      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-5 md:px-10 lg:grid-cols-[0.9fr_1.1fr] xl:px-[70px]">
+    <section id="mockup-3d" className="on-dark scroll-mt-28 bg-ink py-20 text-white md:py-28">
+      <div className="container-site grid items-center gap-12 lg:grid-cols-[0.9fr_1.1fr]">
         <Reveal>
           <p className="text-sm font-bold uppercase tracking-[0.2em] text-coral">Novo · Mockup 3D</p>
-          <h2 className="mt-4 text-[clamp(36px,4.6vw,56px)] font-bold leading-[1.02] tracking-[-0.02em]">
+          <h2 className="mt-4 text-display">
             Veja o seu produto <Marker>em 3D</Marker> antes de imprimir.
           </h2>
-          <p className="mt-6 max-w-lg text-lg text-white/70">
-            Envie o seu logo e gire o produto em todos os ângulos. As medidas, o acabamento e o verso acompanham as opções que você escolher.
+          <p className="mt-6 max-w-lg text-lead text-white/75">
+            Escreva o seu texto ou envie o seu logo e gire o produto em todos os ângulos. As medidas, o acabamento e o verso acompanham as opções que você escolher.
           </p>
-          <div className="mt-8 flex flex-wrap gap-2">
-            {demos.map((d, i) => (
-              <button
-                key={d.slug}
-                type="button"
-                onClick={() => setActive(i)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors duration-300 ${i === active ? "bg-white text-ink" : "bg-white/10 text-white hover:bg-white/20"}`}
-              >
-                {d.tab}
-              </button>
-            ))}
-          </div>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => input.current?.click()}
-              className="inline-flex h-13 items-center gap-2 rounded-full bg-coral px-7 font-bold transition-colors duration-300 hover:bg-coral-600"
-            >
-              <IconUpload className="size-5" /> {fileName ? "Trocar imagem" : "Testar com o meu logo"}
-            </button>
-            <Link href={`/produto/${demo.slug}`} className="inline-flex h-13 items-center gap-2 rounded-full border border-white/25 px-7 font-bold transition-colors hover:border-white">
-              Configurar {demo.tab.toLowerCase()} <IconArrow className="size-5" />
-            </Link>
+          <SegmentedControl
+            label="Produto do mockup"
+            tone="dark"
+            className="mt-8"
+            value={demo.slug}
+            onChange={setActive}
+            options={demos.map((d) => ({ value: d.slug, label: d.tab }))}
+          />
+          <label className="mt-6 block max-w-md">
+            <span className="mb-1.5 block text-sm font-bold">Escreva seu texto</span>
+            <input
+              value={art.text}
+              maxLength={40}
+              onChange={(event) => setArt((a) => ({ ...a, text: event.target.value }))}
+              placeholder="Ex.: Café da Maria"
+              className="h-13 w-full rounded-control border border-white/25 bg-white/5 px-4 text-white placeholder:text-white/55 focus:border-white"
+            />
+          </label>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <Button variant="buy" size="md" icon={<IconUpload className="size-5" />} onClick={() => input.current?.click()}>
+              {fileName ? "Trocar imagem" : "Testar com o meu logo"}
+            </Button>
+            <Button href={`/produto/${demo.slug}`} variant="outline" size="md" className="border-white/30 text-white hover:border-white" iconEnd={<IconArrow className="size-5" />}>
+              Configurar {demo.tab.toLowerCase()}
+            </Button>
             <input
               ref={input}
               type="file"
               accept="image/png,image/jpeg,image/webp"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
+              className="sr-only"
+              tabIndex={-1}
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
                 if (!file) return;
-                const src = await fileToDataUrl(file);
-                setArt({ ...DEFAULT_ART, src, fit: "contain" });
-                setFileName(file.name);
+                try {
+                  const src = await fileToDataUrl(file);
+                  setArt((a) => ({ ...a, src, fit: "contain" }));
+                  setFileName(file.name);
+                  setUploadError(null);
+                } catch {
+                  setUploadError("Não conseguimos ler essa imagem. Tente PNG, JPG ou WEBP.");
+                }
               }}
             />
           </div>
-          {fileName && <p className="mt-3 text-sm text-white/55">Usando: {fileName}. A imagem fica só no seu navegador.</p>}
+          {fileName && <p className="mt-3 text-sm text-white/70">Usando: {fileName}. A imagem fica só no seu navegador.</p>}
+          {uploadError && (
+            <p role="alert" className="mt-3 text-sm font-semibold text-coral">
+              {uploadError}
+            </p>
+          )}
         </Reveal>
         <Reveal delay={150}>
           <Mockup3D lazy spec={spec} art={art} label={demo.name} fallbackImage={demo.image} className="aspect-square w-full" />
