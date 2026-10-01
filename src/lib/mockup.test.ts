@@ -62,10 +62,54 @@ const EXPECTED: [string, MockupKind][] = [
   ["Led Neon Caneca de Cerveja", "neon"],
   ["Camisa Polo", "tshirt"],
   ["Regata Basquete 01 até 10 unidades", "tshirt"],
-  ["Cordão p/ Crachá", "cloth"],
-  ["Crachá", "panel"],
+  ["Cordão p/ Crachá", "lanyard"],
+  ["Crachá", "badge"],
+  ["Credencial", "badge"],
   ["PS c/ Adesivo Aplicado", "panel"],
-  ["Imã de Geladeira", "sticker"],
+  ["Imã de Geladeira", "magnet"],
+  ["Manta de Imã Adesiva", "magnet"],
+  ["Calendário para Imã de Geladeira", "magnet"],
+  ["Chinelo Personalizado", "flipflop"],
+  ["Caneta Personalizada", "pen"],
+  ["Caneta p/ Porcelana", "pen"],
+  ["Papel de Parede", "wallpaper"],
+  ["Papel Foto Glossy 180g - Pct c/ 50", "paperpack"],
+  ["Papel Sublimático Sublipaper - Pacote", "paperpack"],
+  ["Papel Sublimático", "sheet"],
+  ["Calendário de Parede", "wallcalendar"],
+  ["Calendário de Bolso", "card"],
+  ["Ventarola", "fan"],
+  ["Pulseira de Identificação", "wristband"],
+  ["Tag", "hangtag"],
+  ["Marcador de Livro", "bookmark"],
+  ["Porta Passaporte", "passport"],
+  ["Meia Personalizada", "sock"],
+  ["Short de Futebol", "shorts"],
+  ["Maiô Infantil", "swimsuit"],
+  ["Quebra Cabeça", "puzzle"],
+  ["Régua", "ruler"],
+  ["Suporte p/ Celular", "phonestand"],
+  ["Wobbler", "wobbler"],
+  ["Máscara de Dormir", "sleepmask"],
+  ["Almofada para Pescoço", "neckpillow"],
+  ["Kit Soneca", "neckpillow"],
+  ["Almofada c/ Suporte para Notebook", "lapdesk"],
+  ["Almofada Quadrada", "cushion"],
+  ["Sacola Mochila", "drawstring"],
+  ["Mochila Personalizada", "backpack"],
+  ["Cooler Personalizado", "cooler"],
+  ["Lancheira Brinde", "cooler"],
+  ["Bolsa Cilindro", "duffel"],
+  ["Bolsa Esportiva de Mão", "duffel"],
+  ["Ecobag Personalizada", "bag"],
+  ["Toalha de Praia", "towel"],
+  ["Canga", "towel"],
+  ["Toalha de Mesa", "tablecloth"],
+  ["Toalha Piquenique", "tablecloth"],
+  ["Cortina Personalizada", "curtain"],
+  ["Lençol Personalizado", "bedding"],
+  ["Capa p/ Cilindro de Festa", "cylinder"],
+  ["Guardanapo Personalizado", "cloth"],
   ["Cartão de Visita", "card"],
   ["Cartão Postal 10x18cm", "sheet"],
   ["Quadro Decorativo em Acrílico", "acrylic"],
@@ -103,48 +147,79 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
   assert.deepEqual(Object.fromEntries(Object.entries(counts).sort()), {
     acrylic: 4,
     apron: 3,
-    bag: 22,
+    backpack: 2,
+    badge: 2,
+    bag: 13,
     bandana: 2,
     banner: 19,
+    bedding: 1,
     board: 3,
     book: 12,
+    bookmark: 2,
     bottle: 14,
     box: 4,
     canvas: 1,
     cap: 1,
-    card: 8,
-    cloth: 19,
+    card: 5,
+    cloth: 5,
     coaster: 4,
-    cushion: 12,
+    cooler: 2,
+    curtain: 1,
+    cushion: 8,
+    cylinder: 1,
+    drawstring: 2,
+    duffel: 2,
+    fan: 1,
     flag: 9,
+    flipflop: 1,
     folded: 8,
+    hangtag: 1,
     hardware: 3,
     keychain: 1,
+    lanyard: 1,
+    lapdesk: 1,
     lightbox: 2,
+    magnet: 5,
     mat: 3,
     mug: 27,
+    neckpillow: 2,
     neon: 33,
-    panel: 18,
+    panel: 12,
+    paperpack: 2,
+    passport: 1,
+    pen: 2,
     petbed: 1,
+    phonestand: 1,
+    puzzle: 1,
     rollup: 1,
     rug: 2,
-    sheet: 68,
-    sticker: 28,
+    ruler: 1,
+    sheet: 60,
+    shorts: 1,
+    sleepmask: 1,
+    sock: 1,
+    sticker: 22,
+    swimsuit: 1,
+    tablecloth: 2,
     tent: 2,
+    towel: 5,
     tshirt: 24,
     tumbler: 3,
+    wallcalendar: 1,
+    wallpaper: 1,
+    wobbler: 1,
+    wristband: 1,
   });
 });
 
-test("só produtos sem modelo próprio caem no fallback", () => {
+test("todo tipo registrado tem pelo menos um produto (nenhum modelo órfão)", () => {
+  const used = new Set(catalog.products.map((p) => resolveKind(p).kind));
+  assert.deepEqual(MOCKUP_KINDS.filter((kind) => !used.has(kind)), []);
+});
+
+test("nenhum produto cai no fallback genérico", () => {
   const fallbacks = catalog.products.filter((p) => resolveKind(p).source === "fallback").map((p) => p.name);
-  assert.deepEqual(fallbacks.sort(), [
-    "Caneta p/ Porcelana",
-    "Chinelo Personalizado",
-    "Papel Foto Glossy 180g - Pct c/ 50",
-    "Papel Sublimático Sublipaper - Pacote",
-    "Papel de Parede",
-  ]);
+  assert.deepEqual(fallbacks, []);
 });
 
 test("todo slug de override existe no catálogo", () => {
@@ -191,12 +266,35 @@ test("cores de LED vêm da opção; sem opção usa o par padrão", () => {
   assert.deepEqual(spec("Quadro Acrílico com Led Neon").ledColors, DEFAULT_LED_COLORS);
 });
 
-test("produtos sem impressão não recebem arte", () => {
-  assert.equal(spec("Lona s/ Impressão").printable, false);
-  assert.equal(spec("Adesivo s/ Impressão").printable, false);
-  assert.equal(spec("Base e Haste para Wind Banner").printable, false);
-  assert.equal(spec("Papel Foto Glossy 180g - Pct c/ 50").printable, false);
-  assert.equal(spec("Cartão de Visita").printable, true);
+test("produtos vendidos sem impressão ficam marcados como blank (a arte vira simulação)", () => {
+  for (const name of [
+    "Lona s/ Impressão",
+    "Adesivo s/ Impressão",
+    "Base e Haste para Wind Banner",
+    "Papel Foto Glossy 180g - Pct c/ 50",
+    "Caneca Branca AAA Live Sub para Sublimação",
+    "Ecobag para Sublimação",
+    "Capa para Almofada Sublimável",
+  ]) {
+    assert.equal(spec(name).blank, true, name);
+  }
+  // "Material: Emborrachado Sublimável" é o serviço de sublimação, não peça crua.
+  for (const name of ["Cartão de Visita", "Porta Copo", "Kit Executivo", "Caneca de Cerâmica Personalizada"]) {
+    assert.equal(spec(name).blank, false, name);
+  }
+});
+
+test("subtipos vêm do nome, não de regex dentro dos modelos", () => {
+  assert.equal(spec("Caneca de Cerâmica c/ Colher e Interior Preto para Sublimação").variant, "spoon");
+  assert.equal(spec("Xícara London com Suporte - Kit com 2 unidades").variant, "kit");
+  assert.equal(spec("Kit Soneca").variant, "kit");
+  assert.equal(spec("Lancheira Brinde").variant, "lunch");
+  assert.equal(spec("Toalha Piquenique").variant, "picnic");
+  assert.equal(spec("Caneta p/ Porcelana").variant, "porcelain");
+  assert.equal(spec("Base Redonda p/ Wind Banner").variant, "round-base");
+  assert.equal(spec("Wind Ball").variant, "ball");
+  assert.equal(spec("Lixeira Pet p/ Automóveis").variant, "car-trash");
+  assert.equal(spec("Caneca de Cerâmica Personalizada").variant, null);
 });
 
 test("formato vem das opções: redondo, oval e coração", () => {

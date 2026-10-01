@@ -42,7 +42,7 @@ export default function PreviewModal({ onClose, onAdd, adding, spec, art, name, 
           ))}
           <div className="flex justify-between gap-4 pt-1">
             <dt className="text-muted">Arte</dt>
-            <dd className="text-right font-semibold">{spec.printable ? artLabel(art) : "Produto sem impressão"}</dd>
+            <dd className="text-right font-semibold">{spec.blank ? "Simulação · vendido sem impressão" : artLabel(art)}</dd>
           </div>
         </dl>
         <div className="mt-auto pt-8">

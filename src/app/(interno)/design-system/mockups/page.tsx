@@ -34,7 +34,7 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
 
   const rows = getProducts().map((p) => {
     const spec = mockupSpec(p, {});
-    return { slug: p.slug, name: p.name, category: p.category, kind: spec.kind, source: spec.source, printable: spec.printable };
+    return { slug: p.slug, name: p.name, category: p.category, kind: spec.kind, source: spec.source, blank: spec.blank, variant: spec.variant };
   });
   const counts = new Map<MockupKind, number>();
   for (const row of rows) counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1);
@@ -44,7 +44,7 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
 
   return (
     <div className="container-site py-10">
-      <h1 className="text-[clamp(32px,3.4vw,44px)] font-bold tracking-tight">Galeria de mockups 3D</h1>
+      <h1 className="text-section font-bold">Galeria de mockups 3D</h1>
       <p className="mt-2 max-w-2xl text-muted">
         Cada produto do catálogo com o tipo de mockup resolvido. Selecione um produto para ver o modelo com as opções dele. Só um
         visualizador fica aberto por vez.
@@ -115,7 +115,8 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
                   </td>
                   <td className="py-2 pr-3">
                     {KIND_INFO[row.kind].label}
-                    {!row.printable && <span className="ml-1.5 rounded-full bg-fog px-2 py-0.5 text-[11px]">sem arte</span>}
+                    {row.variant && <span className="ml-1.5 text-micro text-muted">{row.variant}</span>}
+                    {row.blank && <span className="ml-1.5 rounded-full bg-fog px-2 py-0.5 text-micro">sem impressão</span>}
                   </td>
                   <td className={`py-2 ${row.source === "fallback" ? "font-bold text-coral-700" : "text-muted"}`}>{row.source}</td>
                 </tr>

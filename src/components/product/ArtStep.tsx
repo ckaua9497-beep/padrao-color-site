@@ -13,6 +13,8 @@ import { cx } from "@/components/ui/cx";
 type Props = {
   step: number;
   family: ArtFamily;
+  /** Produto vendido sem impressão: a arte serve só para simular, não é exigida. */
+  blank?: boolean;
   art: ArtSettings;
   onArt: (update: (art: ArtSettings) => ArtSettings) => void;
   artName: string | null;
@@ -25,7 +27,7 @@ type Props = {
 };
 
 /** Passo "Sua arte": texto (aparece no mockup na hora) ou imagem enviada, ou enviar depois. */
-export function ArtStep({ step, family, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing }: Props) {
+export function ArtStep({ step, family, blank = false, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing }: Props) {
   const [mode, setMode] = useState<"texto" | "imagem">(art.src ? "imagem" : "texto");
   const fileInput = useRef<HTMLInputElement>(null);
   const neon = family === "neon";
@@ -34,8 +36,8 @@ export function ArtStep({ step, family, art, onArt, artName, onFile, uploadError
     <li id="passo-arte" className="scroll-mt-32">
       <p className="mb-3 flex items-center gap-2 text-[15px] font-bold">
         <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>
-        Sua arte
-        <span className="text-caption font-normal text-muted">· aparece no mockup 3D</span>
+        {blank ? "Simule a sua arte" : "Sua arte"}
+        <span className="text-caption font-normal text-muted">{blank ? "· o produto é vendido sem impressão" : "· aparece no mockup 3D"}</span>
       </p>
 
       <SegmentedControl
@@ -172,10 +174,14 @@ export function ArtStep({ step, family, art, onArt, artName, onFile, uploadError
         )}
       </div>
 
-      <label className="mt-3 flex items-center gap-2.5 text-sm">
-        <input type="checkbox" checked={artLater} onChange={(event) => onArtLater(event.target.checked)} className="size-4 accent-coral-700" />
-        Enviar arte depois (a equipe entra em contato)
-      </label>
+      {blank ? (
+        <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
+      ) : (
+        <label className="mt-3 flex items-center gap-2.5 text-sm">
+          <input type="checkbox" checked={artLater} onChange={(event) => onArtLater(event.target.checked)} className="size-4 accent-coral-700" />
+          Enviar arte depois (a equipe entra em contato)
+        </label>
+      )}
       {missing && (
         <p role="alert" className="mt-2 text-sm font-semibold text-coral-700">
           Escreva um texto, envie a arte ou marque “Enviar arte depois” para continuar.

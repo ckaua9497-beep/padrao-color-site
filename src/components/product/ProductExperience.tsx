@@ -85,7 +85,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const spec = useMemo(() => mockupSpec(product, selection), [product, selection]);
   const family = artFamily(spec.kind);
   const total = price.price * qty;
-  const hasArt = !spec.printable || artLater || Boolean(artName) || art.text.trim().length > 0;
+  // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
+  const hasArt = spec.blank || artLater || Boolean(artName) || art.text.trim().length > 0;
 
   const choose = (key: string, value: string) => setSelection((s) => ({ ...s, [key]: value }));
   const updateArt = (update: (art: ArtSettings) => ArtSettings) => {
@@ -149,13 +150,13 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       name: product.name,
       image: product.image,
       preview: thumb,
-      options: { ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])), ...(spec.printable && !artLater ? artSummary(art) : {}) },
+      options: { ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])), ...(!spec.blank && !artLater ? artSummary(art) : {}) },
       unitPrice: price.price,
       setQty: price.qty,
       quantity: qty,
       leadDays: price.leadDays,
       // O carrinho mostra "Arte: …"; null vira "enviar depois".
-      artName: !spec.printable ? "produto sem impressão" : artLater ? null : (artName ?? (art.text.trim() ? "texto no mockup" : null)),
+      artName: spec.blank ? "produto sem impressão" : artLater ? null : (artName ?? (art.text.trim() ? "texto no mockup" : null)),
     });
     setAdding(false);
     setPreview(false);
@@ -220,7 +221,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
       <div>
         <div className="flex flex-wrap gap-2">
-          {spec.printable && <Badge tone="brand">Mockup 3D grátis</Badge>}
+          <Badge tone="brand">Mockup 3D grátis</Badge>
+          {spec.blank && <Badge tone="neutral">Vendido sem impressão</Badge>}
           {product.bestSeller && <Badge tone="dark">Mais vendido</Badge>}
           {product.isNew && <Badge tone="new">Lançamento</Badge>}
         </div>
@@ -241,7 +243,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
                   <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{i + 1}</span>
                   {cleanOptionLabel(key)}
                   <span className="text-caption font-normal text-muted">
-                    · opção {i + 1} de {keys.length + (spec.printable ? 1 : 0)}
+                    · opção {i + 1} de {keys.length + 1}
                   </span>
                 </p>
                 <OptionGroup
@@ -254,24 +256,23 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             );
           })}
 
-          {spec.printable && (
-            <ArtStep
-              step={keys.length + 1}
-              family={family}
-              art={art}
-              onArt={updateArt}
-              artName={artName}
-              onFile={onFile}
-              uploadError={uploadError}
-              uploading={uploading}
-              artLater={artLater}
-              onArtLater={(value) => {
-                setArtLater(value);
-                if (value) setArtMissing(false);
-              }}
-              missing={artMissing}
-            />
-          )}
+          <ArtStep
+            step={keys.length + 1}
+            family={family}
+            blank={spec.blank}
+            art={art}
+            onArt={updateArt}
+            artName={artName}
+            onFile={onFile}
+            uploadError={uploadError}
+            uploading={uploading}
+            artLater={artLater}
+            onArtLater={(value) => {
+              setArtLater(value);
+              if (value) setArtMissing(false);
+            }}
+            missing={artMissing}
+          />
         </ol>
 
         <div className="mt-8 rounded-card bg-mist p-5">
@@ -308,7 +309,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           name={product.name}
           fallbackImage={product.image}
           captureRef={captureRef}
-          summary={[...keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string]), ...Object.entries(spec.printable ? artSummary(art) : {})]}
+          summary={[...keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string]), ...Object.entries(spec.blank ? {} : artSummary(art))]}
           total={formatBRL(total)}
         />
       )}

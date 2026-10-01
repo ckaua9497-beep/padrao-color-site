@@ -187,3 +187,8 @@ export function FlagModel({ spec, art, label }: ModelProps) {
     </group>
   );
 }
+
+/** Base e haste vendidas sem bandeira: provisório, mostra o wind banner montado com a arte simulada. */
+export function HardwareModel(props: ModelProps) {
+  return <FlagModel {...props} />;
+}

@@ -85,12 +85,14 @@ export default function MockupInspector({ product }: { product: MockupProduct & 
         <dd>
           {spec.label} {KIND_INFO[spec.kind].sizeIsArtArea ? "(área de arte)" : ""}
         </dd>
-        <dt className="font-bold">Recebe arte</dt>
-        <dd>{spec.printable ? "sim" : "não"}</dd>
+        <dt className="font-bold">Subtipo</dt>
+        <dd>{spec.variant ?? "padrão"}</dd>
+        <dt className="font-bold">Sem impressão</dt>
+        <dd>{spec.blank ? "sim (arte simulada)" : "não"}</dd>
         <dt className="font-bold">Spec</dt>
         <dd>
           <pre className="whitespace-pre-wrap break-all font-mono text-[12px]">
-            {JSON.stringify({ ...spec, kind: undefined, source: undefined, label: undefined, printable: undefined }, null, 1)}
+            {JSON.stringify({ ...spec, kind: undefined, source: undefined, label: undefined, blank: undefined, variant: undefined }, null, 1)}
           </pre>
         </dd>
       </dl>

@@ -13,7 +13,16 @@ export type KindSource = "override" | "name" | "category" | "fallback";
 export type MockupSpec = {
   kind: MockupKind;
   source: KindSource;
-  printable: boolean;
+  /**
+   * Produto vendido sem impressão (lona crua, caneca para sublimação, base de wind banner…).
+   * O mockup continua personalizável: a arte aparece como simulação e não é obrigatória no pedido.
+   */
+  blank: boolean;
+  /**
+   * Subtipo do produto dentro do kind ("spoon", "kit", "lunch", "picnic"…), para o modelo variar a forma
+   * sem testar regex no nome. null quando é o modelo padrão. Ver VARIANTS.
+   */
+  variant: string | null;
   widthCm: number;
   heightCm: number;
   depthCm: number;
@@ -63,6 +72,13 @@ type Rule = { kind: MockupKind; test: RegExp };
 // Regras mais específicas vêm antes: "porta copo" antes de "copo", "base … wind banner" antes de "wind banner".
 const RULES: Rule[] = [
   { kind: "neon", test: /\bneon\b/ },
+  { kind: "pen", test: /\bcaneta\b/ },
+  { kind: "flipflop", test: /\bchinelo\b/ },
+  { kind: "wallpaper", test: /\bpapel de parede\b/ },
+  { kind: "paperpack", test: /\b(papel|sublipaper)\b.*\b(pct|pacote)\b/ },
+  { kind: "wallcalendar", test: /\bcalendario de parede\b/ },
+  // "Calendário para Imã", "Imã c/ Calendário", "Foto Imã", "Manta de Imã": todos vão para a geladeira.
+  { kind: "magnet", test: /\bima\b/ },
   { kind: "hardware", test: /\b(base|haste)\b.*\bwind banner\b/ },
   { kind: "rollup", test: /\broll ?up\b/ },
   { kind: "flag", test: /\bwind (banner|ball)\b|\bbandeira\b/ },
@@ -74,15 +90,27 @@ const RULES: Rule[] = [
   { kind: "bandana", test: /\bbandana\b/ },
   { kind: "apron", test: /\bavental\b/ },
   { kind: "petbed", test: /\bcama pet\b/ },
+  { kind: "sock", test: /\bmeias?\b/ },
+  { kind: "shorts", test: /\bshorts?\b|\bbermuda\b/ },
+  { kind: "swimsuit", test: /\bmaio\b/ },
   { kind: "tshirt", test: /\bcamisa\b|\bregata\b|\babada\b|\bcolete\b|\bpijama\b|\bbody\b/ },
-  { kind: "cushion", test: /\balmofada\b|\bfronha\b|\bkit soneca\b|\bmascara de dormir\b/ },
+  { kind: "sleepmask", test: /\bmascara de dormir\b/ },
+  { kind: "neckpillow", test: /\balmofada (para|de|p\/) pescoco\b|\bkit soneca\b/ },
+  { kind: "lapdesk", test: /\bnotebook\b/ },
+  { kind: "cushion", test: /\balmofada\b|\bfronha\b/ },
   { kind: "tent", test: /\bcalendario de mesa\b|\bdisplay de mesa de papel\b/ },
+  { kind: "passport", test: /\bporta passaporte\b/ },
   { kind: "book", test: /\bphotobook\b|\bagenda\b|\bcaderno\b|\bplanner\b|\bbloco\b/ },
   { kind: "folded", test: /^pasta\b|\bfolder\b|\bdobras?\b/ },
-  {
-    kind: "bag",
-    test: /\bbolsa\b|\bsacola\b|\becobag\b|\bmochila\b|\bnecessaire\b|\blancheira\b|\bcooler\b|\bestojo\b|\bporta passaporte\b/,
-  },
+  // "Cordão p/ Crachá" antes de crachá; "Sacola Mochila" antes de mochila; "Bolsa Cilindro" antes de cilindro.
+  { kind: "lanyard", test: /\bcordao\b/ },
+  { kind: "badge", test: /\bcracha\b|\bcredencial\b/ },
+  { kind: "wristband", test: /\bpulseira\b/ },
+  { kind: "drawstring", test: /\bsacola mochila\b/ },
+  { kind: "backpack", test: /\bmochila\b/ },
+  { kind: "cooler", test: /\bcooler\b|\blancheira\b/ },
+  { kind: "duffel", test: /\bbolsa (cilindro|esportiva)\b/ },
+  { kind: "bag", test: /\bbolsa\b|\bsacola\b|\becobag\b|\bnecessaire\b|\bestojo\b/ },
   { kind: "box", test: /\bcaixa\b|\bsolapa\b|\bkit (cinema|executivo)\b/ },
   { kind: "lightbox", test: /\bbacklight\b/ },
   { kind: "banner", test: /\bbanner\b|\blona\b|\bfaixa\b/ },
@@ -92,17 +120,178 @@ const RULES: Rule[] = [
   { kind: "rug", test: /\btapete\b|\bcapacho\b/ },
   { kind: "board", test: /\btabua\b/ },
   { kind: "mat", test: /\bmouse ?pad\b|\bjogo americano\b/ },
-  {
-    kind: "cloth",
-    test: /\btoalha\b|\bpano\b|\blencol\b|\bcortina\b|\bcanga\b|\btecido\b|\bguardanapo\b|\bmeia\b|\bshort\b|\bmaio\b|\bcapa de corte\b|\bcapa p\/ cilindro\b|\bcordao\b/,
-  },
+  { kind: "tablecloth", test: /\btoalha (de mesa|piquenique)\b/ },
+  { kind: "towel", test: /\btoalha\b|\bcanga\b/ },
+  { kind: "curtain", test: /\bcortina\b/ },
+  { kind: "bedding", test: /\blencol\b/ },
+  { kind: "cylinder", test: /\bcilindro\b/ },
+  { kind: "cloth", test: /\bpano\b|\btecido\b|\bguardanapo\b|\bcapa de corte\b/ },
+  { kind: "fan", test: /\bventarola\b/ },
+  { kind: "puzzle", test: /\bquebra cabeca\b/ },
+  { kind: "ruler", test: /\bregua\b/ },
+  { kind: "phonestand", test: /\bsuporte (p\/|para|de) celular\b/ },
+  { kind: "wobbler", test: /\bwobbler\b/ },
   {
     kind: "panel",
-    test: /\bps\b|\bpvc expandido\b|\bxps\b|\bpolionda\b|\bquadro\b|\bplaca\b|\bdisplay\b|\bporteiro\b|\bwobbler\b|\bmosaico\b|\bcracha\b|\bcredencial\b|\bregua\b|\bsuporte p\/ celular\b|\bquebra cabeca\b/,
+    test: /\bps\b|\bpvc expandido\b|\bxps\b|\bpolionda\b|\bquadro\b|\bplaca\b|\bdisplay\b|\bporteiro\b|\bmosaico\b/,
   },
-  { kind: "sticker", test: /\badesivo\b|\brotulo\b|\bima\b|\bdtf\b|\bmanta\b|\betiqueta\b|\bpulseira\b/ },
-  { kind: "card", test: /\bcartao de (visita|pvc)\b|\btag\b|\bmarcador\b|\bcalendario de bolso\b/ },
+  { kind: "sticker", test: /\badesivo\b|\brotulo\b|\bdtf\b|\betiqueta\b/ },
+  { kind: "hangtag", test: /\btag\b/ },
+  { kind: "bookmark", test: /\bmarcador\b/ },
+  { kind: "card", test: /\bcartao de (visita|pvc)\b|\bcalendario de bolso\b/ },
 ];
+
+// Subtipos por kind, testados em ordem contra o nome normalizado (o primeiro que casa vence).
+// Os modelos 3D leem spec.variant em vez de testar o nome.
+const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
+  pen: [[/\bporcelana\b/, "porcelain"]],
+  paperpack: [
+    [/\bfoto\b/, "photo"],
+    [/\bsublim/, "sublimation"],
+  ],
+  magnet: [
+    [/\bmanta\b/, "sheet"],
+    [/\bcalendario\b/, "calendar"],
+    [/\bfoto\b/, "photo"],
+  ],
+  hardware: [
+    [/\bbase redonda\b/, "round-base"],
+    [/\bbase e haste\b/, "base-pole"],
+    [/\bhaste\b/, "pole"],
+  ],
+  flag: [
+    [/\bwind ball\b/, "ball"],
+    [/\bcarro\b/, "car"],
+  ],
+  mug: [
+    [/\bcolher\b/, "spoon"],
+    [/\bkit com (\d)/, "kit"],
+    [/\balca coracao\b/, "heart-handle"],
+    [/\bmagica\b/, "magic"],
+  ],
+  bottle: [
+    [/\binfantil\b|\brostinho\b/, "kids"],
+    [/\bcom copo\b/, "thermo-cup"],
+    [/\bsports?\b|\bbico\b|\bsqueeze\b/, "sports"],
+  ],
+  neon: [[/\bquadro\b/, "frame"]],
+  tshirt: [
+    [/\bbody\b/, "body"],
+    [/\bpijama\b/, "pajama"],
+    [/\bcolete\b/, "vest"],
+    [/\bfutebol\b/, "jersey"],
+    [/\bbasquete\b/, "basketball"],
+    [/\babada\b/, "abada"],
+  ],
+  neckpillow: [[/\bkit soneca\b/, "kit"]],
+  cooler: [[/\blancheira\b/, "lunch"]],
+  duffel: [
+    [/\bcilindro\b/, "cylinder"],
+    [/\besportiva\b/, "sport"],
+  ],
+  towel: [
+    [/\bcanga\b/, "canga"],
+    [/\bpraia\b/, "beach"],
+    [/\bfitness\b/, "fitness"],
+    [/\brosto\b/, "face"],
+    [/\bmao\b/, "hand"],
+  ],
+  tablecloth: [[/\bpiquenique\b/, "picnic"]],
+  cloth: [
+    [/\bguardanapo\b/, "napkin"],
+    [/\bpano de prato\b/, "dishcloth"],
+    [/\bcapa de corte\b/, "barber-cape"],
+  ],
+  bag: [
+    [/\bpraia\b/, "beach"],
+    [/\bcorda\b/, "rope"],
+    [/\bpresente\b/, "gift"],
+    [/\blixeira\b/, "car-trash"],
+    [/\bnecessaire\b/, "necessaire"],
+    [/\bestojo\b/, "pencil-case"],
+  ],
+  box: [
+    [/\bcinema\b/, "cinema"],
+    [/\bexecutivo\b/, "executive"],
+    [/\bsolapa\b/, "sleeve"],
+    [/\bacrilic/, "acrylic"],
+  ],
+  panel: [
+    [/\bmosaico\b/, "mosaic"],
+    [/\bporteiro\b/, "door-sign"],
+    [/\bpet\b/, "pet-tag"],
+    [/\bdisplay de mesa\b|\bquadro de mesa\b/, "desk"],
+  ],
+  card: [
+    [/\bpvc\b/, "pvc"],
+    [/\bcalendario de bolso\b/, "pocket-calendar"],
+  ],
+  sheet: [
+    [/\bpostal\b/, "postcard"],
+    [/\btimbrado\b/, "letterhead"],
+    [/\bcartaz\b/, "poster"],
+    [/\bcardapio\b/, "menu"],
+    [/\bfotografico\b/, "photo"],
+    [/\bsublimatico\b/, "sublimation"],
+    [/\byupo\b|\bsintetico\b/, "synthetic"],
+    [/\bimpressao\b/, "print"],
+    [/\bflyer\b|\bfilipeta\b|\bfolheto\b|\bpanfleto\b|\bencarte\b/, "flyer"],
+  ],
+  sticker: [
+    [/\bdtf\b/, "dtf"],
+    [/\beletrostatico\b/, "electrostatic"],
+    [/\bmicroperfurado\b/, "perforated"],
+    [/\bretroverso\b|\bvidro\b/, "window"],
+    [/\brotulo\b/, "label"],
+    [/\bautomotivo\b/, "car"],
+    [/\bem folha\b/, "sheet"],
+  ],
+  book: [
+    [/\bphotobook\b/, "photobook"],
+    [/\bplanner\b/, "planner"],
+    [/\bagenda\b/, "agenda"],
+    [/\bbloco\b/, "pad"],
+    [/\bcaderno\b/, "notebook"],
+  ],
+  cushion: [
+    [/\bcapa\b|\bfronha\b/, "cover"],
+    [/\bcorpo\b/, "body"],
+    [/\bcolorir\b/, "coloring"],
+  ],
+  apron: [
+    [/\bcolorir\b/, "coloring"],
+    [/\bprofissional\b/, "pro"],
+  ],
+  coaster: [
+    [/\bporta jarra\b/, "pitcher"],
+    [/\bsousplat\b/, "placemat"],
+  ],
+  acrylic: [
+    [/\bcalendario\b/, "calendar"],
+    [/\bdisplay\b/, "desk"],
+  ],
+  tent: [[/\bcalendario\b/, "calendar"]],
+  folded: [
+    [/^pasta\b/, "folder-pocket"],
+    [/\bcardapio\b/, "menu"],
+  ],
+  banner: [
+    [/\bfaixa\b/, "strip"],
+    [/\bmini banner\b/, "mini"],
+    [/\btecido\b/, "fabric"],
+  ],
+  board: [[/\blaser\b/, "laser"]],
+  rug: [[/\bcapacho\b/, "doormat"]],
+  mat: [
+    [/\bgamer\b/, "gamer"],
+    [/\bjogo americano\b/, "placemat"],
+  ],
+  badge: [[/\bcredencial\b/, "credential"]],
+  tumbler: [
+    [/\btravel mug\b/, "travel"],
+    [/\bvidro\b/, "glass"],
+  ],
+};
 
 // Usado quando nenhuma regra de nome casa (cartões postais, folhetos, impressões…).
 const CATEGORY_DEFAULT: Record<string, MockupKind> = {
@@ -240,8 +429,20 @@ function metalFrom(text: string): MockupSpec["metal"] {
   return "none";
 }
 
-const NOT_PRINTABLE = /\bs\/ impressao\b|\bsem impressao\b|\bs\/ personalizacao\b|\bsem personalizacao\b|\bnao personalizavel\b|\bpct\b|\bpacote\b|\bcaneta p\/ porcelana\b/;
-const SHAPED_KINDS: MockupKind[] = ["cushion", "sticker", "mat", "coaster", "keychain", "card", "petbed"];
+// Vendido sem impressão: o cliente imprime/sublima depois, ou é suprimento. O mockup simula a arte mesmo assim.
+const BLANK_NAME =
+  /\bs\/ impressao\b|\bsem impressao\b|\bpara sublimacao\b|\bsublimavel\b|\blive sub\b|\bpct\b|\bpacote\b|\bcaneta p\/ porcelana\b|\bmanta de ima\b|\bcalendario para ima\b/;
+// Nas opções só vale quando a peça toda é sem impressão ("Material: Sublimável" é o serviço de sublimação, não peça crua).
+const BLANK_VALUE = /\bs\/ impressao\b|\bsem impressao\b|\bnao personalizavel\b/;
+const BLANK_KINDS: MockupKind[] = ["hardware"];
+
+/** Subtipo do produto (ver VARIANTS). */
+export function variantOf(kind: MockupKind, name: string): string | null {
+  return VARIANTS[kind]?.find(([pattern]) => pattern.test(name))?.[1] ?? null;
+}
+const SHAPED_KINDS: MockupKind[] = ["cushion", "sticker", "mat", "coaster", "keychain", "card", "petbed", "hangtag", "magnet", "fan", "wobbler", "rug"];
+// Peças de tecido/plástico cuja cor pode vir do próprio nome ("Ecobag Preta", "Mochila Azul").
+const NAMED_COLOR_KINDS: MockupKind[] = ["tshirt", "cap", "bag", "backpack", "drawstring", "cooler", "duffel", "sock", "shorts", "swimsuit", "flipflop", "lanyard", "wristband", "pen"];
 const PAINTABLE_METAL: MockupKind[] = ["bottle", "tumbler"];
 
 export function mockupSpec(product: MockupProduct, selection: Selection): MockupSpec {
@@ -291,7 +492,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
 
   let baseColor = "#ffffff";
   if (bodyColors.length && !coloredInterior) baseColor = bodyColors[0];
-  else if (!bodyColors.length && (kind === "tshirt" || kind === "cap" || kind === "bag")) baseColor = colorsIn(name)[0] ?? "#ffffff";
+  else if (!bodyColors.length && NAMED_COLOR_KINDS.includes(kind)) baseColor = colorsIn(name)[0] ?? "#ffffff";
   if (kind === "mug" && /\bmagica\b/.test(name) && !bodyColors.length) baseColor = "#1c1c1e";
   if ((kind === "mat" || kind === "rug") && !bodyColors.length) baseColor = "#2b2b2b";
 
@@ -352,12 +553,13 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   const folds: MockupSpec["folds"] = /\b2 dobras\b/.test(name) ? 2 : /\bdobras?\b/.test(name) || kind === "folded" ? 1 : 0;
 
   const override = product.slug ? MOCKUP_OVERRIDES[product.slug] : undefined;
-  const printable = info.printable && override?.printable !== false && !NOT_PRINTABLE.test(name) && !NOT_PRINTABLE.test(allValues);
+  const blank = override?.blank ?? (BLANK_KINDS.includes(kind) || BLANK_NAME.test(name) || BLANK_VALUE.test(allValues));
 
   return {
     kind,
     source,
-    printable,
+    blank,
+    variant: override?.variant ?? variantOf(kind, name),
     widthCm,
     heightCm,
     depthCm,
@@ -382,7 +584,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     handle: kind === "mug" || (kind === "tumbler" && (/\btravel mug\b/.test(name) || /\balca\b/.test(allValues))),
     carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
-    pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b|\bporta passaporte\b|\blancheira\b/.test(name),
+    pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b/.test(name),
     spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),
     label: formatSize(widthCm, heightCm),
   };
