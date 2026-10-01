@@ -76,7 +76,7 @@ export function BookModel({ spec, art, label }: ModelProps) {
   const { w, h, scale } = fitFlat(spec, 2.1);
   const front = useArtTexture(artAspect(spec), "front", art, label);
   const thick = Math.max(spec.depthCm * scale, 0.14);
-  const spiral = /agenda|caderno|planner/i.test(label);
+  const spiral = spec.binding === "spiral";
   return (
     <group rotation={[-0.3, 0.55, 0]}>
       <group position-z={thick / 2}>

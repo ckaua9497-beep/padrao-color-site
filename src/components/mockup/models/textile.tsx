@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import * as THREE from "three";
 import { artAspect } from "@/lib/mockup-kinds";
 import { heartPath, roundPath } from "../art";
-import { useArtTexture, type ModelProps, fitFlat, Tube, Waving, pillowGeometry } from "./shared";
+import { useArtTexture, useGeometryCleanup, type ModelProps, fitFlat, Tube, Waving, pillowGeometry } from "./shared";
 
 function teeShape(sleeveless: boolean) {
   const s = new THREE.Shape();
@@ -39,7 +39,9 @@ function teeShape(sleeveless: boolean) {
 
 export function TshirtModel({ spec, art, label }: ModelProps) {
   const printArt = useMemo(() => ({ ...art, background: art.src ? "rgba(0,0,0,0)" : art.background }), [art]);
-  const texture = useArtTexture(0.78, "front", printArt, label);
+  const aspect = artAspect(spec);
+  const texture = useArtTexture(aspect, "front", printArt, label);
+  const printW = Math.min(0.95, 0.8 * (spec.widthCm / 21));
   const geometry = useMemo(() => {
     const g = new THREE.ExtrudeGeometry(teeShape(spec.sleeveless), {
       depth: 0.05,
@@ -52,13 +54,14 @@ export function TshirtModel({ spec, art, label }: ModelProps) {
     g.translate(0, 0, -0.025);
     return g;
   }, [spec.sleeveless]);
+  useGeometryCleanup(geometry);
   return (
     <group rotation-y={0.25}>
-      <mesh geometry={geometry} castShadow>
+      <mesh geometry={geometry}>
         <meshPhysicalMaterial color={spec.baseColor} roughness={0.95} sheen={1} sheenRoughness={0.8} sheenColor="#ffffff" />
       </mesh>
       <mesh position={[0, 0.22, 0.087]}>
-        <planeGeometry args={[0.8, 0.8 / 0.78]} />
+        <planeGeometry args={[printW, printW / aspect]} />
         <meshStandardMaterial map={texture} transparent roughness={0.85} />
       </mesh>
     </group>
@@ -70,7 +73,7 @@ export function CapModel({ spec, art, label }: ModelProps) {
   const texture = useArtTexture(1.6, "front", art, label);
   return (
     <group rotation-y={0.5} position-y={-0.2}>
-      <mesh scale={[1, 0.82, 1]} castShadow>
+      <mesh scale={[1, 0.82, 1]}>
         <sphereGeometry args={[0.9, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2]} />
         <meshPhysicalMaterial color={spec.baseColor} roughness={0.95} sheen={1} sheenColor="#ffffff" />
       </mesh>
@@ -78,7 +81,7 @@ export function CapModel({ spec, art, label }: ModelProps) {
         <sphereGeometry args={[0.9, 64, 32, Math.PI / 2 - 0.75, 1.5, 0.45, 0.85]} />
         <meshStandardMaterial map={texture} transparent roughness={0.9} />
       </mesh>
-      <mesh position={[0, 0.01, 0.35]} rotation-x={0.12} castShadow>
+      <mesh position={[0, 0.01, 0.35]} rotation-x={0.12}>
         <cylinderGeometry args={[0.8, 0.8, 0.03, 48, 1, false, -Math.PI / 2, Math.PI]} />
         <meshPhysicalMaterial color={spec.baseColor} roughness={0.9} />
       </mesh>
@@ -98,10 +101,11 @@ export function CushionModel({ spec, art, label }: ModelProps) {
   const back = useArtTexture(artAspect(spec), spec.back === "same" ? "front" : "blank", art, label, mask);
   const thick = Math.min(w, h) * 0.32;
   const geometry = useMemo(() => pillowGeometry(w, h, thick, spec.shape === "heart" ? "round" : spec.shape), [w, h, thick, spec.shape]);
+  useGeometryCleanup(geometry);
   const transparent = spec.shape !== "rect";
   return (
     <group rotation={[-0.15, 0.4, 0]}>
-      <mesh geometry={geometry} castShadow>
+      <mesh geometry={geometry}>
         <meshPhysicalMaterial map={front} roughness={0.9} sheen={0.25} sheenColor="#d9d9d9" transparent={transparent} alphaTest={transparent ? 0.5 : 0} />
       </mesh>
       <mesh geometry={geometry} rotation-y={Math.PI}>
@@ -137,10 +141,11 @@ export function BagModel({ spec, art, label }: ModelProps) {
     ]);
     return new THREE.TubeGeometry(curve, 48, 0.025, 10);
   }, [w, h]);
+  useGeometryCleanup(handle);
   const fabric = spec.baseColor === "#ffffff" ? "#f2ede2" : spec.baseColor;
   return (
     <group rotation-y={0.45}>
-      <mesh castShadow>
+      <mesh>
         <boxGeometry args={[w, h, depth]} />
         <meshPhysicalMaterial attach="material-0" color={fabric} roughness={0.95} sheen={1} />
         <meshPhysicalMaterial attach="material-1" color={fabric} roughness={0.95} sheen={1} />

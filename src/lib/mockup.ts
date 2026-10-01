@@ -35,6 +35,14 @@ export type MockupSpec = {
   grommets: boolean;
   flagStyle: FlagStyle;
   folds: 0 | 1 | 2;
+  /** Xícara com pires em vez de caneca. */
+  teacup: boolean;
+  /** Caneca/copo com alça. */
+  handle: boolean;
+  /** Garrafa com mosquetão. */
+  carabiner: boolean;
+  /** Encadernação de agenda, caderno, photobook. */
+  binding: "spiral" | "spine";
   label: string;
 };
 
@@ -249,7 +257,9 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     pick(selection, product.options, /^tamanho$/) ??
     product.name;
   const parsed = parseSize(sizeText) ?? parseSize(product.name);
-  let [widthCm, heightCm] = parsed ?? [dw, dh];
+  const teacup = kind === "mug" && /\bxicara\b/.test(name);
+  // Xícara London: área de arte menor que a da caneca padrão.
+  let [widthCm, heightCm] = parsed ?? (teacup ? [16, 5] : [dw, dh]);
   if (kind === "banner" && /faixa/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
 
   let finish: MockupSpec["finish"] = "satin";
@@ -364,6 +374,10 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     grommets: /\bilhos\b|\bfaixa\b/.test(name) || /\bilhos\b/.test(allValues),
     flagStyle,
     folds,
+    teacup,
+    handle: kind === "mug" || (kind === "tumbler" && (/\btravel mug\b/.test(name) || /\balca\b/.test(allValues))),
+    carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
+    binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
     label: formatSize(widthCm, heightCm),
   };
 }

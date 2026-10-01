@@ -1,8 +1,8 @@
 "use client";
 
 import { CardModel, StickerModel, BookModel, TentModel, SheetModel } from "./paper";
-import { PanelModel, AcrylicModel, CanvasModel, MatModel, BoxModel } from "./rigid";
-import { NeonModel, BannerModel, RollupModel, FlagModel } from "./signage";
+import { PanelModel, AcrylicModel, KeychainModel, CanvasModel, MatModel, BoxModel } from "./rigid";
+import { NeonModel, BannerModel, LightboxModel, RollupModel, FlagModel } from "./signage";
 import { ClothModel, TshirtModel, CapModel, CushionModel, BagModel } from "./textile";
 import { MugModel, TumblerModel, BottleModel } from "./drinkware";
 import type { ModelProps } from "./shared";
@@ -18,8 +18,9 @@ export function MockupModel(props: ModelProps) {
     case "panel":
       return <PanelModel {...props} />;
     case "acrylic":
-    case "keychain":
       return <AcrylicModel {...props} />;
+    case "keychain":
+      return <KeychainModel {...props} />;
     case "neon":
       return <NeonModel {...props} />;
     case "canvas":
@@ -30,8 +31,9 @@ export function MockupModel(props: ModelProps) {
     case "board":
       return <MatModel {...props} />;
     case "banner":
-    case "lightbox":
       return <BannerModel {...props} />;
+    case "lightbox":
+      return <LightboxModel {...props} />;
     case "rollup":
       return <RollupModel {...props} />;
     case "flag":

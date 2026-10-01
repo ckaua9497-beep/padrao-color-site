@@ -72,9 +72,9 @@ export const KIND_INFO: Record<MockupKind, KindInfo> = {
   flag: { label: "Bandeira / wind banner", defaultSize: [70, 240, 0.05], sizeIsArtArea: false, dims: false, printable: true, scene: "light" },
   hardware: { label: "Base e haste", defaultSize: [70, 240, 0.05], sizeIsArtArea: false, dims: false, printable: false, scene: "light" },
   cloth: { label: "Têxtil", defaultSize: [50, 70, 0.1], sizeIsArtArea: false, dims: false, printable: true, scene: "light" },
-  mug: { label: "Caneca", defaultSize: [20, 9.5, 8], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
-  tumbler: { label: "Copo", defaultSize: [22, 15, 7], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
-  bottle: { label: "Garrafa", defaultSize: [20, 22, 7], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
+  mug: { label: "Caneca", defaultSize: [20, 8.5, 8], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
+  tumbler: { label: "Copo", defaultSize: [22, 10, 7], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
+  bottle: { label: "Garrafa", defaultSize: [20, 14, 7], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
   tshirt: { label: "Camiseta", defaultSize: [21, 28, 0], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
   cap: { label: "Boné", defaultSize: [12, 6, 0], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
   apron: { label: "Avental", defaultSize: [25, 30, 0], sizeIsArtArea: true, dims: false, printable: true, scene: "light" },
@@ -87,19 +87,10 @@ export const KIND_INFO: Record<MockupKind, KindInfo> = {
   box: { label: "Caixa", defaultSize: [20, 15, 10], sizeIsArtArea: false, dims: false, printable: true, scene: "light" },
 };
 
-/** Proporção (largura ÷ altura) do canvas de arte de cada tipo. */
-export function artAspect(spec: { kind: MockupKind; widthCm: number; heightCm: number }): number {
-  switch (spec.kind) {
-    case "mug":
-      return 2.35;
-    case "tumbler":
-    case "bottle":
-      return 2.2;
-    case "tshirt":
-      return 0.78;
-    case "cap":
-      return 1.6;
-    default:
-      return spec.widthCm / spec.heightCm;
-  }
+/**
+ * Proporção (largura ÷ altura) do canvas de arte. A medida da spec já é a área de arte nos
+ * tipos com sizeIsArtArea (caneca 20 × 8,5 cm, camiseta no formato DTF…) e a peça inteira nos demais.
+ */
+export function artAspect(spec: { widthCm: number; heightCm: number }): number {
+  return spec.widthCm / spec.heightCm;
 }

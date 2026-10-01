@@ -30,7 +30,7 @@ type ViewerProps = {
 const HOME_DIRECTION = new THREE.Vector3(0, 0.12, 1).normalize();
 /** Ângulo do snapshot que vai para o carrinho. */
 const CAPTURE_DIRECTION = new THREE.Vector3(0.45, 0.28, 1).normalize();
-const FIT_MARGIN = 1.12;
+const FIT_MARGIN = 1.22;
 const RESUME_AFTER_MS = 4000;
 const SPIN_SPEED = 0.9;
 const RESET_SECONDS = 0.6;
@@ -253,10 +253,12 @@ function Stage({ spec, art, label, showDims, modelKey, resetToken, reducedMotion
 function Lights({ dark }: { dark: boolean }) {
   return (
     <>
-      <ambientLight intensity={dark ? 0.12 : 0.4} />
-      <directionalLight position={[3, 5, 4]} intensity={dark ? 0.35 : 1.3} />
-      <directionalLight position={[-4, 2, -3]} intensity={dark ? 0.1 : 0.4} />
-      <Environment resolution={256} environmentIntensity={dark ? 0.5 : 0.85}>
+      <ambientLight intensity={dark ? 0.12 : 0.45} />
+      <directionalLight position={[3, 5, 4]} intensity={dark ? 0.35 : 1.25} />
+      <directionalLight position={[-4, 2, -3]} intensity={dark ? 0.1 : 0.55} />
+      {/* Contraluz: a peça gira sozinha, então o verso também precisa ficar claro. */}
+      <directionalLight position={[0, 4, -6]} intensity={dark ? 0.1 : 0.6} />
+      <Environment resolution={256} environmentIntensity={dark ? 0.5 : 0.95}>
         <Lightformer form="rect" intensity={dark ? 0.6 : 1.6} position={[0, 4, 3]} scale={[10, 3, 1]} />
         <Lightformer form="rect" intensity={dark ? 0.3 : 0.9} position={[-5, 1, 1]} rotation-y={Math.PI / 2} scale={[6, 4, 1]} />
         <Lightformer form="rect" intensity={dark ? 0.3 : 0.9} position={[5, 1, 1]} rotation-y={-Math.PI / 2} scale={[6, 4, 1]} />

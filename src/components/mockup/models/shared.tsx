@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Line } from "@react-three/drei";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
@@ -10,13 +10,26 @@ import { useAnimate } from "../viewer-hooks";
 
 export type MaskPath = (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
 
+// Uma decodificação por imagem, compartilhada entre as texturas da peça (frente, verso…).
+const decoded = new Map<string, Promise<HTMLImageElement>>();
+
+function decode(src: string): Promise<HTMLImageElement> {
+  let pending = decoded.get(src);
+  if (!pending) {
+    pending = loadImage(src);
+    decoded.set(src, pending);
+    pending.catch(() => decoded.delete(src));
+    if (decoded.size > 12) decoded.delete(decoded.keys().next().value as string);
+  }
+  return pending;
+}
 
 export function useArtImage(src: string | null) {
   const [loaded, setLoaded] = useState<{ src: string; image: HTMLImageElement } | null>(null);
   useEffect(() => {
     if (!src) return;
     let alive = true;
-    loadImage(src)
+    decode(src)
       .then((image) => alive && setLoaded({ src, image }))
       .catch(() => alive && setLoaded(null));
     return () => {
@@ -50,16 +63,25 @@ export function repaintArt(
 }
 
 
+/**
+ * Textura de arte desenhada num canvas 2D. Repinta no máximo uma vez por quadro (o seletor de cor
+ * dispara dezenas de eventos) e pede um novo frame, já que o viewer só renderiza sob demanda.
+ */
 export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtSettings, label: string, mask?: MaskPath) {
   const image = useArtImage(art.src);
+  const invalidate = useThree((state) => state.invalidate);
   const target = useMemo(() => createArtTexture(aspect), [aspect]);
   const [fontsReady, setFontsReady] = useState(false);
   useEffect(() => {
     document.fonts?.ready.then(() => setFontsReady(true));
   }, []);
   useEffect(() => {
-    repaintArt(target, variant, art, image, label, mask);
-  }, [target, variant, art, image, label, mask, fontsReady]);
+    const frame = requestAnimationFrame(() => {
+      repaintArt(target, variant, art, image, label, mask);
+      invalidate();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [target, variant, art, image, label, mask, fontsReady, invalidate]);
   useEffect(() => () => target.texture.dispose(), [target]);
   return target.texture;
 }
@@ -72,18 +94,69 @@ export function roughnessOf(spec: MockupSpec) {
 }
 
 
+/** Material da área impressa. Sem verniz usa o material padrão, mais leve de compilar que o físico. */
 export function PrintMaterial({ map, spec, transparent = false }: { map: THREE.Texture; spec: MockupSpec; transparent?: boolean }) {
-  return (
-    <meshPhysicalMaterial
-      map={map}
-      roughness={roughnessOf(spec)}
-      clearcoat={spec.clearcoat}
-      clearcoatRoughness={0.08}
-      transparent={transparent}
-      alphaTest={transparent ? 0.5 : 0}
-      side={THREE.FrontSide}
-    />
-  );
+  const alphaTest = transparent ? 0.5 : 0;
+  if (spec.clearcoat > 0) {
+    return <meshPhysicalMaterial map={map} roughness={roughnessOf(spec)} clearcoat={spec.clearcoat} clearcoatRoughness={0.08} transparent={transparent} alphaTest={alphaTest} />;
+  }
+  return <meshStandardMaterial map={map} roughness={roughnessOf(spec)} transparent={transparent} alphaTest={alphaTest} />;
+}
+
+type BandOptions = {
+  radiusTop: number;
+  radiusBottom: number;
+  height: number;
+  /** Largura física da arte (mesma unidade do raio). */
+  width: number;
+  /** Ângulo do centro da arte (0 = +z, de frente para a câmera). */
+  centerTheta?: number;
+  segments?: number;
+  rows?: number;
+  /** Raio em cada altura (y relativo ao centro da faixa), para superfícies curvas como a xícara. */
+  radiusAt?: (y: number) => number;
+};
+
+/**
+ * Faixa de impressão sobre cilindro ou tronco de cone. Cada altura cobre a mesma largura física,
+ * como o gabarito em arco da sublimação: num copo cônico a arte não fica espremida embaixo.
+ */
+export function bandGeometry({ radiusTop, radiusBottom, height, width, centerTheta = 0, segments = 96, rows = 12, radiusAt }: BandOptions) {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (let j = 0; j <= rows; j += 1) {
+    const v = j / rows;
+    const y = -height / 2 + height * v;
+    const r = radiusAt ? radiusAt(y) : radiusBottom + (radiusTop - radiusBottom) * v;
+    const span = Math.min(width / r, Math.PI * 2);
+    for (let i = 0; i <= segments; i += 1) {
+      const u = i / segments;
+      const theta = centerTheta - span / 2 + span * u;
+      positions.push(r * Math.sin(theta), y, r * Math.cos(theta));
+      uvs.push(u, v);
+    }
+  }
+  for (let j = 0; j < rows; j += 1) {
+    for (let i = 0; i < segments; i += 1) {
+      const a = j * (segments + 1) + i;
+      const b = a + 1;
+      const c = a + segments + 1;
+      const d = c + 1;
+      indices.push(a, b, c, b, d, c);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Libera a geometria criada em useMemo quando ela muda ou o modelo desmonta. */
+export function useGeometryCleanup(geometry: THREE.BufferGeometry | null | undefined) {
+  useEffect(() => () => geometry?.dispose(), [geometry]);
 }
 
 
@@ -138,12 +211,11 @@ export type SlabProps = {
   back?: THREE.Texture;
   radius?: number;
   edgeColor?: string;
-  edgeMaterial?: React.ReactNode;
   backColor?: string;
 };
 
 
-export function Slab({ w, h, d, spec, front, back, radius = 0, edgeColor = "#f4f4f4", edgeMaterial, backColor }: SlabProps) {
+export function Slab({ w, h, d, spec, front, back, radius = 0, edgeColor = "#f4f4f4", backColor }: SlabProps) {
   const shape = useMemo(() => makeShape(spec.shape, w, h, radius), [spec.shape, w, h, radius]);
   const edge = useMemo(() => {
     const g = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false, curveSegments: 48 });
@@ -155,8 +227,8 @@ export function Slab({ w, h, d, spec, front, back, radius = 0, edgeColor = "#f4f
   useEffect(() => () => face.dispose(), [face]);
   return (
     <group>
-      <mesh geometry={edge} castShadow receiveShadow>
-        {edgeMaterial ?? <meshStandardMaterial color={edgeColor} roughness={0.9} />}
+      <mesh geometry={edge}>
+        <meshStandardMaterial color={edgeColor} roughness={0.9} />
       </mesh>
       <mesh geometry={face} position-z={d / 2 + 0.0008}>
         <PrintMaterial map={front} spec={spec} />
@@ -265,7 +337,7 @@ export function Standoffs({ w, h, z }: { w: number; h: number; z: number }) {
         [-w / 2 + inset, -h / 2 + inset],
         [w / 2 - inset, -h / 2 + inset],
       ].map(([x, y]) => (
-        <mesh key={`${x}-${y}`} position={[x, y, z]} rotation-x={Math.PI / 2} castShadow>
+        <mesh key={`${x}-${y}`} position={[x, y, z]} rotation-x={Math.PI / 2}>
           <cylinderGeometry args={[0.035, 0.035, 0.06, 24]} />
           <meshStandardMaterial color="#d6d6d6" metalness={1} roughness={0.25} />
         </mesh>
@@ -277,7 +349,7 @@ export function Standoffs({ w, h, z }: { w: number; h: number; z: number }) {
 
 export function Tube({ length, radius = 0.028, color = "#f7f7f7", position }: { length: number; radius?: number; color?: string; position: [number, number, number] }) {
   return (
-    <mesh position={position} rotation-z={Math.PI / 2} castShadow>
+    <mesh position={position} rotation-z={Math.PI / 2}>
       <cylinderGeometry args={[radius, radius, length, 24]} />
       <meshStandardMaterial color={color} roughness={0.4} />
     </mesh>
@@ -287,6 +359,7 @@ export function Tube({ length, radius = 0.028, color = "#f7f7f7", position }: { 
 
 export function Cord({ points }: { points: THREE.Vector3[] }) {
   const geometry = useMemo(() => new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 40, 0.006, 8), [points]);
+  useGeometryCleanup(geometry);
   return (
     <mesh geometry={geometry}>
       <meshStandardMaterial color="#1a1a1a" roughness={0.7} />
@@ -322,13 +395,43 @@ export function Waving({ w, h, texture, strength = 0.08, anchor = "left" }: { w:
     state.invalidate();
   });
   return (
-    <mesh castShadow>
+    <mesh>
       <planeGeometry ref={geometry} args={[w, h, 48, 48]} />
       <meshStandardMaterial map={texture} side={THREE.DoubleSide} transparent alphaTest={0.5} roughness={0.8} />
     </mesh>
   );
 }
 
+
+/** Bloco de cantos arredondados (base do roll-up): retângulo extrudado na vertical. */
+export function RoundedBlock({ w, h, d, radius, color, metalness = 0, roughness = 0.5, position }: { w: number; h: number; d: number; radius: number; color: string; metalness?: number; roughness?: number; position?: [number, number, number] }) {
+  const geometry = useMemo(() => {
+    const g = new THREE.ExtrudeGeometry(makeShape("rect", w, d, radius), { depth: h, bevelEnabled: false, curveSegments: 12 });
+    g.rotateX(-Math.PI / 2);
+    g.translate(0, -h / 2, 0);
+    return g;
+  }, [w, h, d, radius]);
+  useGeometryCleanup(geometry);
+  return (
+    <mesh geometry={geometry} position={position}>
+      <meshStandardMaterial color={color} metalness={metalness} roughness={roughness} />
+    </mesh>
+  );
+}
+
+
+/**
+ * Acrílico transparente sem `transmission` (que pede um passe extra de render e já quebrou a cena):
+ * faces quase invisíveis com reflexo do ambiente e bordas levemente esverdeadas, como acrílico real.
+ */
+export function AcrylicMaterials() {
+  return (
+    <>
+      <meshPhysicalMaterial attach="material-0" color="#f4fbfa" transparent opacity={0.16} roughness={0.03} clearcoat={1} clearcoatRoughness={0.02} depthWrite={false} />
+      <meshPhysicalMaterial attach="material-1" color="#cfe9e3" transparent opacity={0.55} roughness={0.08} clearcoat={1} depthWrite={false} />
+    </>
+  );
+}
 
 export function metalColor(metal: MockupSpec["metal"]) {
   if (metal === "gold") return "#e8c26a";
