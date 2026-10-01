@@ -3,7 +3,7 @@
 import { CardModel, StickerModel, BookModel, TentModel, SheetModel } from "./paper";
 import { PanelModel, AcrylicModel, KeychainModel, CanvasModel, MatModel, BoxModel } from "./rigid";
 import { NeonModel, BannerModel, LightboxModel, RollupModel, FlagModel } from "./signage";
-import { ClothModel, TshirtModel, CapModel, CushionModel, BagModel } from "./textile";
+import { ApronModel, BagModel, BandanaModel, CapModel, ClothModel, CushionModel, PetBedModel, TshirtModel } from "./textile";
 import { MugModel, TumblerModel, BottleModel } from "./drinkware";
 import type { ModelProps } from "./shared";
 
@@ -40,9 +40,11 @@ export function MockupModel(props: ModelProps) {
     case "hardware":
       return <FlagModel {...props} />;
     case "cloth":
-    case "apron":
-    case "bandana":
       return <ClothModel {...props} />;
+    case "apron":
+      return <ApronModel {...props} />;
+    case "bandana":
+      return <BandanaModel {...props} />;
     case "mug":
       return <MugModel {...props} />;
     case "tumbler":
@@ -54,8 +56,9 @@ export function MockupModel(props: ModelProps) {
     case "cap":
       return <CapModel {...props} />;
     case "cushion":
-    case "petbed":
       return <CushionModel {...props} />;
+    case "petbed":
+      return <PetBedModel {...props} />;
     case "book":
       return <BookModel {...props} />;
     case "tent":

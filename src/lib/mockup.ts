@@ -43,6 +43,8 @@ export type MockupSpec = {
   carabiner: boolean;
   /** Encadernação de agenda, caderno, photobook. */
   binding: "spiral" | "spine";
+  /** Bolsa pequena com zíper (estojo, necessaire) em vez de sacola com alças. */
+  pouch: boolean;
   label: string;
 };
 
@@ -378,6 +380,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     handle: kind === "mug" || (kind === "tumbler" && (/\btravel mug\b/.test(name) || /\balca\b/.test(allValues))),
     carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
+    pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b|\bporta passaporte\b|\blancheira\b/.test(name),
     label: formatSize(widthCm, heightCm),
   };
 }

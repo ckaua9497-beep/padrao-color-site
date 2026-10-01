@@ -445,26 +445,6 @@ export function metalColor(metal: MockupSpec["metal"]) {
   return "#e2e4e7";
 }
 
-
-export function pillowGeometry(w: number, h: number, thickness: number, shape: MockupSpec["shape"]) {
-  const g = new THREE.PlaneGeometry(w, h, 64, 64);
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i += 1) {
-    const u = (pos.getX(i) / w) * 2;
-    const v = (pos.getY(i) / h) * 2;
-    let f: number;
-    if (shape === "rect") f = Math.pow(Math.max(0, 1 - u * u), 0.4) * Math.pow(Math.max(0, 1 - v * v), 0.4);
-    else {
-      const r = Math.sqrt(u * u + v * v);
-      f = r < 1 ? Math.pow(1 - r * r, 0.45) : 0;
-    }
-    pos.setZ(i, (thickness / 2) * f);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-
 export function Spiral({ length, axis, offset, count = 14 }: { length: number; axis: "x" | "y"; offset: [number, number, number]; count?: number }) {
   return (
     <group position={offset}>

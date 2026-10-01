@@ -68,7 +68,7 @@ const FAMILY: Record<MockupKind, ArtFamily> = {
   petbed: "home",
   book: "sign",
   tent: "sign",
-  bag: "sign",
+  bag: "apparel",
   box: "sign",
 };
 
