@@ -170,10 +170,16 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\bmagica\b/, "magic"],
   ],
   bottle: [
+    [/\bcoelhinho\b/, "bunny"],
+    [/\bcrazy dog\b/, "dog"],
+    [/\bcola\b/, "cola"],
     [/\binfantil\b|\brostinho\b/, "kids"],
     [/\bcom copo\b/, "thermo-cup"],
-    [/\bsports?\b|\bbico\b|\bsqueeze\b/, "sports"],
+    [/\btampa bola\b/, "sports-ball"],
+    [/\bbico\b/, "sports-spout"],
+    [/\bsports?\b|\bsqueeze\b/, "sports"],
   ],
+  bandana: [[/\bpet\b/, "pet"]],
   neon: [[/\bquadro\b/, "frame"]],
   tshirt: [
     [/\bbody\b/, "body"],
@@ -279,6 +285,7 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\bfaixa\b/, "strip"],
     [/\bmini banner\b/, "mini"],
     [/\btecido\b/, "fabric"],
+    [/\bs\/ acabamento\b|\bs\/ impressao\b/, "raw"],
   ],
   board: [[/\blaser\b/, "laser"]],
   rug: [[/\bcapacho\b/, "doormat"]],
@@ -440,6 +447,8 @@ const BLANK_KINDS: MockupKind[] = ["hardware"];
 export function variantOf(kind: MockupKind, name: string): string | null {
   return VARIANTS[kind]?.find(([pattern]) => pattern.test(name))?.[1] ?? null;
 }
+// Medidas com três números: largura × altura × profundidade.
+const VOLUME_KINDS: MockupKind[] = ["box", "cooler", "backpack", "duffel", "bag"];
 const SHAPED_KINDS: MockupKind[] = ["cushion", "sticker", "mat", "coaster", "keychain", "card", "petbed", "hangtag", "magnet", "fan", "wobbler", "rug"];
 // Peças de tecido/plástico cuja cor pode vir do próprio nome ("Ecobag Preta", "Mochila Azul").
 const NAMED_COLOR_KINDS: MockupKind[] = ["tshirt", "cap", "bag", "backpack", "drawstring", "cooler", "duffel", "sock", "shorts", "swimsuit", "flipflop", "lanyard", "wristband", "pen"];
@@ -466,6 +475,11 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   // Xícara London: área de arte menor que a da caneca padrão.
   let [widthCm, heightCm] = parsed ?? (teacup ? [16, 5] : [dw, dh]);
   if (kind === "banner" && /faixa/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
+  const kitHeight = kind === "flag" && !parsed ? /(\d+(?:[.,]\d+)?)\s*m\b/.exec(normalizeName(sizeText)) : null;
+  if (kitHeight) {
+    heightCm = Math.round(Number(kitHeight[1].replace(",", ".")) * 100 * 0.8);
+    widthCm = Math.round(heightCm * 0.29);
+  }
 
   let finish: MockupSpec["finish"] = "satin";
   if (/fosc/.test(allValues)) finish = "matte";
@@ -515,6 +529,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     if (fromValue !== "none") metal = fromValue;
     else if (bodyColors.length && PAINTABLE_METAL.includes(kind)) metal = "none";
   }
+  const modelValue = chosen.find((c) => /^modelo$/.test(c.key))?.value ?? "";
+  if (kind === "mug" && /cromad/.test(name) && metalFrom(modelValue) !== "none") metal = metalFrom(modelValue);
   const glitter = /\bglitter\b/.test(name) || /\bglitter\b/.test(colorValue ?? "");
   // "branca com base dourada": só a base é metálica.
   const baseBand = /\bbase (dourad\w*|pratead\w*|prata)\b/.exec(colorValue ?? "");
@@ -531,7 +547,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   const ledColors = ledFound.length ? ledFound : DEFAULT_LED_COLORS;
 
   const thickness = /(\d+(?:[.,]\d+)?)\s*mm/.exec(allValues);
-  const depthCm = thickness ? Number(thickness[1].replace(",", ".")) / 10 : dd;
+  const triple = VOLUME_KINDS.includes(kind) ? /(\d+(?:[.,]\d+)?)\s*x\s*\d+(?:[.,]\d+)?\s*x\s*(\d+(?:[.,]\d+)?)/.exec(sizeText.toLowerCase()) : null;
+  const depthCm = triple ? Number(triple[2].replace(",", ".")) : thickness ? Number(thickness[1].replace(",", ".")) / 10 : dd;
 
   const shapeText = `${name} | ${allValues}`;
   let shape: MockupShape = "rect";
@@ -545,9 +562,10 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   if (shape === "round" && circle) heightCm = widthCm = Math.max(widthCm, heightCm);
 
   let flagStyle: FlagStyle = "pena";
-  if (/\bfaca\b/.test(name)) flagStyle = "faca";
-  else if (/\bgota\b/.test(name)) flagStyle = "gota";
-  else if (/\bvela\b/.test(name)) flagStyle = "vela";
+  const flagText = `${name} | ${modelValue}`;
+  if (/\bfaca\b/.test(flagText)) flagStyle = "faca";
+  else if (/\bgota\b/.test(flagText)) flagStyle = "gota";
+  else if (/\bvela\b/.test(flagText)) flagStyle = "vela";
   else if (/\bretangular\b/.test(name) || (/\bbandeira\b/.test(name) && !/\bwind\b/.test(name))) flagStyle = "rect";
 
   const folds: MockupSpec["folds"] = /\b2 dobras\b/.test(name) ? 2 : /\bdobras?\b/.test(name) || kind === "folded" ? 1 : 0;

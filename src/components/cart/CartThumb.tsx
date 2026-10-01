@@ -2,13 +2,22 @@ import Image from "next/image";
 import { imageUrl } from "@/lib/format";
 import { cx } from "@/components/ui/cx";
 
-/** Miniatura do item: o quadro do mockup 3D quando existe, senão a foto do catálogo. */
-export function CartThumb({ preview, image, name, className = "size-20" }: { preview: string | null; image: string; name: string; className?: string }) {
+/**
+ * Miniatura do item: o quadro do mockup 3D (com a arte e o estilo escolhidos) quando existe,
+ * senão a foto do catálogo. `caption` (opcional) aparece num selo no rodapé, ex.: o estilo da arte.
+ */
+export function CartThumb({ preview, image, name, className = "size-20", caption }: { preview: string | null; image: string; name: string; className?: string; caption?: string }) {
   return (
-    <div className={cx("relative shrink-0 overflow-hidden rounded-control bg-mist", className)}>
+    <div className={cx("relative shrink-0 overflow-hidden rounded-control bg-mist ring-1 ring-black/5", className)}>
       {preview ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={preview} alt={`Mockup de ${name}`} className="size-full object-cover" />
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt={`Mockup de ${name}`} className="size-full object-cover" />
+          <span className="absolute left-1 top-1 rounded-full bg-ink/80 px-1.5 text-[9px] font-bold uppercase leading-4 tracking-wide text-white" aria-hidden>
+            3D
+          </span>
+          {caption && <span className="absolute inset-x-1 bottom-1 truncate rounded-full bg-white/90 px-1.5 text-center text-[9px] font-semibold leading-4 text-ink">{caption}</span>}
+        </>
       ) : (
         <Image src={imageUrl(image)} alt={name} fill sizes="80px" className="object-contain p-1" />
       )}
@@ -19,4 +28,9 @@ export function CartThumb({ preview, image, name, className = "size-20" }: { pre
 /** Linha "Arte: …" do item no carrinho, no resumo e no checkout. */
 export function artLine(artName: string | null) {
   return artName ? `Arte: ${artName}` : "Arte: enviar depois";
+}
+
+/** Estilo e textos da arte guardados nas opções do item (artSummary), para selos e resumos. */
+export function artStyleOf(options: Record<string, string>): string | undefined {
+  return options.Estilo;
 }

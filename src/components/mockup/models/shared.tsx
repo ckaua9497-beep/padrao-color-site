@@ -73,7 +73,8 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
   const target = useMemo(() => createArtTexture(aspect), [aspect]);
   // Repinta quando a fonte escolhida termina de carregar (o canvas não espera por ela sozinho).
   const [fontsLoaded, setFontsLoaded] = useState("");
-  const fontKey = `${art.font}:${art.text}`;
+  // Estilo e subtexto também trocam de fonte: repinta quando ela termina de carregar.
+  const fontKey = `${art.font}:${art.text}:${art.style ?? ""}:${art.subtext ?? ""}`;
   useEffect(() => {
     let alive = true;
     loadArtFont(art).then(() => alive && setFontsLoaded(fontKey));

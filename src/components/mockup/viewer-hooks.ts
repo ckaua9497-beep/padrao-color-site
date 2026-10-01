@@ -1,8 +1,30 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type RefObject } from "react";
+import { createContext, useContext, useEffect, useState, useSyncExternalStore, type RefObject } from "react";
 
 export { useMediaQuery } from "@/components/ui/useMediaQuery";
+
+const noopSubscribe = () => () => undefined;
+
+/** O navegador deixa um elemento entrar em tela cheia (o iPhone não deixa). No servidor responde false. */
+export function useFullscreenSupport(): boolean {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => document.fullscreenEnabled === true && typeof document.documentElement.requestFullscreen === "function",
+    () => false,
+  );
+}
+
+/** true enquanto o elemento é o que está em tela cheia. */
+export function useIsFullscreen(ref: RefObject<Element | null>): boolean {
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const update = () => setActive(document.fullscreenElement !== null && document.fullscreenElement === ref.current);
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, [ref]);
+  return active;
+}
 
 /** true enquanto o elemento tem alguma parte na tela. */
 export function useInViewport(ref: RefObject<Element | null>, rootMargin = "0px"): boolean {

@@ -5,7 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { ART_FONTS, DEFAULT_ART, TEXT_COLORS, artFamily, fileToDataUrl, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { ART_BACKGROUNDS, ART_FONTS, DEFAULT_ART, TEXT_COLORS, artFamily, fileToDataUrl, styleLabel, thumbnailOf, type ArtFamily, type ArtSettings } from "@/components/mockup/art";
 import { useCart } from "@/components/cart/CartProvider";
 import { IconClock, IconCube, IconTruck } from "@/components/icons";
 import { Badge } from "@/components/ui/Badge";
@@ -18,6 +18,7 @@ import { cx } from "@/components/ui/cx";
 import type { Variation } from "@/lib/catalog";
 import { formatBRL, imageUrl, leadLabel, quantityLabel } from "@/lib/format";
 import { mockupSpec } from "@/lib/mockup";
+import { artAspect } from "@/lib/mockup-kinds";
 import { availableValues, cleanOptionLabel, optionKeys, quote, type Selection } from "@/lib/pricing";
 import { ArtStep } from "./ArtStep";
 import PreviewModal from "./PreviewModal";
@@ -49,14 +50,26 @@ function initialSelection(product: ClientProduct): Selection {
   return selection;
 }
 
-/** Texto, fonte e cor da arte, para o carrinho e o resumo do pedido. */
-export function artSummary(art: ArtSettings): Record<string, string> {
-  const text = art.text.trim();
+/**
+ * Texto, subtexto, estilo, fonte e cores da arte, para o carrinho e o resumo do pedido.
+ * `family` (opcional) acrescenta o fundo quando ele é impresso (não vale para estampa e neon).
+ */
+export function artSummary(art: ArtSettings, family?: ArtFamily): Record<string, string> {
+  // Só o subtexto escrito: o mockup mostra ele como texto principal, e o resumo também.
+  const typed = art.text.trim();
+  const typedSub = (art.subtext ?? "").trim();
+  const text = typed || typedSub;
+  const subtext = typed ? typedSub : "";
   if (!text) return {};
+  const colorName = (value: string) => TEXT_COLORS.find((c) => c.value === value)?.label ?? ART_BACKGROUNDS.find((b) => b.value === value)?.label ?? value;
+  const printsBackground = !art.src && family !== undefined && family !== "apparel" && family !== "neon";
   return {
-    "Texto da arte": text,
-    Fonte: ART_FONTS[art.font].label,
-    "Cor do texto": TEXT_COLORS.find((c) => c.value === art.textColor)?.label ?? art.textColor,
+    ...(text ? { "Texto da arte": text } : {}),
+    ...(subtext ? { Subtexto: subtext } : {}),
+    Estilo: styleLabel(art.style),
+    Fonte: ART_FONTS[art.font]?.label ?? ART_FONTS.figtree.label,
+    ...(family === "neon" ? {} : { "Cor do texto": colorName(art.textColor) }),
+    ...(printsBackground ? { Fundo: colorName(art.background) } : {}),
   };
 }
 
@@ -86,7 +99,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const family = artFamily(spec.kind);
   const total = price.price * qty;
   // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
-  const hasArt = spec.blank || artLater || Boolean(artName) || art.text.trim().length > 0;
+  const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
+  const hasArt = spec.blank || artLater || Boolean(artName) || typedArt;
 
   const choose = (key: string, value: string) => setSelection((s) => ({ ...s, [key]: value }));
   const updateArt = (update: (art: ArtSettings) => ArtSettings) => {
@@ -150,13 +164,13 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       name: product.name,
       image: product.image,
       preview: thumb,
-      options: { ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])), ...(!spec.blank && !artLater ? artSummary(art) : {}) },
+      options: { ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])), ...(!spec.blank && !artLater ? artSummary(art, family) : {}) },
       unitPrice: price.price,
       setQty: price.qty,
       quantity: qty,
       leadDays: price.leadDays,
       // O carrinho mostra "Arte: …"; null vira "enviar depois".
-      artName: spec.blank ? "produto sem impressão" : artLater ? null : (artName ?? (art.text.trim() ? "texto no mockup" : null)),
+      artName: spec.blank ? "produto sem impressão" : artLater ? null : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
     });
     setAdding(false);
     setPreview(false);
@@ -272,6 +286,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
               if (value) setArtMissing(false);
             }}
             missing={artMissing}
+            kind={spec.kind}
+            aspect={artAspect(spec)}
+            ledColors={spec.ledColors}
+            label={product.name}
           />
         </ol>
 
@@ -309,7 +327,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           name={product.name}
           fallbackImage={product.image}
           captureRef={captureRef}
-          summary={[...keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string]), ...Object.entries(spec.blank ? {} : artSummary(art))]}
+          summary={keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string])}
+          artDetails={artSummary(art, family)}
           total={formatBRL(total)}
         />
       )}
