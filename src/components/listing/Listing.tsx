@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import ProductCard from "@/components/ProductCard";
+import { Button } from "@/components/ui/Button";
+import { cx } from "@/components/ui/cx";
+import { useMediaQuery } from "@/components/ui/useMediaQuery";
 import type { ProductSummary } from "@/lib/catalog";
 import { spectrumAt } from "@/lib/format";
 
@@ -18,12 +21,21 @@ const SORTS = {
 
 type SortKey = keyof typeof SORTS;
 
+/**
+ * "auto": aberta no desktop e recolhida no celular, resolvido por CSS (sem salto na hidratação).
+ * Depois do primeiro clique vale a escolha da pessoa.
+ */
+type FiltersState = "auto" | "open" | "closed";
+
 const PAGE = 24;
 
 export default function Listing({ products, categories, activeSlug }: { products: ProductSummary[]; categories: SidebarCategory[]; activeSlug?: string }) {
-  const [showFilters, setShowFilters] = useState(true);
+  const [filters, setFilters] = useState<FiltersState>("auto");
   const [sort, setSort] = useState<SortKey>("padrao");
   const [limit, setLimit] = useState(PAGE);
+  const desktop = useMediaQuery("(min-width: 64rem)");
+  const expanded = filters === "open" || (filters === "auto" && desktop);
+  const sidebarOnDesktop = filters !== "closed";
 
   const sorted = useMemo(() => {
     const list = [...products];
@@ -37,13 +49,28 @@ export default function Listing({ products, categories, activeSlug }: { products
   return (
     <div>
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-        <button type="button" onClick={() => setShowFilters((v) => !v)} className="flex items-center gap-2.5 rounded-control bg-mist px-4 py-2.5 text-[15px] font-semibold transition-colors hover:bg-fog">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls="filtros"
+          onClick={() => setFilters(expanded ? "closed" : "open")}
+          className="flex h-11 items-center gap-2.5 rounded-control bg-mist px-4 text-[15px] font-semibold transition-colors hover:bg-fog"
+        >
           <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
             <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
             <circle cx="16" cy="7" r="2" />
             <circle cx="10" cy="17" r="2" />
           </svg>
-          {showFilters ? "Esconder filtros" : "Mostrar filtros"}
+          {filters === "auto" ? (
+            <>
+              <span className="lg:hidden">Mostrar filtros</span>
+              <span className="hidden lg:inline">Esconder filtros</span>
+            </>
+          ) : filters === "open" ? (
+            "Esconder filtros"
+          ) : (
+            "Mostrar filtros"
+          )}
         </button>
         <div className="flex items-center gap-4">
           <p className="text-[15px] text-ink/75" role="status">
@@ -53,7 +80,7 @@ export default function Listing({ products, categories, activeSlug }: { products
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
             aria-label="Ordenar produtos"
-            className="h-11 rounded-control border border-line-strong bg-white px-3 text-[15px] outline-none focus:border-ink"
+            className="h-11 rounded-control border border-line-strong bg-white px-3 text-[15px] focus:border-ink"
           >
             {Object.entries(SORTS).map(([key, label]) => (
               <option key={key} value={key}>
@@ -64,36 +91,42 @@ export default function Listing({ products, categories, activeSlug }: { products
         </div>
       </div>
 
-      <div className={`grid gap-8 ${showFilters ? "lg:grid-cols-[230px_1fr]" : ""}`}>
-        {showFilters && (
-          <aside className="animate-fade-up">
-            <p className="mb-4 text-[13px] font-semibold uppercase tracking-widest text-muted">Categorias</p>
-            <ul className="space-y-1">
-              <li>
-                <Link href="/produtos" className={`block rounded-[10px] px-3 py-1.5 text-[15px] transition-colors ${!activeSlug ? "bg-ink font-semibold text-white" : "hover:bg-mist"}`}>
-                  Todos os produtos
-                </Link>
-              </li>
-              {categories.map((c) => (
+      <div className={cx("grid gap-8", sidebarOnDesktop && "lg:grid-cols-[230px_1fr]")}>
+        <aside id="filtros" aria-label="Filtros" className={cx("animate-fade-up", filters === "closed" && "hidden", filters === "auto" && "hidden lg:block")}>
+          <p className="mb-4 text-caption font-semibold uppercase tracking-widest text-muted">Categorias</p>
+          <ul className="space-y-1">
+            <li>
+              <Link
+                href="/produtos"
+                aria-current={!activeSlug ? "page" : undefined}
+                className={cx("block rounded-thumb px-3 py-1.5 text-[15px] transition-colors", !activeSlug ? "bg-ink font-semibold text-white" : "hover:bg-mist")}
+              >
+                Todos os produtos
+              </Link>
+            </li>
+            {categories.map((c) => {
+              const active = activeSlug === c.slug;
+              return (
                 <li key={c.slug}>
                   <Link
                     href={`/categoria/${c.slug}`}
-                    className={`flex items-center justify-between rounded-[10px] px-3 py-1.5 text-[15px] transition-colors ${activeSlug === c.slug ? "bg-ink font-semibold text-white" : "hover:bg-mist"}`}
+                    aria-current={active ? "page" : undefined}
+                    className={cx("flex items-center justify-between rounded-thumb px-3 py-1.5 text-[15px] transition-colors", active ? "bg-ink font-semibold text-white" : "hover:bg-mist")}
                   >
                     {c.name}
-                    <span className={`text-[12px] ${activeSlug === c.slug ? "text-white/70" : "text-muted"}`}>{c.count}</span>
+                    <span className={cx("text-micro", active ? "text-white/75" : "text-muted")}>{c.count}</span>
                   </Link>
                 </li>
-              ))}
-            </ul>
-          </aside>
-        )}
+              );
+            })}
+          </ul>
+        </aside>
 
         <div>
           {sorted.length === 0 ? (
             <p className="rounded-card bg-mist p-10 text-center text-ink/75">Nenhum produto encontrado.</p>
           ) : (
-            <ul className={`grid grid-cols-2 gap-4 md:gap-5 ${showFilters ? "md:grid-cols-3" : "md:grid-cols-3 xl:grid-cols-4"}`}>
+            <ul className={cx("grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-5", !sidebarOnDesktop && "xl:grid-cols-4")}>
               {sorted.slice(0, limit).map((p, i) => (
                 <li key={p.slug} className="animate-fade-up" style={{ animationDelay: `${(i % PAGE) * 25}ms` }}>
                   <ProductCard product={p} tone={spectrumAt(i).soft} priority={i < 6} />
@@ -103,9 +136,9 @@ export default function Listing({ products, categories, activeSlug }: { products
           )}
           {limit < sorted.length && (
             <div className="mt-10 flex justify-center">
-              <button type="button" onClick={() => setLimit((l) => l + PAGE)} className="h-12 rounded-full bg-ink px-8 text-sm font-bold text-white transition-colors hover:bg-coral">
+              <Button variant="dark" size="sm" onClick={() => setLimit((l) => l + PAGE)}>
                 Carregar mais ({sorted.length - limit} restantes)
-              </button>
+              </Button>
             </div>
           )}
         </div>

@@ -1,10 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Arrow } from "@/components/Rail";
+import { Arrow, Dot, PauseButton } from "@/components/Rail";
 import { IconClock, IconCube, IconLayers } from "@/components/icons";
+import { Button } from "@/components/ui/Button";
+import { cx } from "@/components/ui/cx";
+import { usePrefersReducedMotion } from "@/components/ui/useMediaQuery";
 import { imageUrl } from "@/lib/format";
 
 export type HeroSlide = {
@@ -14,10 +16,14 @@ export type HeroSlide = {
   text: string;
   cta: string;
   href: string;
+  /** Fundo do slide (token do espectro, ex.: var(--color-peach-50)). */
   tone: string;
+  /** Cor da palavra em destaque; precisa de 3:1 sobre o fundo (texto grande). */
   accent: string;
   images: string[];
 };
+
+const AUTOPLAY_MS = 7000;
 
 export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; stats: { products: number; minLeadDays: number } }) {
   const FEATURES = [
@@ -26,14 +32,19 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
     { Icon: IconLayers, title: `${stats.products} produtos`, text: "para a sua marca" },
   ];
   const [index, setIndex] = useState(0);
-  const paused = useRef(false);
+  const [stopped, setStopped] = useState(false);
+  const hovering = useRef(false);
+  const focused = useRef(false);
+  const reducedMotion = usePrefersReducedMotion();
+  const autoplays = !reducedMotion && !stopped && slides.length > 1;
 
   useEffect(() => {
+    if (!autoplays) return;
     const id = window.setInterval(() => {
-      if (!paused.current && document.visibilityState === "visible") setIndex((i) => (i + 1) % slides.length);
-    }, 7000);
+      if (!hovering.current && !focused.current && document.visibilityState === "visible") setIndex((i) => (i + 1) % slides.length);
+    }, AUTOPLAY_MS);
     return () => window.clearInterval(id);
-  }, [slides.length]);
+  }, [autoplays, slides.length]);
 
   const go = (dir: 1 | -1) => setIndex((i) => (i + dir + slides.length) % slides.length);
 
@@ -42,50 +53,63 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
       aria-roledescription="carrossel"
       aria-label="Destaques"
       className="relative h-[620px] overflow-hidden md:h-[640px]"
-      onPointerEnter={() => (paused.current = true)}
-      onPointerLeave={() => (paused.current = false)}
+      onPointerEnter={() => (hovering.current = true)}
+      onPointerLeave={() => (hovering.current = false)}
+      onFocusCapture={() => (focused.current = true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focused.current = false;
+      }}
     >
       {slides.map((slide, i) => {
         const active = i === index;
+        // Um único h1 na página: o primeiro slide; os outros são h2.
+        const Title = i === 0 ? "h1" : "h2";
         return (
           <div
             key={slide.bold}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${i + 1} de ${slides.length}`}
             aria-hidden={!active}
-            className={`absolute inset-0 transition-all duration-[1200ms] ease-reveal ${active ? "visible scale-100 opacity-100" : "invisible scale-[1.04] opacity-0"}`}
+            inert={!active}
+            className={cx(
+              "absolute inset-0 transition-all duration-[1200ms] ease-reveal motion-reduce:transition-none",
+              active ? "visible scale-100 opacity-100" : "invisible scale-[1.04] opacity-0",
+            )}
             style={{ background: slide.tone }}
           >
-            <div className="mx-auto grid h-full max-w-[1440px] grid-cols-1 items-center gap-6 px-6 pb-36 pt-10 md:grid-cols-[1.05fr_1fr] md:px-16 md:pb-40 xl:px-[110px]">
-              <div className={`transition-all delay-200 duration-1000 ease-reveal ${active ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"}`}>
-                <h1 className="leading-[0.95]">
+            <div className="container-site grid h-full grid-cols-1 items-center gap-6 pb-36 pt-10 md:grid-cols-[1.05fr_1fr] md:pb-40">
+              <div className={cx("transition-all delay-200 duration-1000 ease-reveal motion-reduce:transition-none", active ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0")}>
+                <Title className="leading-[0.95]">
                   <span className="block text-[clamp(40px,6vw,76px)] font-light tracking-[-0.02em] text-ink/80">{slide.light}</span>
                   <span className="block text-[clamp(48px,7.4vw,96px)] font-black uppercase tracking-[-0.03em]" style={{ color: slide.accent }}>
                     {slide.bold}
                   </span>
                   <span className="block text-[clamp(36px,5.2vw,68px)] font-semibold uppercase tracking-[-0.02em]">{slide.tail}</span>
-                </h1>
-                <p className="mt-5 max-w-md text-lg text-ink/75 md:text-xl">{slide.text}</p>
+                </Title>
+                <p className="mt-5 max-w-md text-lead text-ink/80 md:text-xl">{slide.text}</p>
                 <div className="mt-7 hidden gap-5 md:flex">
                   {FEATURES.map(({ Icon, title, text }) => (
                     <div key={title} className="flex items-center gap-3">
                       <span className="grid size-13 place-items-center rounded-full bg-white shadow-card">
-                        <Icon className="size-6" />
+                        <Icon aria-hidden className="size-6" />
                       </span>
-                      <span className="text-[13px] leading-tight">
+                      <span className="text-caption leading-tight">
                         <span className="block font-bold">{title}</span>
                         {text}
                       </span>
                     </div>
                   ))}
                 </div>
-                <Link href={slide.href} tabIndex={active ? 0 : -1} className="mt-8 inline-flex h-13 items-center rounded-full bg-ink px-8 text-base font-bold text-white transition-colors duration-300 ease-button hover:bg-coral">
+                <Button href={slide.href} variant="dark" size="md" className="mt-8">
                   {slide.cta}
-                </Link>
+                </Button>
               </div>
               <div className="relative hidden h-full md:block">
                 {slide.images.map((src, k) => (
                   <div
                     key={src}
-                    className={`absolute transition-all duration-[1400ms] ease-reveal ${active ? "translate-y-0 opacity-100" : "translate-y-16 opacity-0"}`}
+                    className={cx("absolute transition-all duration-[1400ms] ease-reveal motion-reduce:transition-none", active ? "translate-y-0 opacity-100" : "translate-y-16 opacity-0")}
                     style={{
                       transitionDelay: `${250 + k * 140}ms`,
                       ...[
@@ -95,7 +119,15 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
                       ][k],
                     }}
                   >
-                    <Image src={imageUrl(src)} alt="" width={600} height={600} priority={i === 0} className="h-auto w-full object-contain drop-shadow-[0_30px_40px_rgba(0,0,0,0.18)]" />
+                    <Image
+                      src={imageUrl(src)}
+                      alt=""
+                      width={600}
+                      height={600}
+                      loading={i === 0 ? "eager" : "lazy"}
+                      fetchPriority={i === 0 && k === 0 ? "high" : undefined}
+                      className="h-auto w-full object-contain drop-shadow-pop"
+                    />
                   </div>
                 ))}
               </div>
@@ -103,18 +135,13 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
           </div>
         );
       })}
-      <Arrow dir="prev" onClick={() => go(-1)} className="absolute left-4 top-[42%] z-10 md:left-8" />
-      <Arrow dir="next" onClick={() => go(1)} className="absolute right-4 top-[42%] z-10 md:right-8" />
-      <div className="absolute bottom-32 left-1/2 z-10 flex -translate-x-1/2 gap-2 md:bottom-36">
+      <Arrow dir="prev" onClick={() => go(-1)} className="absolute left-4 top-[42%] z-10 hidden md:left-8 md:grid" />
+      <Arrow dir="next" onClick={() => go(1)} className="absolute right-4 top-[42%] z-10 hidden md:right-8 md:grid" />
+      <div className="absolute bottom-32 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 md:bottom-36">
         {slides.map((s, i) => (
-          <button
-            key={s.bold}
-            type="button"
-            aria-label={`Destaque ${i + 1}`}
-            onClick={() => setIndex(i)}
-            className={`h-2 rounded-full transition-all duration-500 ${i === index ? "w-8 bg-ink" : "w-2 bg-ink/25"}`}
-          />
+          <Dot key={s.bold} active={i === index} label={`Destaque ${i + 1}`} onClick={() => setIndex(i)} />
         ))}
+        {!reducedMotion && slides.length > 1 && <PauseButton paused={stopped} onToggle={() => setStopped((v) => !v)} className="ml-2" />}
       </div>
     </section>
   );

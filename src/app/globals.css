@@ -58,6 +58,7 @@
   --color-magenta-50: #fce4f0;
   --color-blue-50: #ddeef8;
   --color-peach-50: #fbeee6;
+  --color-lime-700: #6f8100; /* verde-oliva legível sobre lime-50 (texto grande) */
 
   --color-whatsapp: #25d366;
 
@@ -267,6 +268,17 @@
     background-size: 0% 80%;
   }
 
+  /* Texto claro sobre o marca-texto: fica escuro até a faixa aparecer, para não sumir no fundo. */
+  .marker-inverse {
+    transition:
+      background-size 0.9s var(--ease-highlight),
+      color 0.4s ease 0.25s;
+  }
+
+  .js .marker-inverse:not([data-shown="true"]) {
+    color: var(--color-ink);
+  }
+
   .word-reveal > span {
     display: inline-block;
     overflow: hidden;
@@ -310,6 +322,11 @@
 
   .marker {
     background-size: 100% 80% !important;
+  }
+
+  /* Sem animação a faixa já aparece cheia: o texto claro também. */
+  .js .marker-inverse:not([data-shown="true"]) {
+    color: inherit;
   }
 
   [class*="animate-marquee"],

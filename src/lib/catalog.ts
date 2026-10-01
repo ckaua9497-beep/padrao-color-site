@@ -48,56 +48,9 @@ const catalog = data as unknown as {
   products: Product[];
 };
 
-export const STORE = {
-  name: "Padrão Color",
-  tagline: "Gráfica e Comunicação Visual",
-  phone: "(21) 3668-1550",
-  phoneHref: "tel:+552136681550",
-  email: "sac@padraocolor.com.br",
-  whatsapp: "https://api.whatsapp.com/send?phone=5521971148565",
-  address: "Rua Nicolau Cheven, Nº 255 – São João de Meriti, RJ",
-  hours: "Seg a sex, 8h às 18h",
-  legal: "APEL GRÁFICA E EDITORA LTDA · CNPJ 14.572.530/0001-19",
-  blog: "https://blog.padraocolor.com.br/",
-  social: {
-    instagram: "https://www.instagram.com/padraocolor/",
-    facebook: "https://www.facebook.com/padraocolor/",
-    youtube: "https://www.youtube.com/channel/UCUm-Oi-n1m0kqO6-VKATmdw",
-    linkedin: "https://www.linkedin.com/company/padraocolor",
-    tiktok: "https://www.tiktok.com/@padraocolorbr",
-  },
-} as const;
+export { STORE } from "./store";
+export { MENU_GROUPS } from "./menu";
 
-export const MENU_GROUPS = [
-  {
-    label: "Papelaria",
-    blurb: "Cartões, folhetos, adesivos e tudo que vai para o papel.",
-    categories: [
-      "cartoes-de-visita-e-postais",
-      "folhetos",
-      "adesivos-e-rotulos",
-      "calendarios",
-      "escritorio",
-      "impressoes",
-      "photobook",
-    ],
-  },
-  {
-    label: "Comunicação Visual",
-    blurb: "Banners, placas, LED neon e sinalização para a sua marca aparecer.",
-    categories: ["banner-e-lonas", "comunicacao-visual", "led-neon", "promocional", "festas-e-eventos"],
-  },
-  {
-    label: "Brindes e Vestuário",
-    blurb: "Canecas, camisas, almofadas e presentes com a sua arte.",
-    categories: ["brindes-e-presentes", "vestuario", "texteis", "bolsas-e-mochilas", "casa-e-decoracao", "pet-shop"],
-  },
-  {
-    label: "Para o seu negócio",
-    blurb: "Itens para restaurantes, embalagens e insumos de personalização.",
-    categories: ["restaurantes", "embalagens", "suprimentos"],
-  },
-] as const;
 
 export function getCategories(): Category[] {
   return catalog.categories;

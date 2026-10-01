@@ -24,7 +24,7 @@ export default async function CategoryPage(props: PageProps<"/categoria/[slug]">
   const index = categories.findIndex((c) => c.slug === slug);
 
   return (
-    <div className="mx-auto max-w-[1440px] px-5 pb-20 md:px-10 xl:px-[70px]">
+    <div className="container-site pb-20">
       <ListingBanner
         title={category.name}
         subtitle={`${category.count} produtos · a partir de ${formatBRL(category.minPrice)}`}

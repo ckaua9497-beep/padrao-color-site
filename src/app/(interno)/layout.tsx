@@ -16,7 +16,7 @@ export default function InternoLayout({ children }: { children: React.ReactNode 
   return (
     <>
       <header className="border-b border-line bg-white">
-        <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-6 px-5 md:px-10 xl:px-[70px]">
+        <div className="container-site flex h-16 items-center justify-between gap-6">
           <Logo />
           <nav aria-label="Seções internas" className="flex gap-1 text-sm font-semibold">
             {LINKS.map((link) => (

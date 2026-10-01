@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import ProductCard from "@/components/ProductCard";
 import Rail from "@/components/Rail";
 import ProductExperience from "@/components/product/ProductExperience";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { IconClock, IconCube, IconShield } from "@/components/icons";
 import { getProduct, getProducts, getRelated, toSummary } from "@/lib/catalog";
 import { spectrumAt } from "@/lib/format";
@@ -29,20 +29,15 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
 
   return (
     <>
-      <div className="mx-auto max-w-[1440px] px-5 pb-16 pt-8 md:px-10 xl:px-[70px]">
-        <nav aria-label="Trilha" className="mb-6 flex flex-wrap items-center gap-2 text-[14px] text-ink/70">
-          <Link href="/" className="hover:text-ink">
-            Início
-          </Link>
-          <span aria-hidden>›</span>
-          <Link href="/produtos" className="hover:text-ink">
-            Produtos
-          </Link>
-          <span aria-hidden>›</span>
-          <Link href={`/categoria/${product.categorySlug}`} className="hover:text-ink">
-            {product.category}
-          </Link>
-        </nav>
+      <div className="container-site pb-16 pt-8">
+        <Breadcrumb
+          className="mb-6"
+          items={[
+            { href: "/", label: "Início" },
+            { href: "/produtos", label: "Produtos" },
+            { href: `/categoria/${product.categorySlug}`, label: product.category },
+          ]}
+        />
 
         <ProductExperience
           product={{
@@ -64,10 +59,10 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
       </div>
 
       <section className="bg-mist">
-        <div className="mx-auto grid max-w-[1440px] gap-12 px-5 py-16 md:px-10 lg:grid-cols-[1.2fr_1fr] xl:px-[70px]">
+        <div className="container-site grid gap-12 py-16 lg:grid-cols-[1.2fr_1fr]">
           <div>
-            <h2 className="text-[30px] font-normal">Sobre o produto</h2>
-            <p className="mt-5 whitespace-pre-line text-[16px] leading-relaxed text-ink/80">{product.description}</p>
+            <h2 className="text-title">Sobre o produto</h2>
+            <p className="mt-5 whitespace-pre-line text-body text-ink/80">{product.description}</p>
             <ul className="mt-8 grid gap-4 sm:grid-cols-3">
               {[
                 { Icon: IconCube, title: "Mockup 3D", text: "Prévia com a sua arte" },
@@ -76,9 +71,9 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
               ].map(({ Icon, title, text }, i) => (
                 <li key={title} className="flex items-center gap-3 rounded-card bg-white p-4">
                   <span className="grid size-11 shrink-0 place-items-center rounded-full" style={{ background: spectrumAt(i + 1).soft }}>
-                    <Icon className="size-5" />
+                    <Icon aria-hidden className="size-5" />
                   </span>
-                  <span className="text-[13px] leading-tight">
+                  <span className="text-caption leading-tight">
                     <span className="block font-bold">{title}</span>
                     {text}
                   </span>
@@ -87,7 +82,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             </ul>
           </div>
           <div>
-            <h2 className="text-[30px] font-normal">Informações técnicas</h2>
+            <h2 className="text-title">Informações técnicas</h2>
             <dl className="mt-5 divide-y divide-line rounded-card bg-white px-6">
               {keys.map((key) => (
                 <div key={key} className="grid grid-cols-[150px_1fr] gap-4 py-4 text-[15px]">
@@ -105,8 +100,8 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
       </section>
 
       {related.length > 0 && (
-        <section className="mx-auto max-w-[1440px] px-5 py-16 md:px-10 xl:px-[70px]">
-          <h2 className="mb-6 text-3xl font-bold tracking-[-0.02em]">Você também pode gostar</h2>
+        <section className="container-site py-16">
+          <h2 className="mb-6 text-title font-bold">Você também pode gostar</h2>
           <Rail label="Produtos relacionados" itemClassName="w-[70%] sm:w-[40%] md:w-[30%] lg:w-[calc((100%-4*16px)/5)]">
             {related.map((p, i) => (
               <ProductCard key={p.slug} product={p} tone={spectrumAt(i).soft} />

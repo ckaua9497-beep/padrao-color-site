@@ -1,19 +1,8 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useSyncExternalStore, type RefObject } from "react";
+import { createContext, useContext, useEffect, useState, type RefObject } from "react";
 
-/** Media query reativa, sem setState dentro de efeito. No servidor responde false. */
-export function useMediaQuery(query: string): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const list = window.matchMedia(query);
-      list.addEventListener("change", onChange);
-      return () => list.removeEventListener("change", onChange);
-    },
-    () => window.matchMedia(query).matches,
-    () => false,
-  );
-}
+export { useMediaQuery } from "@/components/ui/useMediaQuery";
 
 /** true enquanto o elemento tem alguma parte na tela. */
 export function useInViewport(ref: RefObject<Element | null>, rootMargin = "0px"): boolean {

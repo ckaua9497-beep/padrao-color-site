@@ -52,13 +52,17 @@ export function Reveal({
   );
 }
 
-export function Marker({ children, color, className = "" }: { children: ReactNode; color?: string; className?: string }) {
+/**
+ * Marca-texto que cresce da esquerda para a direita ao entrar na tela.
+ * `inverse`: texto claro sobre a faixa — fica escuro até a faixa aparecer, para não sumir no fundo.
+ */
+export function Marker({ children, color, inverse = false, className = "" }: { children: ReactNode; color?: string; inverse?: boolean; className?: string }) {
   const [ref, shown] = useInView<HTMLSpanElement>(0.6);
   return (
     <span
       ref={ref}
       data-shown={shown}
-      className={`marker ${className}`}
+      className={`marker ${inverse ? "marker-inverse" : ""} ${className}`}
       style={color ? ({ "--marker-color": color } as React.CSSProperties) : undefined}
     >
       {children}

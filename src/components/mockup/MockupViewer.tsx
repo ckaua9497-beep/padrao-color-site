@@ -365,7 +365,7 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
       data-ready={ready}
       onPointerDown={() => setArmed(true)}
       onPointerLeave={() => setArmed(false)}
-      className={`relative overflow-hidden rounded-card ${dark ? "bg-[#17171c]" : "bg-mist"} ${className}`}
+      className={`relative overflow-hidden rounded-card ${dark ? "bg-night" : "bg-mist"} ${className}`}
     >
       {failed ? (
         <ViewerFallback image={fallbackImage} label={label} onRetry={supported ? retry : undefined} />
@@ -437,10 +437,10 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
             </ViewerButton>
           </div>
           <span
-            className={`pointer-events-none absolute bottom-3 left-3 rounded-[10px] px-2.5 py-1.5 text-center text-[11px] font-bold leading-tight ${dark ? "bg-white text-ink" : "bg-ink text-white"}`}
+            className={`pointer-events-none absolute bottom-3 left-3 rounded-thumb px-2.5 py-1.5 text-center text-[12px] font-bold leading-tight ${dark ? "bg-white text-ink" : "bg-ink text-white"}`}
           >
             {spec.label}
-            <span className="block text-[9px] font-medium opacity-70">{info.sizeIsArtArea ? "área de arte" : "tamanho"}</span>
+            <span className="block text-[10px] font-medium opacity-75">{info.sizeIsArtArea ? "área de arte" : "tamanho"}</span>
           </span>
         </>
       )}

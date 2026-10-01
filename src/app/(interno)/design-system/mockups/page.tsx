@@ -43,7 +43,7 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
   const selected = getProduct(first(raw.p) ?? visible[0]?.slug ?? "");
 
   return (
-    <div className="mx-auto max-w-[1440px] px-5 py-10 md:px-10 xl:px-[70px]">
+    <div className="container-site py-10">
       <h1 className="text-[clamp(32px,3.4vw,44px)] font-bold tracking-tight">Galeria de mockups 3D</h1>
       <p className="mt-2 max-w-2xl text-muted">
         Cada produto do catálogo com o tipo de mockup resolvido. Selecione um produto para ver o modelo com as opções dele. Só um

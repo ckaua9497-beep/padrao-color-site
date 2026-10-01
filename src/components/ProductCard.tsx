@@ -1,34 +1,37 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { ProductSummary } from "@/lib/catalog";
-import { formatBRL, imageUrl, quantityLabel } from "@/lib/format";
+import { imageUrl, quantityLabel } from "@/lib/format";
 import { IconCube } from "@/components/icons";
+import { Badge } from "@/components/ui/Badge";
+import { Price } from "@/components/ui/Price";
 
-export default function ProductCard({ product, tone = "#f5f5f5", priority = false }: { product: ProductSummary; tone?: string; priority?: boolean }) {
+export default function ProductCard({ product, tone = "var(--color-mist)", priority = false }: { product: ProductSummary; tone?: string; priority?: boolean }) {
   return (
-    <Link href={`/produto/${product.slug}`} className="group flex h-full flex-col overflow-hidden rounded-card bg-white shadow-card transition-transform duration-500 ease-card hover:-translate-y-1">
+    <Link href={`/produto/${product.slug}`} className="group flex h-full flex-col overflow-hidden rounded-card bg-white shadow-card">
       <div className="relative aspect-square overflow-hidden rounded-card" style={{ background: tone }}>
         <Image
           src={imageUrl(product.image)}
-          alt={product.name}
+          alt=""
           fill
-          priority={priority}
+          loading={priority ? "eager" : "lazy"}
           sizes="(max-width: 768px) 70vw, (max-width: 1280px) 33vw, 300px"
-          className="object-contain p-4 transition-transform duration-500 ease-card group-hover:scale-[1.06]"
+          className="object-contain p-4 transition-transform duration-400 ease-card group-hover:scale-[1.04] motion-reduce:transition-none"
         />
         <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
-          {product.bestSeller && <span className="rounded-full bg-coral px-3 py-1 text-[11px] font-bold text-white">Mais vendido</span>}
-          {product.isNew && <span className="rounded-full bg-ink px-3 py-1 text-[11px] font-bold text-white">Lançamento</span>}
+          {product.bestSeller && <Badge tone="brand">Mais vendido</Badge>}
+          {product.isNew && <Badge tone="dark">Lançamento</Badge>}
         </div>
-        <span className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-bold text-ink opacity-0 transition-all duration-300 group-hover:opacity-100">
-          <IconCube className="size-3.5 text-coral" /> Ver em 3D
+        <span
+          aria-hidden
+          className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-1 text-micro font-bold text-ink opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"
+        >
+          <IconCube className="size-3.5 text-coral-700" /> Ver em 3D
         </span>
       </div>
       <div className="flex flex-1 flex-col items-center px-4 pb-5 pt-4 text-center">
-        <h3 className="line-clamp-2 min-h-[2.5em] text-[15px] leading-tight tracking-[-0.01em]">{product.name}</h3>
-        <p className="mt-2 text-[11px] uppercase tracking-wide text-muted">a partir de</p>
-        <p className="text-lg font-bold text-coral">{formatBRL(product.price)}</p>
-        <p className="text-[11px] text-muted">{quantityLabel(product.priceQty)}</p>
+        <h3 className="line-clamp-2 min-h-[2.4em] text-card-title">{product.name}</h3>
+        <Price className="mt-2 flex flex-col items-center" value={product.price} from unit={quantityLabel(product.priceQty)} />
       </div>
     </Link>
   );

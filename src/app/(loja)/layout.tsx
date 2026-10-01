@@ -2,12 +2,14 @@ import SiteHeader, { type MenuGroup } from "@/components/header/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
 import CartDrawer from "@/components/cart/CartDrawer";
-import { CATALOG_STATS, MENU_GROUPS, getCategory } from "@/lib/catalog";
+import { CATALOG_STATS, getCategory } from "@/lib/catalog";
+import { MENU_GROUPS } from "@/lib/menu";
 
 export default function LojaLayout({ children }: { children: React.ReactNode }) {
   const menu: MenuGroup[] = MENU_GROUPS.map((group) => ({
     label: group.label,
     blurb: group.blurb,
+    benefits: [...group.benefits],
     categories: group.categories
       .map((slug) => getCategory(slug))
       .filter((c) => c !== undefined)

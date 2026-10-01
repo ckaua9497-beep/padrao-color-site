@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { STORE } from "@/lib/catalog";
+import { STORE } from "@/lib/store";
 
 export default function LojaError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {

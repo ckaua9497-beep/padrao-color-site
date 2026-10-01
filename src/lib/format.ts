@@ -18,14 +18,15 @@ export function imageUrl(src: string): string {
   return encodeURI(decodeURI(src));
 }
 
+// Cores do símbolo da Padrão (tokens do globals.css) para fundos de card e ícones.
 export const SPECTRUM = [
-  { solid: "#f8e028", soft: "#fef8d4" },
-  { solid: "#18b0e8", soft: "#def3fc" },
-  { solid: "#b0c818", soft: "#f1f6d6" },
-  { solid: "#e02888", soft: "#fce4f0" },
-  { solid: "#f0a000", soft: "#fdefd2" },
-  { solid: "#0888c8", soft: "#ddeef8" },
-  { solid: "#e02018", soft: "#fde3e1" },
+  { solid: "var(--color-sun)", soft: "var(--color-sun-50)" },
+  { solid: "var(--color-cyan)", soft: "var(--color-cyan-50)" },
+  { solid: "var(--color-lime)", soft: "var(--color-lime-50)" },
+  { solid: "var(--color-magenta)", soft: "var(--color-magenta-50)" },
+  { solid: "var(--color-amber)", soft: "var(--color-amber-50)" },
+  { solid: "var(--color-blue)", soft: "var(--color-blue-50)" },
+  { solid: "var(--color-red)", soft: "var(--color-red-50)" },
 ] as const;
 
 export function spectrumAt(index: number) {

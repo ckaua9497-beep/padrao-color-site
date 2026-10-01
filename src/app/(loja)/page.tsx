@@ -9,6 +9,7 @@ import { Marker, Reveal, WordReveal } from "@/components/motion";
 import { IconArrow, IconCube, IconUpload, IconLayers, IconTruck } from "@/components/icons";
 import { CATALOG_STATS, getCategories, getFeatured, getProducts, getProductsByCategory, toSummary, type Product } from "@/lib/catalog";
 import { imageUrl, spectrumAt } from "@/lib/format";
+import { Button, buttonClass } from "@/components/ui/Button";
 
 function find(name: string): Product {
   const products = getProducts();
@@ -63,8 +64,8 @@ export default function HomePage() {
       text: "Cartões, banners, brindes e vestuário com a sua arte. Configure, veja em 3D e peça online.",
       cta: "Começar agora",
       href: "/produtos",
-      tone: "#fbeee6",
-      accent: "#ff463a",
+      tone: "var(--color-peach-50)",
+      accent: "var(--color-coral-600)",
       images: [card.image, mug.image, sticker.image],
     },
     {
@@ -74,19 +75,19 @@ export default function HomePage() {
       text: "Banners, lonas, placas e LED neon para fachada, evento e ponto de venda.",
       cta: "Ver comunicação visual",
       href: "/categoria/banner-e-lonas",
-      tone: "#e3f2fb",
-      accent: "#0888c8",
+      tone: "var(--color-cyan-50)",
+      accent: "var(--color-blue)",
       images: [banner.image, neon.image, acrylic.image],
     },
     {
       light: "veja em",
       bold: "3D",
       tail: "antes de imprimir.",
-      text: "Envie o seu logo e gire o produto em todos os ângulos antes de fechar o pedido.",
+      text: "Escreva o seu texto ou envie o logo e gire o produto em todos os ângulos antes de fechar o pedido.",
       cta: "Testar o mockup 3D",
       href: "/#mockup-3d",
-      tone: "#f3f6dc",
-      accent: "#7d9100",
+      tone: "var(--color-lime-50)",
+      accent: "var(--color-lime-700)",
       images: [shirt.image, cushion.image, card.image],
     },
   ];
@@ -101,9 +102,9 @@ export default function HomePage() {
   ].map(({ tab, product }) => ({ tab, slug: product.slug, name: product.name, category: product.category, categorySlug: product.categorySlug, image: product.image, options: product.options }));
 
   const promos = [
-    { title: ["LED neon", "personalizado"], href: "/categoria/led-neon", image: neon.image, tone: "#1d1b2b", dark: true },
-    { title: ["Adesivos e", "rótulos"], href: "/categoria/adesivos-e-rotulos", image: sticker.image, tone: "#fef8d4", dark: false },
-    { title: ["Photobook com", "as suas fotos"], href: "/categoria/photobook", image: getProductsByCategory("photobook")[0]?.image ?? card.image, tone: "#fce4f0", dark: false },
+    { title: ["LED neon", "personalizado"], href: "/categoria/led-neon", image: neon.image, tone: "var(--color-night)", dark: true },
+    { title: ["Adesivos e", "rótulos"], href: "/categoria/adesivos-e-rotulos", image: sticker.image, tone: "var(--color-sun-50)", dark: false },
+    { title: ["Photobook com", "as suas fotos"], href: "/categoria/photobook", image: getProductsByCategory("photobook")[0]?.image ?? card.image, tone: "var(--color-magenta-50)", dark: false },
   ];
 
   const steps = [
@@ -118,25 +119,25 @@ export default function HomePage() {
       <HeroSlider slides={slides} stats={{ products: CATALOG_STATS.products, minLeadDays: CATALOG_STATS.minLeadDays }} />
 
       <section className="relative z-10 mx-auto -mt-28 max-w-[1300px] px-4 md:px-10">
-        <div className="rounded-panel bg-white p-4 shadow-[0_20px_60px_rgba(0,0,0,0.08)] md:p-6">
-          <Rail label="Categorias" itemClassName="w-[46%] sm:w-[30%] md:w-[18%] lg:w-[calc((100%-8*12px)/9)]" gapClassName="gap-3">
+        <div className="rounded-panel bg-white p-4 shadow-panel md:p-6">
+          <Rail label="Categorias" itemClassName="w-[calc((100%-48px)/4.4)] sm:w-[18%] md:w-[14%] lg:w-[calc((100%-8*12px)/9)]" gapClassName="gap-3">
             {categories.map((c, i) => (
               <Link key={c.slug} href={`/categoria/${c.slug}`} className="group block">
                 <span className="relative block aspect-square overflow-hidden rounded-card" style={{ background: spectrumAt(i).soft }}>
                   <Image src={imageUrl(c.image)} alt="" fill sizes="160px" className="object-contain p-3 transition-transform duration-500 ease-card group-hover:scale-110" />
                 </span>
-                <span className="mt-2 block text-center text-[14px] font-bold leading-tight">{c.name}</span>
+                <span className="mt-2 block text-center text-[12px] font-bold leading-tight sm:text-[14px]">{c.name}</span>
               </Link>
             ))}
           </Rail>
         </div>
       </section>
 
-      <section className="mx-auto max-w-[1440px] px-5 pb-8 pt-16 md:px-10 xl:px-[70px]">
+      <section className="container-site pb-8 pt-16">
         <Reveal className="mb-6 flex items-end justify-between gap-4">
-          <h2 className="text-3xl font-bold tracking-[-0.02em] md:text-[40px]">Mais pedidos</h2>
-          <Link href="/produtos" className="hidden items-center gap-2 text-[15px] font-bold hover:text-coral md:flex">
-            Ver todos <IconArrow className="size-5" />
+          <h2 className="text-section font-bold">Mais pedidos</h2>
+          <Link href="/produtos" className="flex items-center gap-2 text-[15px] font-bold underline-offset-4 hover:underline">
+            Ver todos <IconArrow aria-hidden className="size-5" />
           </Link>
         </Reveal>
         <Rail label="Produtos em destaque" itemClassName="w-[70%] sm:w-[40%] md:w-[30%] lg:w-[calc((100%-4*16px)/5)]">
@@ -154,18 +155,18 @@ export default function HomePage() {
         return (
           <section key={s.slug} className={`grid md:min-h-[560px] md:grid-cols-2 ${i % 2 === 0 ? "bg-mist" : "bg-fog"}`}>
             <div className={`relative flex min-h-[420px] items-center overflow-hidden px-8 py-14 md:px-16 ${flip ? "md:order-2" : ""}`} style={{ background: tone.soft }}>
-              <Image src={imageUrl(hero.image)} alt="" width={600} height={600} className="absolute -right-10 bottom-0 w-[78%] max-w-[520px] object-contain drop-shadow-[0_30px_40px_rgba(0,0,0,0.15)] md:-right-6" />
+              <Image src={imageUrl(hero.image)} alt="" width={600} height={600} className="absolute -right-10 bottom-0 w-[78%] max-w-[520px] object-contain drop-shadow-pop md:-right-6" />
               <div className="relative max-w-[340px]">
-                <h2 className="text-[clamp(40px,4.6vw,58px)] font-bold leading-[1.05] tracking-[-0.02em] text-white">
-                  <Marker color="#0a0a0a">
+                <h2 className="text-display text-white">
+                  <Marker color="var(--color-ink)" inverse>
                     {s.title[0]}
                     <br />
                     {s.title[1]}
                   </Marker>
                 </h2>
-                <Link href={`/categoria/${s.slug}`} className="mt-8 inline-flex h-13 items-center rounded-full bg-white px-8 text-[17px] font-bold shadow-card transition-transform duration-300 ease-button hover:scale-105">
+                <Button href={`/categoria/${s.slug}`} variant="light" size="md" className="mt-8 shadow-card">
                   {s.cta}
-                </Link>
+                </Button>
               </div>
             </div>
             <Reveal side className={`flex items-center px-5 py-12 md:px-10 ${flip ? "md:order-1" : ""}`}>
@@ -179,49 +180,49 @@ export default function HomePage() {
         );
       })}
 
-      <section className="mx-auto grid max-w-[1440px] gap-6 px-5 py-16 md:grid-cols-3 md:px-10 xl:px-[70px]">
+      <section className="container-site grid gap-6 py-16 md:grid-cols-3">
         {promos.map((p, i) => (
           <Reveal key={p.href} delay={i * 120}>
             <Link href={p.href} className="group relative flex aspect-[11/10] flex-col justify-start overflow-hidden rounded-card p-8 md:aspect-[11/10]" style={{ background: p.tone }}>
               <Image src={imageUrl(p.image)} alt="" width={600} height={600} className="absolute -bottom-6 -right-6 w-[72%] object-contain transition-transform duration-700 ease-card group-hover:scale-105" />
-              <h3 className={`relative text-[clamp(28px,2.8vw,40px)] font-bold leading-[1.05] ${p.dark ? "text-white" : "text-ink"}`}>
+              <h3 className={`relative text-section font-bold ${p.dark ? "text-white" : "text-ink"}`}>
                 {p.title[0]}
                 <br />
                 {p.title[1]}
               </h3>
-              <span className="relative mt-6 inline-flex w-fit items-center rounded-full bg-white px-6 py-3 text-[15px] font-bold text-ink shadow-card">Escolher modelo</span>
+              <span className={buttonClass({ variant: "light", size: "sm", className: "relative mt-6 w-fit shadow-card" })}>Escolher modelo</span>
             </Link>
           </Reveal>
         ))}
       </section>
 
-      <section className="bg-ink px-5 py-20 text-white md:px-10 xl:px-[70px]">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-10 md:flex-row md:items-center md:justify-between">
-          <WordReveal text="Escolha, envie a sua arte, veja em 3D e receba pronto para usar." className="max-w-3xl text-[clamp(30px,3.4vw,44px)] font-bold leading-[1.1]" />
-          <Link href="/produtos" className="inline-flex h-14 shrink-0 items-center rounded-full bg-white px-9 text-lg font-bold text-ink transition-colors duration-300 hover:bg-coral hover:text-white">
+      <section className="on-dark bg-ink py-20 text-white">
+        <div className="container-site flex flex-col gap-10 md:flex-row md:items-center md:justify-between">
+          <WordReveal text="Escolha, escreva ou envie a sua arte, veja em 3D e receba pronto para usar." className="max-w-3xl text-section font-bold" />
+          <Button href="/produtos" variant="light" size="lg">
             Fazer meu pedido
-          </Link>
+          </Button>
         </div>
       </section>
 
       <Showcase3D demos={demos} />
 
       <section className="bg-fog py-20">
-        <div className="mx-auto grid max-w-[1440px] gap-10 px-5 md:px-10 lg:grid-cols-[360px_1fr] xl:px-[70px]">
+        <div className="container-site grid gap-10 lg:grid-cols-[360px_1fr]">
           <Reveal>
-            <h2 className="text-[clamp(40px,4.4vw,56px)] font-bold leading-[1.02] tracking-[-0.02em]">Como funciona</h2>
-            <p className="mt-4 text-lg text-ink/75">Do produto à entrega, tudo pelo site.</p>
-            <Link href="/produtos" className="mt-8 inline-flex h-12 items-center gap-3 rounded-control bg-ink px-8 text-sm font-bold text-white transition-colors hover:bg-coral">
-              Escolher produto <IconArrow className="size-4" />
-            </Link>
+            <h2 className="text-display">Como funciona</h2>
+            <p className="mt-4 text-lead text-ink/75">Do produto à entrega, tudo pelo site.</p>
+            <Button href="/produtos" variant="dark" size="md" className="mt-8" iconEnd={<IconArrow aria-hidden className="size-4" />}>
+              Escolher produto
+            </Button>
           </Reveal>
           <Rail label="Etapas do pedido" itemClassName="w-[80%] sm:w-[48%] xl:w-[calc((100%-3*16px)/4)]">
             {steps.map(({ Icon, title, text }, i) => (
               <article key={title} className="flex h-full flex-col rounded-panel bg-white p-9">
                 <span className="grid size-14 place-items-center rounded-full" style={{ background: spectrumAt(i).soft }}>
-                  <Icon className="size-7" />
+                  <Icon aria-hidden className="size-7" />
                 </span>
-                <p className="mt-8 text-sm font-bold text-coral">Passo {i + 1}</p>
+                <p className="mt-8 text-sm font-bold text-coral-700">Passo {i + 1}</p>
                 <h3 className="mt-1 text-xl font-bold">{title}</h3>
                 <p className="mt-3 text-[15px] leading-relaxed text-ink/70">{text}</p>
               </article>
@@ -230,7 +231,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="relative overflow-hidden bg-[#1b1d22] py-24 text-white">
+      <section className="on-dark relative overflow-hidden bg-graphite py-24 text-white">
         <div className="pointer-events-none absolute inset-0 grid grid-cols-4 gap-4 opacity-[0.16] md:grid-cols-8">
           {getFeatured()
             .slice(0, 16)
@@ -240,9 +241,9 @@ export default function HomePage() {
               </div>
             ))}
         </div>
-        <div className="relative mx-auto max-w-[1440px] px-5 text-center md:px-10">
+        <div className="container-site relative text-center">
           <Reveal>
-            <h2 className="mx-auto max-w-3xl text-[clamp(36px,4.4vw,56px)] font-bold leading-[1.05]">Qualidade de gráfica, agilidade de loja online.</h2>
+            <h2 className="mx-auto max-w-3xl text-display">Qualidade de gráfica, agilidade de loja online.</h2>
             <div className="mx-auto mt-12 grid max-w-3xl grid-cols-3 gap-6">
               {[
                 [String(CATALOG_STATS.products), "produtos"],
@@ -253,7 +254,7 @@ export default function HomePage() {
                   <p className="text-[clamp(36px,5vw,64px)] font-black" style={{ color: spectrumAt(i).solid }}>
                     {value}
                   </p>
-                  <p className="text-sm uppercase tracking-widest text-white/60">{label}</p>
+                  <p className="text-sm uppercase tracking-widest text-white/75">{label}</p>
                 </div>
               ))}
             </div>
@@ -262,10 +263,10 @@ export default function HomePage() {
       </section>
 
       <section className="bg-cloud py-20 md:py-24">
-        <h2 className="mb-12 text-center text-[clamp(32px,3.6vw,44px)]">
+        <h2 className="mb-12 text-center text-section font-normal">
           <strong className="font-bold">Perguntas</strong> frequentes
         </h2>
-        <div className="mx-auto grid max-w-[1200px] items-center gap-10 px-5 md:grid-cols-2 md:px-10">
+        <div className="container-site grid max-w-[1200px] items-center gap-10 md:grid-cols-2">
           <Faq items={FAQ} />
           <Reveal className="relative aspect-square overflow-hidden rounded-card bg-white">
             <div className="absolute inset-0 grid grid-cols-2 gap-3 p-6">

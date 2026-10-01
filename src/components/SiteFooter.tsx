@@ -2,7 +2,12 @@ import Link from "next/link";
 import Logo from "@/components/Logo";
 import { IconFacebook, IconInstagram, IconLinkedin, IconTiktok, IconYoutube } from "@/components/icons";
 import { Marquee } from "@/components/motion";
-import { STORE, getCategories } from "@/lib/catalog";
+import { Button } from "@/components/ui/Button";
+import { getCategories } from "@/lib/catalog";
+import { STORE } from "@/lib/store";
+
+// Sobre o preto, rótulos e textos pequenos ficam em branco a 60% ou mais (≥ 7:1).
+const LINK = "text-white/60 transition-colors hover:text-white";
 
 export default function SiteFooter() {
   const top = getCategories().slice(0, 8);
@@ -14,31 +19,33 @@ export default function SiteFooter() {
     { href: STORE.social.tiktok, label: "TikTok", Icon: IconTiktok },
   ];
   return (
-    <footer className="overflow-hidden bg-ink text-white">
-      <div className="mx-auto grid max-w-[1440px] gap-12 px-5 pb-10 pt-20 md:px-10 lg:grid-cols-[1.1fr_1fr_1fr] xl:px-[70px]">
+    <footer className="on-dark overflow-hidden bg-ink text-white">
+      <div className="container-site grid gap-12 pb-10 pt-20 lg:grid-cols-[1.1fr_1fr_1fr]">
         <div>
           <Logo onDark />
-          <h3 className="mt-8 max-w-sm text-3xl font-bold leading-tight">
-            Sua arte, impressa do jeito que você viu em 3D.
-          </h3>
-          <Link href="/produtos" className="mt-8 inline-flex h-12 items-center rounded-control bg-coral px-7 font-bold transition-colors duration-300 hover:bg-coral-600">
+          <p className="mt-8 max-w-sm text-title font-bold">Sua arte, impressa do jeito que você viu em 3D.</p>
+          <Button href="/produtos" variant="buy" size="md" className="mt-8">
             Começar meu pedido
-          </Link>
-          <div className="mt-10 flex gap-2">
+          </Button>
+          <ul className="mt-10 flex gap-2">
             {social.map(({ href, label, Icon }) => (
-              <a key={label} href={href} target="_blank" rel="noreferrer" aria-label={label} className="grid size-10 place-items-center rounded-full bg-white/10 transition-colors hover:bg-coral">
-                <Icon className="size-[18px]" />
-              </a>
+              <li key={label}>
+                <a href={href} target="_blank" rel="noreferrer" aria-label={label} className="grid size-11 place-items-center rounded-full bg-white/10 transition-colors hover:bg-coral hover:text-ink">
+                  <Icon aria-hidden className="size-[18px]" />
+                </a>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
 
-        <nav aria-label="Categorias">
-          <p className="text-sm font-semibold uppercase tracking-widest text-white/40">Categorias</p>
+        <nav aria-labelledby="rodape-categorias">
+          <h2 id="rodape-categorias" className="text-sm font-semibold uppercase tracking-widest text-white/60">
+            Categorias
+          </h2>
           <ul className="mt-5 space-y-3">
             {top.map((c) => (
               <li key={c.slug}>
-                <Link href={`/categoria/${c.slug}`} className="text-lg font-bold text-white/55 transition-colors hover:text-white">
+                <Link href={`/categoria/${c.slug}`} className={`text-lg font-bold ${LINK}`}>
                   {c.name}
                 </Link>
               </li>
@@ -47,30 +54,30 @@ export default function SiteFooter() {
         </nav>
 
         <div>
-          <p className="text-sm font-semibold uppercase tracking-widest text-white/40">Atendimento</p>
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-white/60">Atendimento</h2>
           <ul className="mt-5 space-y-3 text-lg font-bold">
             <li>
-              <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className="text-white/55 transition-colors hover:text-white">
+              <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className={LINK}>
                 WhatsApp
               </a>
             </li>
             <li>
-              <a href={STORE.phoneHref} className="text-white/55 transition-colors hover:text-white">
+              <a href={STORE.phoneHref} className={LINK}>
                 {STORE.phone}
               </a>
             </li>
             <li>
-              <a href={`mailto:${STORE.email}`} className="text-white/55 transition-colors hover:text-white">
+              <a href={`mailto:${STORE.email}`} className={LINK}>
                 {STORE.email}
               </a>
             </li>
             <li>
-              <a href={STORE.blog} target="_blank" rel="noreferrer" className="text-white/55 transition-colors hover:text-white">
+              <a href={STORE.blog} target="_blank" rel="noreferrer" className={LINK}>
                 Blog da Padrão
               </a>
             </li>
           </ul>
-          <p className="mt-8 text-[13px] leading-relaxed text-white/45">
+          <p className="mt-8 text-caption text-white/60">
             {STORE.address}
             <br />
             {STORE.hours}
@@ -80,19 +87,19 @@ export default function SiteFooter() {
         </div>
       </div>
 
-      <Marquee
-        slow
-        className="select-none pb-6"
-        itemClassName="pr-10"
-        items={["Padrão Color", "Gráfica e Comunicação Visual", "Mockup 3D", "Sua marca impressa"].map((t) => (
-          <span key={t} className="text-outline whitespace-nowrap text-[clamp(64px,9vw,135px)] font-normal leading-none">
-            {t} <span className="text-coral [-webkit-text-stroke:0]">•</span>
-          </span>
-        ))}
-      />
-      <p className="border-t border-white/10 py-5 text-center text-[13px] text-white/40">
-        Padrão Color © {new Date().getFullYear()}. Todos os direitos reservados.
-      </p>
+      <div aria-hidden>
+        <Marquee
+          slow
+          className="select-none pb-6"
+          itemClassName="pr-10"
+          items={["Padrão Color", "Gráfica e Comunicação Visual", "Mockup 3D", "Sua marca impressa"].map((t) => (
+            <span key={t} className="text-outline whitespace-nowrap text-[clamp(64px,9vw,135px)] font-normal leading-none">
+              {t} <span className="text-coral [-webkit-text-stroke:0]">•</span>
+            </span>
+          ))}
+        />
+      </div>
+      <p className="border-t border-white/10 py-5 text-center text-caption text-white/60">Padrão Color © {new Date().getFullYear()}. Todos os direitos reservados.</p>
     </footer>
   );
 }
