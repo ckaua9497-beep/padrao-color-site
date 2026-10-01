@@ -14,12 +14,13 @@ type Props = {
   spec: MockupSpec;
   art: ArtSettings;
   name: string;
+  fallbackImage?: string;
   captureRef: MutableRefObject<CaptureFn | null>;
   summary: [string, string][];
   total: string;
 };
 
-export default function PreviewModal({ onClose, onAdd, adding, spec, art, name, captureRef, summary, total }: Props) {
+export default function PreviewModal({ onClose, onAdd, adding, spec, art, name, fallbackImage, captureRef, summary, total }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
@@ -36,7 +37,7 @@ export default function PreviewModal({ onClose, onAdd, adding, spec, art, name, 
         <IconClose className="size-5" />
       </button>
       <div className="grid max-h-full w-full max-w-[1080px] animate-fade-up overflow-y-auto rounded-panel bg-white md:grid-cols-[1.35fr_1fr]">
-        <Mockup3D spec={spec} art={art} label={name} captureRef={captureRef} className="aspect-square w-full md:aspect-auto md:min-h-[620px]" />
+        <Mockup3D spec={spec} art={art} label={name} fallbackImage={fallbackImage} captureRef={captureRef} className="aspect-square w-full md:aspect-auto md:min-h-[620px]" />
         <div className="flex flex-col p-7">
           <p className="text-lg font-bold">Veja como ficou o seu produto</p>
           <p className="mt-1 text-sm italic text-muted">Gire, aproxime e confira as medidas. Se estiver tudo certo, adicione ao carrinho.</p>

@@ -98,7 +98,7 @@ export default function HomePage() {
     { tab: "Banner", product: banner },
     { tab: "Almofada", product: cushion },
     { tab: "LED neon", product: neon },
-  ].map(({ tab, product }) => ({ tab, slug: product.slug, name: product.name, category: product.category, categorySlug: product.categorySlug, options: product.options }));
+  ].map(({ tab, product }) => ({ tab, slug: product.slug, name: product.name, category: product.category, categorySlug: product.categorySlug, image: product.image, options: product.options }));
 
   const promos = [
     { title: ["LED neon", "personalizado"], href: "/categoria/led-neon", image: neon.image, tone: "#1d1b2b", dark: true },

@@ -8,7 +8,7 @@ import { KIND_INFO } from "@/lib/mockup-kinds";
 import { cleanOptionLabel, optionKeys, type Selection } from "@/lib/pricing";
 
 /** Visualizador da galeria de QA: um produto, suas opções e a spec resultante. */
-export default function MockupInspector({ product }: { product: MockupProduct & { slug: string } }) {
+export default function MockupInspector({ product }: { product: MockupProduct & { slug: string; image?: string } }) {
   const keys = useMemo(() => optionKeys(product.options), [product.options]);
   const [selection, setSelection] = useState<Selection>({});
   const [art, setArt] = useState<ArtSettings>(DEFAULT_ART);
@@ -17,7 +17,7 @@ export default function MockupInspector({ product }: { product: MockupProduct & 
 
   return (
     <div className="grid gap-5">
-      <Mockup3D spec={spec} art={art} label={product.name} className="aspect-square w-full" />
+      <Mockup3D spec={spec} art={art} label={product.name} fallbackImage={product.image} className="aspect-square w-full" />
 
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-ink px-4 py-2 font-semibold text-white">

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
+import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
 import { DEFAULT_ART, fileToDataUrl, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { useCart } from "@/components/cart/CartProvider";
@@ -50,6 +51,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const [tab, setTab] = useState<"3d" | "fotos">("3d");
   const [photo, setPhoto] = useState(0);
   const [preview, setPreview] = useState(false);
+  const [pageShot, setPageShot] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const captureRef = useRef<CaptureFn | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -63,6 +65,12 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const total = price.price * qty;
 
   const choose = (key: string, value: string) => setSelection((s) => ({ ...s, [key]: value }));
+
+  // Um canvas WebGL por vez: com o modal aberto, a página mostra o último quadro do 3D.
+  const openPreview = () => {
+    setPageShot(captureRef.current?.() ?? null);
+    setPreview(true);
+  };
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -128,7 +136,18 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           ))}
         </div>
         {tab === "3d" ? (
-          <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} className="aspect-square w-full" />
+          preview ? (
+            <div className="aspect-square w-full overflow-hidden rounded-card bg-mist">
+              {pageShot ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={pageShot} alt="" className="size-full object-cover" />
+              ) : (
+                <MockupSkeleton />
+              )}
+            </div>
+          ) : (
+            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} className="aspect-square w-full" />
+          )
         ) : (
           <div className="flex gap-3">
             <div className="flex w-16 shrink-0 flex-col gap-2">
@@ -304,7 +323,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <button
               type="button"
-              onClick={() => setPreview(true)}
+              onClick={openPreview}
               className="flex h-13 items-center justify-center gap-2 rounded-control border border-blue bg-blue/10 text-[17px] font-semibold text-blue transition-colors duration-300 hover:bg-blue hover:text-white"
             >
               <IconCube className="size-5" /> Pré-visualizar
@@ -331,6 +350,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           spec={spec}
           art={art}
           name={product.name}
+          fallbackImage={product.image}
           captureRef={captureRef}
           summary={keys.map((k) => [cleanOptionLabel(k), selection[k]])}
           total={formatBRL(total)}

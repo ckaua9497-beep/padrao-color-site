@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Billboard, Line, RoundedBox } from "@react-three/drei";
 import * as THREE from "three";
@@ -18,6 +18,7 @@ import {
   roundPath,
   shapeMask,
 } from "./art";
+import { useAnimate } from "./viewer-hooks";
 
 type MaskPath = (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
 
@@ -178,7 +179,7 @@ function Dimensions({ w, h, z, labelW, labelH, light = false }: { w: number; h: 
   const tick = 0.05;
   const color = light ? "#ffffff" : "#0a0a0a";
   return (
-    <group position-z={z}>
+    <group position-z={z} userData={{ noBounds: true }}>
       <Line points={[[-w / 2, -h / 2 - gap, 0], [w / 2, -h / 2 - gap, 0]]} color={color} lineWidth={1.2} />
       <Line points={[[-w / 2, -h / 2 - gap - tick, 0], [-w / 2, -h / 2 - gap + tick, 0]]} color={color} lineWidth={1.2} />
       <Line points={[[w / 2, -h / 2 - gap - tick, 0], [w / 2, -h / 2 - gap + tick, 0]]} color={color} lineWidth={1.2} />
@@ -381,8 +382,13 @@ function NeonModel({ spec, art, label, showDims }: ModelProps) {
     return g;
   }, [shape]);
   const light = useRef<THREE.PointLight>(null);
-  useFrame(({ clock }) => {
-    if (light.current) light.current.intensity = 2.4 + Math.sin(clock.elapsedTime * 3) * 0.15;
+  const animate = useAnimate();
+  const time = useRef(0);
+  useFrame((state, delta) => {
+    if (!animate || !light.current) return;
+    time.current += Math.min(delta, 0.1);
+    light.current.intensity = 2.4 + Math.sin(time.current * 3) * 0.15;
+    state.invalidate();
   });
   const [lw, lh] = sizeLabels(spec);
   return (
@@ -514,8 +520,16 @@ function wave(geometry: THREE.BufferGeometry, w: number, h: number, t: number, s
 
 function Waving({ w, h, texture, strength = 0.08, anchor = "left" }: { w: number; h: number; texture: THREE.Texture; strength?: number; anchor?: "left" | "top" }) {
   const geometry = useRef<THREE.PlaneGeometry>(null);
-  useFrame(({ clock }) => {
-    if (geometry.current) wave(geometry.current, w, h, clock.elapsedTime, strength, anchor);
+  const animate = useAnimate();
+  const time = useRef(0);
+  useLayoutEffect(() => {
+    if (geometry.current) wave(geometry.current, w, h, 0, strength, anchor);
+  }, [w, h, strength, anchor]);
+  useFrame((state, delta) => {
+    if (!animate || !geometry.current) return;
+    time.current += Math.min(delta, 0.1);
+    wave(geometry.current, w, h, time.current, strength, anchor);
+    state.invalidate();
   });
   return (
     <mesh castShadow>

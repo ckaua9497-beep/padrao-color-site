@@ -86,7 +86,7 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
               <h2 className="mb-3 text-xl font-bold">{selected.name}</h2>
               <MockupInspector
                 key={selected.slug}
-                product={{ slug: selected.slug, name: selected.name, categorySlug: selected.categorySlug, options: selected.options }}
+                product={{ slug: selected.slug, name: selected.name, categorySlug: selected.categorySlug, image: selected.image, options: selected.options }}
               />
             </>
           ) : (

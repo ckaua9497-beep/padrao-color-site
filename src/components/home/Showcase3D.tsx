@@ -14,6 +14,7 @@ export type DemoProduct = {
   name: string;
   category: string;
   categorySlug: string;
+  image: string;
   options: Record<string, string[]>;
 };
 
@@ -76,7 +77,7 @@ export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
           {fileName && <p className="mt-3 text-sm text-white/55">Usando: {fileName}. A imagem fica só no seu navegador.</p>}
         </Reveal>
         <Reveal delay={150}>
-          <Mockup3D lazy spec={spec} art={art} label={demo.name} className="aspect-square w-full" />
+          <Mockup3D lazy spec={spec} art={art} label={demo.name} fallbackImage={demo.image} className="aspect-square w-full" />
         </Reveal>
       </div>
     </section>

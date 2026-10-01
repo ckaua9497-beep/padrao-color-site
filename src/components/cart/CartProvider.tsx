@@ -50,7 +50,12 @@ function write(next: CartItem[]) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next.map((item) => ({ ...item, preview: null }))));
+    // Cota cheia: tenta de novo sem as miniaturas. Se ainda falhar, o carrinho segue só na memória.
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next.map((item) => ({ ...item, preview: null }))));
+    } catch {
+      /* armazenamento indisponível */
+    }
   }
   listeners.forEach((listener) => listener());
 }
