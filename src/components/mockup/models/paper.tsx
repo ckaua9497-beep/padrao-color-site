@@ -3,7 +3,6 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { artAspect } from "@/lib/mockup-kinds";
-import { heartPath, roundPath } from "../art";
 import { useArtTexture, Slab, Dimensions, sizeLabels, type ModelProps, fitFlat, backVariant, Spiral, PrintMaterial } from "./shared";
 
 /** Painel de uma folha dobrada: um plano que mostra só a faixa [u0, u1] da arte. */
@@ -92,7 +91,6 @@ export function CardModel({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-
 export function SheetModel({ spec, art, label, showDims }: ModelProps) {
   const { w, h } = fitFlat(spec);
   const aspect = artAspect(spec);
@@ -113,62 +111,6 @@ export function SheetModel({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-
-export function StickerModel({ spec, art, label, showDims }: ModelProps) {
-  const { w, h } = fitFlat(spec, 2);
-  const aspect = artAspect(spec);
-  const mask = spec.shape === "round" ? roundPath : spec.shape === "heart" ? heartPath : undefined;
-  const front = useArtTexture(aspect, "front", art, label, mask);
-  const [lw, lh] = sizeLabels(spec);
-  const liner = useMemo(() => ({ ...spec, shape: "rect" as const, clearcoat: 0, finish: "matte" as const }), [spec]);
-  const blank = useArtTexture(aspect, "blank", art, label);
-  return (
-    <group rotation={[-0.2, 0.25, 0]}>
-      <group position-z={-0.02}>
-        <Slab w={w * 1.14} h={h * 1.14} d={0.01} spec={liner} front={blank} radius={0.06} edgeColor="#ececec" backColor="#e9e2d0" />
-      </group>
-      <group position-z={0.008}>
-        <Slab w={w * 1.04} h={h * 1.04} d={0.006} spec={{ ...spec, clearcoat: 0 }} front={blank} radius={Math.min(w, h) * 0.08} />
-      </group>
-      <group position-z={0.018} rotation={[0.04, -0.05, 0]}>
-        <Slab w={w} h={h} d={0.008} spec={spec} front={front} radius={Math.min(w, h) * 0.07} />
-      </group>
-      {showDims && <Dimensions w={w * 1.14} h={h * 1.14} z={0.03} labelW={lw} labelH={lh} />}
-    </group>
-  );
-}
-
-
-export function BookModel({ spec, art, label }: ModelProps) {
-  const { w, h, scale } = fitFlat(spec, 2.1);
-  const front = useArtTexture(artAspect(spec), "front", art, label);
-  const thick = Math.max(spec.depthCm * scale, 0.14);
-  const spiral = spec.binding === "spiral";
-  return (
-    <group rotation={[-0.3, 0.55, 0]}>
-      <group position-z={thick / 2}>
-        <Slab w={w} h={h} d={0.03} spec={spec} front={front} radius={0.02} edgeColor="#2b2b2f" backColor="#2b2b2f" />
-      </group>
-      <group position-z={-thick / 2}>
-        <Slab w={w} h={h} d={0.03} spec={spec} front={front} radius={0.02} edgeColor="#2b2b2f" backColor="#2b2b2f" />
-      </group>
-      <mesh>
-        <boxGeometry args={[w * 0.97, h * 0.97, thick - 0.03]} />
-        <meshStandardMaterial color="#fbfaf6" roughness={0.95} />
-      </mesh>
-      {spiral ? (
-        <Spiral length={h} axis="y" offset={[-w / 2 + 0.06, 0, 0]} />
-      ) : (
-        <mesh position-x={-w / 2}>
-          <boxGeometry args={[0.04, h, thick + 0.03]} />
-          <meshStandardMaterial color="#2b2b2f" roughness={0.6} />
-        </mesh>
-      )}
-    </group>
-  );
-}
-
-
 export function TentModel({ spec, art, label }: ModelProps) {
   const { w, h } = fitFlat(spec, 2.2);
   const front = useArtTexture(artAspect(spec), "front", art, label);
@@ -186,4 +128,3 @@ export function TentModel({ spec, art, label }: ModelProps) {
     </group>
   );
 }
-

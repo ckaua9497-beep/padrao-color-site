@@ -35,7 +35,29 @@ const RESUME_AFTER_MS = 4000;
 const SPIN_SPEED = 0.9;
 const RESET_SECONDS = 0.6;
 
-type Framing = { center: THREE.Vector3; distance: number };
+type Framing = { center: THREE.Vector3; distance: number; home: THREE.Vector3 };
+
+/**
+ * Ângulo inicial pedido pelo modelo: `userData.view = { elevation, azimuth }` (radianos) em qualquer grupo
+ * do modelo. Peças que ficam deitadas (cama, toalha de mesa, quebra-cabeça) sobem a câmera em vez de
+ * inclinar a peça, e a sombra de contato continua certa.
+ */
+export type ViewHint = { elevation?: number; azimuth?: number };
+
+function viewHint(root: THREE.Object3D): ViewHint {
+  let hint: ViewHint | null = null;
+  root.traverse((object) => {
+    if (!hint && object.userData.view) hint = object.userData.view as ViewHint;
+  });
+  return hint ?? {};
+}
+
+function homeDirection({ elevation, azimuth = 0 }: ViewHint): THREE.Vector3 {
+  if (elevation === undefined && !azimuth) return HOME_DIRECTION.clone();
+  // A câmera não passa de ~70° (minPolarAngle dos controles).
+  const e = THREE.MathUtils.clamp(elevation ?? Math.asin(HOME_DIRECTION.y), 0, 1.2);
+  return new THREE.Vector3(Math.sin(azimuth) * Math.cos(e), Math.sin(e), Math.cos(azimuth) * Math.cos(e));
+}
 type Tween = { t: number; started: boolean; fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3 };
 
 const point = new THREE.Vector3();
@@ -57,12 +79,12 @@ function measureBox(root: THREE.Object3D): THREE.Box3 {
   return box;
 }
 
-function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera): Framing {
+function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera, home: THREE.Vector3): Framing {
   const sphere = box.getBoundingSphere(new THREE.Sphere());
   const vertical = THREE.MathUtils.degToRad(camera.fov);
   const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
   const distance = (sphere.radius / Math.sin(Math.min(vertical, horizontal) / 2)) * FIT_MARGIN;
-  return { center: sphere.center, distance };
+  return { center: sphere.center, distance, home };
 }
 
 function snapshot(state: RootState, background: string): string | null {
@@ -173,11 +195,11 @@ function Stage({ spec, art, label, showDims, modelKey, resetToken, reducedMotion
     if (raw.isEmpty()) return;
     const center = raw.getCenter(new THREE.Vector3());
     root.position.set(-center.x, -raw.min.y, -center.z);
-    const next = frameBox(measureBox(root), camera);
+    const next = frameBox(measureBox(root), camera, homeDirection(viewHint(root)));
     framing.current = next;
     camera.near = next.distance / 50;
     camera.far = next.distance * 20;
-    camera.position.copy(next.center).addScaledVector(HOME_DIRECTION, next.distance);
+    camera.position.copy(next.center).addScaledVector(next.home, next.distance);
     camera.lookAt(next.center);
     camera.updateProjectionMatrix();
     if (controls) {
@@ -214,7 +236,7 @@ function Stage({ spec, art, label, showDims, modelKey, resetToken, reducedMotion
     const { camera } = get();
     const controls = get().controls as unknown as OrbitControlsImpl | null;
     if (!goal || !controls) return;
-    const toPos = goal.center.clone().addScaledVector(HOME_DIRECTION, goal.distance);
+    const toPos = goal.center.clone().addScaledVector(goal.home, goal.distance);
     if (reducedMotion) {
       camera.position.copy(toPos);
       controls.target.copy(goal.center);

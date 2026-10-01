@@ -3,8 +3,8 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import { artAspect } from "@/lib/mockup-kinds";
-import { Fabric, Print, closedTube, useApparelArt, useGeometriesCleanup, useInflated } from "./fabric";
-import { Tube, Waving, fitFlat, makeShape, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { Fabric, Print, useApparelArt, useGeometriesCleanup, useInflated } from "./fabric";
+import { useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
 
 /*
  * Têxteis procedurais. A forma vem de um contorno 2D inflado (inflate.ts); a estampa entra por
@@ -135,6 +135,7 @@ function PoloCollar({ color }: { color: string }) {
 // ---------------------------------------------------------------------------- boné
 
 const CAP_RADIUS = 0.9;
+
 /** Unidades por centímetro: a copa tem ≈ 9 cm de raio. */
 const CAP_UNIT = CAP_RADIUS / 9;
 
@@ -203,63 +204,6 @@ export function CapModel({ spec, art, label }: ModelProps) {
       <mesh geometry={visor} position={[0, 0.02, CAP_RADIUS * 0.84]} rotation-x={0.08}>
         <Fabric color={spec.baseColor} />
       </mesh>
-    </group>
-  );
-}
-
-// ---------------------------------------------------------------------------- almofada e cama pet
-
-export function CushionModel({ spec, art, label }: ModelProps) {
-  const { w, h } = fitFlat(spec, 2.2);
-  const front = useArtTexture(artAspect(spec), "front", art, label);
-  const back = useArtTexture(artAspect(spec), spec.back === "same" ? "front" : "blank", art, label);
-  const shape = useMemo(() => makeShape(spec.shape, w, h, Math.min(w, h) * 0.14), [spec.shape, w, h]);
-  const thick = Math.min(w, h) * 0.16;
-  const surfaces = useInflated(shape, thick, { falloff: Math.min(w, h) * 0.32, folds: 0.004 });
-  const piping = useMemo(() => (surfaces ? closedTube(surfaces.polygon, 0.022) : null), [surfaces]);
-  useGeometryCleanup(piping);
-  if (!surfaces) return null;
-  return (
-    <group rotation={[-0.15, 0.4, 0]}>
-      <mesh geometry={surfaces.front}>
-        <meshPhysicalMaterial map={front} roughness={0.9} sheen={0.3} sheenColor="#d9d9d9" />
-      </mesh>
-      <mesh geometry={surfaces.back}>
-        <meshPhysicalMaterial map={back} roughness={0.9} sheen={0.3} sheenColor="#d9d9d9" />
-      </mesh>
-      {piping && (
-        <mesh geometry={piping}>
-          <meshStandardMaterial color="#efefef" roughness={0.85} />
-        </mesh>
-      )}
-    </group>
-  );
-}
-
-export function PetBedModel({ spec, art, label }: ModelProps) {
-  const { w, h } = fitFlat(spec, 2.4);
-  const front = useArtTexture(artAspect(spec), "front", art, label);
-  const round = spec.shape === "round";
-  const rim = 0.2;
-  const outline = useMemo(() => makeShape(round ? "round" : "rect", w - rim * 2, h - rim * 2, Math.min(w, h) * 0.18), [round, w, h]);
-  const surfaces = useInflated(outline, 0.1, { falloff: 0.25, folds: 0.004 });
-  const bolster = useMemo(() => (surfaces ? closedTube(surfaces.polygon, rim, 0) : null), [surfaces]);
-  useGeometryCleanup(bolster);
-  const fabric = spec.baseColor === "#ffffff" ? "#3b3b40" : spec.baseColor;
-  if (!surfaces) return null;
-  return (
-    <group rotation={[-1.05, 0, 0.3]}>
-      <mesh geometry={surfaces.front} position-z={0.02}>
-        <meshPhysicalMaterial map={front} roughness={0.9} sheen={0.3} sheenColor="#d9d9d9" />
-      </mesh>
-      <mesh geometry={surfaces.back} position-z={0.02}>
-        <Fabric color={fabric} />
-      </mesh>
-      {bolster && (
-        <mesh geometry={bolster} position-z={0.08} scale={[1, 1, 0.9]}>
-          <Fabric color={fabric} />
-        </mesh>
-      )}
     </group>
   );
 }
@@ -344,89 +288,6 @@ export function ApronModel({ spec, art, label }: ModelProps) {
         <boxGeometry args={[0.9, 0.42, 0.012]} />
         <Fabric color={spec.baseColor} sheen={0.6} />
       </mesh>
-    </group>
-  );
-}
-
-// ---------------------------------------------------------------------------- pano pendurado e bolsas
-
-export function ClothModel({ spec, art, label }: ModelProps) {
-  const { w, h } = fitFlat(spec, 2.3);
-  const texture = useArtTexture(artAspect(spec), "front", art, label);
-  return (
-    <group rotation-y={0.3}>
-      <Tube length={w * 1.15} radius={0.022} color="#b98b5a" position={[0, h / 2 + 0.02, 0]} />
-      <Waving w={w} h={h} texture={texture} strength={0.05} anchor="top" />
-    </group>
-  );
-}
-
-export function BagModel({ spec, art, label }: ModelProps) {
-  const printArt = useApparelArt(art);
-  const aspect = artAspect(spec);
-  const texture = useArtTexture(aspect, "front", printArt, label);
-  const pouch = spec.pouch;
-  const [w, h] = pouch ? [2.1, 1.25] : [1.75, 1.95];
-  const shape = useMemo(() => {
-    const s = new THREE.Shape();
-    const top = h / 2;
-    const bottom = -h / 2;
-    const r = pouch ? 0.22 : 0.06;
-    const topW = pouch ? w / 2 : w / 2 - 0.04;
-    s.moveTo(-topW, top);
-    s.lineTo(topW, top);
-    s.lineTo(w / 2, bottom + r);
-    s.quadraticCurveTo(w / 2, bottom, w / 2 - r, bottom);
-    s.lineTo(-w / 2 + r, bottom);
-    s.quadraticCurveTo(-w / 2, bottom, -w / 2, bottom + r);
-    s.closePath();
-    return s;
-  }, [w, h, pouch]);
-  const surfaces = useInflated(shape, pouch ? 0.24 : 0.1, { falloff: pouch ? 0.4 : 0.18, folds: pouch ? 0.006 : 0.012 });
-  const extras = useMemo(() => {
-    if (pouch) {
-      const zipper = new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(-w / 2 + 0.02, h / 2, 0), new THREE.Vector3(w / 2 - 0.02, h / 2, 0)), 8, 0.03, 8, false);
-      return [zipper];
-    }
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(-0.36, h / 2 - 0.02, 0),
-      new THREE.Vector3(-0.32, h / 2 + 0.5, 0),
-      new THREE.Vector3(0, h / 2 + 0.72, 0),
-      new THREE.Vector3(0.32, h / 2 + 0.5, 0),
-      new THREE.Vector3(0.36, h / 2 - 0.02, 0),
-    ]);
-    return [new THREE.TubeGeometry(curve, 48, 0.04, 8, false)];
-  }, [pouch, w, h]);
-  useGeometriesCleanup(extras);
-  const fabric = spec.baseColor === "#ffffff" && !pouch ? "#f2ede2" : spec.baseColor;
-  const printH = Math.min(h * 0.62, (w * 0.62) / aspect);
-  if (!surfaces) return null;
-  return (
-    <group rotation-y={0.45}>
-      <mesh geometry={surfaces.front}>
-        <Fabric color={fabric} />
-        <Print map={texture} position={[0, pouch ? -0.04 : -0.08, 0.2]} rotation={[0, 0, 0]} size={[printH * aspect, printH]} />
-      </mesh>
-      <mesh geometry={surfaces.back}>
-        <Fabric color={fabric} />
-      </mesh>
-      {pouch ? (
-        <>
-          <mesh geometry={extras[0]}>
-            <meshStandardMaterial color="#2a2a2e" roughness={0.6} />
-          </mesh>
-          <mesh position={[w / 2 - 0.22, h / 2 - 0.08, 0.05]}>
-            <boxGeometry args={[0.06, 0.16, 0.02]} />
-            <meshStandardMaterial color="#c9ccd1" metalness={0.9} roughness={0.3} />
-          </mesh>
-        </>
-      ) : (
-        [0.035, -0.035].map((z) => (
-          <mesh key={z} geometry={extras[0]} position-z={z} scale={[1, 1, 0.4]}>
-            <Fabric color={fabric} />
-          </mesh>
-        ))
-      )}
     </group>
   );
 }

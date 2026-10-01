@@ -2,11 +2,19 @@
 
 import type { ComponentType } from "react";
 import type { MockupKind } from "@/lib/mockup-kinds";
-import { CardModel, StickerModel, BookModel, TentModel, SheetModel, FoldedModel } from "./paper";
-import { PanelModel, AcrylicModel, KeychainModel, CanvasModel, MatModel, CoasterModel, BoxModel } from "./rigid";
-import { NeonModel, BannerModel, LightboxModel, RollupModel, FlagModel, HardwareModel } from "./signage";
-import { ApronModel, BagModel, BandanaModel, CapModel, ClothModel, CushionModel, PetBedModel, TshirtModel } from "./textile";
-import { MugModel, TumblerModel, BottleModel } from "./drinkware";
+import { CardModel, TentModel, SheetModel, FoldedModel } from "./paper";
+import { BookModel } from "./books";
+import { StickerModel } from "./stickers";
+import { PanelModel, AcrylicModel, KeychainModel, CanvasModel } from "./rigid";
+import { MatModel, CoasterModel } from "./tabletop";
+import { BoxModel } from "./boxes";
+import { NeonModel, BannerModel, LightboxModel, RollupModel } from "./signage";
+import { FlagModel, HardwareModel } from "./flags";
+import { ApronModel, BandanaModel, CapModel, TshirtModel } from "./textile";
+import { ClothModel, CushionModel, PetBedModel } from "./homegoods";
+import { BagModel } from "./totes";
+import { MugModel } from "./drinkware";
+import { TumblerModel, BottleModel } from "./bottles";
 import { FlipflopModel, PenModel, FanModel, LanyardModel, BadgeModel, WristbandModel } from "./accessories";
 import { PaperpackModel, WallCalendarModel, PassportModel, HangtagModel, BookmarkModel } from "./stationery";
 import { SockModel, ShortsModel, SwimsuitModel } from "./apparel";
