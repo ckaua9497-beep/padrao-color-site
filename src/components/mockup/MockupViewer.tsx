@@ -5,12 +5,11 @@ import { Canvas, useThree, type RootState } from "@react-three/fiber";
 import { Bounds, Center, ContactShadows, Environment, Lightformer, OrbitControls, useBounds } from "@react-three/drei";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
+import { KIND_INFO } from "@/lib/mockup-kinds";
 import type { ArtSettings } from "./art";
 import { MockupModel } from "./models";
 
 export type CaptureFn = () => string | null;
-
-const WRAPPED: MockupSpec["kind"][] = ["mug", "tumbler", "bottle", "tshirt", "cap"];
 
 type ViewerProps = {
   spec: MockupSpec;
@@ -155,7 +154,7 @@ export default function MockupViewer({ spec, art, label, captureRef, controls = 
           </div>
           <span className={`pointer-events-none absolute bottom-3 left-3 rounded-[10px] px-2.5 py-1.5 text-center text-[11px] font-bold leading-tight ${dark ? "bg-white text-ink" : "bg-ink text-white"}`}>
             {spec.label}
-            <span className="block text-[9px] font-medium opacity-70">{WRAPPED.includes(spec.kind) ? "área de arte" : "tamanho"}</span>
+            <span className="block text-[9px] font-medium opacity-70">{KIND_INFO[spec.kind].sizeIsArtArea ? "área de arte" : "tamanho"}</span>
           </span>
         </>
       )}

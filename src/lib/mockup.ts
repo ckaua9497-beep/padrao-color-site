@@ -1,33 +1,19 @@
 import type { Selection } from "./pricing";
+import { KIND_INFO, type MockupKind } from "./mockup-kinds.ts";
+import { MOCKUP_OVERRIDES } from "./mockup-overrides.ts";
 
-export type MockupKind =
-  | "card"
-  | "sheet"
-  | "sticker"
-  | "panel"
-  | "acrylic"
-  | "neon"
-  | "canvas"
-  | "mat"
-  | "banner"
-  | "rollup"
-  | "flag"
-  | "cloth"
-  | "mug"
-  | "tumbler"
-  | "bottle"
-  | "tshirt"
-  | "cap"
-  | "cushion"
-  | "book"
-  | "tent"
-  | "bag"
-  | "box";
+export type { MockupKind } from "./mockup-kinds.ts";
 
 export type MockupShape = "rect" | "round" | "heart";
+export type FlagStyle = "pena" | "faca" | "gota" | "vela" | "rect";
+
+/** De onde veio o tipo: override por slug, regra de nome, padrão da categoria ou nada (fallback). */
+export type KindSource = "override" | "name" | "category" | "fallback";
 
 export type MockupSpec = {
   kind: MockupKind;
+  source: KindSource;
+  printable: boolean;
   widthCm: number;
   heightCm: number;
   depthCm: number;
@@ -37,65 +23,110 @@ export type MockupSpec = {
   back: "blank" | "same" | "gray";
   baseColor: string;
   innerColor: string;
+  /** Alça, tampa ou base em outra cor; null usa o padrão do modelo. */
+  accentColor: string | null;
   metal: "none" | "silver" | "gold" | "rose";
+  glass: boolean;
+  glitter: boolean;
+  ledColors: string[];
   sleeveless: boolean;
+  longSleeve: boolean;
+  collar: "crew" | "polo";
   grommets: boolean;
-  flagStyle: "feather" | "rect";
-  stack: number;
+  flagStyle: FlagStyle;
+  folds: 0 | 1 | 2;
   label: string;
+};
+
+export type MockupProduct = {
+  slug?: string;
+  name: string;
+  categorySlug?: string;
+  options: Record<string, string[]>;
 };
 
 type Rule = { kind: MockupKind; test: RegExp };
 
+// Testadas na ordem contra o nome sem acento e em minúsculas (ver normalizeName).
+// Regras mais específicas vêm antes: "porta copo" antes de "copo", "base … wind banner" antes de "wind banner".
 const RULES: Rule[] = [
-  { kind: "neon", test: /led neon/ },
-  { kind: "rollup", test: /roll ?up/ },
-  { kind: "flag", test: /wind banner|bandeira|wind ball/ },
-  { kind: "tumbler", test: /copo|travel mug|chopp/ },
-  { kind: "mug", test: /caneca|x[ií]cara/ },
-  { kind: "bottle", test: /garrafa|squeeze/ },
-  { kind: "cap", test: /bon[eé]\b/ },
-  { kind: "tshirt", test: /camisa|regata|abad[aá]|colete|pijama|\bbody\b|bandana pet/ },
-  { kind: "cushion", test: /almofada|fronha|cama pet|kit soneca|m[aá]scara de dormir/ },
-  { kind: "tent", test: /calend[aá]rio de mesa|display de mesa de papel/ },
-  { kind: "book", test: /photobook|agenda|caderno|planner|bloco/ },
-  { kind: "bag", test: /bolsa|sacola|ecobag|mochila|necessaire|lancheira|cooler|estojo|porta passaporte/ },
-  { kind: "box", test: /caixa|solapa|kit cinema|kit executivo/ },
-  { kind: "banner", test: /banner|lona|faixa|backlight/ },
-  { kind: "canvas", test: /canvas/ },
-  { kind: "acrylic", test: /acr[ií]lico|chaveiro/ },
-  { kind: "mat", test: /mouse ?pad|jogo americano|tapete|capacho|porta jarra|porta copo|sousplat|t[aá]bua/ },
-  { kind: "cloth", test: /toalha|pano|len[cç]ol|cortina|canga|tecido|guardanapo|avental|bandana|meia|short|mai[oô]|capa de corte|capa p\/ cilindro/ },
-  { kind: "sticker", test: /adesivo|r[oó]tulo|im[aã]|dtf|manta|etiqueta|pulseira/ },
-  { kind: "panel", test: /\bps\b|pvc expandido|xps|polionda|quadro|placa|display|porteiro|wobbler|mosaico|cr[aá]ch[aá]|credencial|r[eé]gua|suporte p\/ celular|quebra cabe[cç]a/ },
-  { kind: "card", test: /cart[aã]o de visita|cart[aã]o de pvc|\btag\b|marcador|calend[aá]rio de bolso/ },
-  { kind: "sheet", test: /.*/ },
+  { kind: "neon", test: /\bneon\b/ },
+  { kind: "hardware", test: /\b(base|haste)\b.*\bwind banner\b/ },
+  { kind: "rollup", test: /\broll ?up\b/ },
+  { kind: "flag", test: /\bwind (banner|ball)\b|\bbandeira\b/ },
+  { kind: "coaster", test: /\bporta (copo|jarra)\b|\bsousplat\b/ },
+  { kind: "bottle", test: /\bgarrafa\b|\bsqueeze\b/ },
+  { kind: "tumbler", test: /\bcopo\b|\btravel mug\b/ },
+  { kind: "mug", test: /\bcaneca\b|\bxicara\b/ },
+  { kind: "cap", test: /\bbone\b/ },
+  { kind: "bandana", test: /\bbandana\b/ },
+  { kind: "apron", test: /\bavental\b/ },
+  { kind: "petbed", test: /\bcama pet\b/ },
+  { kind: "tshirt", test: /\bcamisa\b|\bregata\b|\babada\b|\bcolete\b|\bpijama\b|\bbody\b/ },
+  { kind: "cushion", test: /\balmofada\b|\bfronha\b|\bkit soneca\b|\bmascara de dormir\b/ },
+  { kind: "tent", test: /\bcalendario de mesa\b|\bdisplay de mesa de papel\b/ },
+  { kind: "book", test: /\bphotobook\b|\bagenda\b|\bcaderno\b|\bplanner\b|\bbloco\b/ },
+  { kind: "folded", test: /^pasta\b|\bfolder\b|\bdobras?\b/ },
+  {
+    kind: "bag",
+    test: /\bbolsa\b|\bsacola\b|\becobag\b|\bmochila\b|\bnecessaire\b|\blancheira\b|\bcooler\b|\bestojo\b|\bporta passaporte\b/,
+  },
+  { kind: "box", test: /\bcaixa\b|\bsolapa\b|\bkit (cinema|executivo)\b/ },
+  { kind: "lightbox", test: /\bbacklight\b/ },
+  { kind: "banner", test: /\bbanner\b|\blona\b|\bfaixa\b/ },
+  { kind: "canvas", test: /\bcanvas\b/ },
+  { kind: "keychain", test: /\bchaveiro\b/ },
+  { kind: "acrylic", test: /\bacrilico\b/ },
+  { kind: "rug", test: /\btapete\b|\bcapacho\b/ },
+  { kind: "board", test: /\btabua\b/ },
+  { kind: "mat", test: /\bmouse ?pad\b|\bjogo americano\b/ },
+  {
+    kind: "cloth",
+    test: /\btoalha\b|\bpano\b|\blencol\b|\bcortina\b|\bcanga\b|\btecido\b|\bguardanapo\b|\bmeia\b|\bshort\b|\bmaio\b|\bcapa de corte\b|\bcapa p\/ cilindro\b|\bcordao\b/,
+  },
+  {
+    kind: "panel",
+    test: /\bps\b|\bpvc expandido\b|\bxps\b|\bpolionda\b|\bquadro\b|\bplaca\b|\bdisplay\b|\bporteiro\b|\bwobbler\b|\bmosaico\b|\bcracha\b|\bcredencial\b|\bregua\b|\bsuporte p\/ celular\b|\bquebra cabeca\b/,
+  },
+  { kind: "sticker", test: /\badesivo\b|\brotulo\b|\bima\b|\bdtf\b|\bmanta\b|\betiqueta\b|\bpulseira\b/ },
+  { kind: "card", test: /\bcartao de (visita|pvc)\b|\btag\b|\bmarcador\b|\bcalendario de bolso\b/ },
 ];
 
-const DEFAULT_SIZE: Record<MockupKind, [number, number, number]> = {
-  card: [9, 5, 0.04],
-  sheet: [15, 21, 0.02],
-  sticker: [10, 10, 0.02],
-  panel: [40, 30, 0.5],
-  acrylic: [30, 20, 0.3],
-  neon: [60, 30, 0.5],
-  canvas: [40, 30, 3],
-  mat: [24, 20, 0.4],
-  banner: [60, 90, 0.05],
-  rollup: [80, 200, 0.05],
-  flag: [70, 240, 0.05],
-  cloth: [50, 70, 0.1],
-  mug: [20, 9.5, 8],
-  tumbler: [22, 15, 7],
-  bottle: [20, 22, 7],
-  tshirt: [21, 28, 0],
-  cap: [14, 10, 0],
-  cushion: [40, 40, 12],
-  book: [20, 20, 2],
-  tent: [20, 15, 8],
-  bag: [35, 40, 10],
-  box: [20, 15, 10],
+// Usado quando nenhuma regra de nome casa (cartões postais, folhetos, impressões…).
+const CATEGORY_DEFAULT: Record<string, MockupKind> = {
+  "cartoes-de-visita-e-postais": "sheet",
+  folhetos: "sheet",
+  impressoes: "sheet",
+  calendarios: "sheet",
+  escritorio: "sheet",
+  restaurantes: "sheet",
+  promocional: "sheet",
+  "adesivos-e-rotulos": "sticker",
+  "banner-e-lonas": "banner",
+  "comunicacao-visual": "panel",
+  "led-neon": "neon",
+  vestuario: "tshirt",
+  texteis: "cloth",
+  "bolsas-e-mochilas": "bag",
+  photobook: "book",
+  embalagens: "box",
 };
+
+/** Sem acento, minúsculas e espaços simples: "Boné" → "bone". */
+export function normalizeName(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export function resolveKind(product: { slug?: string; name: string; categorySlug?: string }): { kind: MockupKind; source: KindSource } {
+  const override = product.slug ? MOCKUP_OVERRIDES[product.slug]?.kind : undefined;
+  if (override) return { kind: override, source: "override" };
+  const name = normalizeName(product.name);
+  const rule = RULES.find((r) => r.test.test(name));
+  if (rule) return { kind: rule.kind, source: "name" };
+  const byCategory = product.categorySlug ? CATEGORY_DEFAULT[product.categorySlug] : undefined;
+  if (byCategory) return { kind: byCategory, source: "category" };
+  return { kind: "sheet", source: "fallback" };
+}
 
 function parseSize(text: string): [number, number] | null {
   const lower = text.toLowerCase();
@@ -114,97 +145,205 @@ function parseSize(text: string): [number, number] | null {
   return [a, b];
 }
 
+/** Chave da opção sem o prefixo numérico ("2 - Cor" → "cor"), normalizada. */
+function optionKey(key: string): string {
+  return normalizeName(key).replace(/^\d+ - /, "").replace(/:$/, "");
+}
+
 function pick(selection: Selection, options: Record<string, string[]>, pattern: RegExp): string | undefined {
-  const key = Object.keys(options).find((k) => pattern.test(k));
+  const key = Object.keys(options).find((k) => pattern.test(optionKey(k)));
   if (!key) return undefined;
   return selection[key] ?? options[key]?.[0];
 }
 
-const COLOR_WORDS: [RegExp, string][] = [
-  [/preta|preto|black/, "#1c1c1e"],
-  [/azul/, "#2a6fdb"],
-  [/vermelh/, "#d7262b"],
-  [/amarel/, "#f4c51f"],
-  [/verde/, "#2f9e5b"],
-  [/rosa|ros[eê]/, "#e8789f"],
-  [/cinza/, "#9a9a9e"],
+type Palette = [RegExp, string][];
+
+// Cores de peça (tecido, cerâmica, plástico). Padrões mais específicos primeiro.
+const COLOR_WORDS: Palette = [
+  [/\bazul (escuro|marinho)\b|\bmarinho\b/, "#1f2f5c"],
+  [/\bazul claro\b|\bceleste\b/, "#7cc4ef"],
+  [/\bazul royal\b|\broyal\b/, "#2449b8"],
+  [/\bazul\b/, "#2a6fdb"],
+  [/\bverde escuro\b|\bmusgo\b/, "#1f5c3a"],
+  [/\bverde claro\b|\bverde limao\b/, "#9bd36a"],
+  [/\bverde\b/, "#2f9e5b"],
+  [/\bvermelh\w*/, "#d7262b"],
+  [/\bvinho\b|\bbordo\b/, "#6d1a2a"],
+  [/\brose gold\b/, "#e9a99b"],
+  [/\brosa claro\b/, "#f6c3d5"],
+  [/\brosa\b|\bpink\b/, "#e8789f"],
+  [/\blilas\b|\broxo\b|\bpurpura\b/, "#8e6bbf"],
+  [/\blaranja\b/, "#f08a24"],
+  [/\bamarel\w*/, "#f4c51f"],
+  [/\bbege\b|\bareia\b|\bcru\b/, "#e8dcc4"],
+  [/\bmarrom\b/, "#6b4a33"],
+  [/\bcinza\b|\bgrafite\b/, "#9a9a9e"],
+  [/\bdourad\w*/, "#d4af37"],
+  [/\bpratead\w*|\bprata\b/, "#c9ccd1"],
+  [/\bcobre\b/, "#b87333"],
+  [/\bpret\w*|\bblack\b/, "#1c1c1e"],
+  [/\bbranc\w*/, "#ffffff"],
 ];
 
-function colorFrom(text: string | undefined, fallback: string): string {
-  if (!text) return fallback;
-  const lower = text.toLowerCase();
-  for (const [pattern, color] of COLOR_WORDS) if (pattern.test(lower)) return color;
-  return fallback;
+// Cores de LED são saturadas e claras; não reaproveitam a paleta de peças.
+const LED_WORDS: Palette = [
+  [/\bbranco quente\b/, "#ffd9a0"],
+  [/\bbranco frio\b|\bbranco\b/, "#eaf6ff"],
+  [/\bvermelh\w*/, "#ff2a3d"],
+  [/\blaranja\b/, "#ff7a1a"],
+  [/\bamarelo ambar\b|\bambar\b/, "#ffb21a"],
+  [/\bamarel\w*/, "#ffe14a"],
+  [/\bverde\b/, "#39ff7a"],
+  [/\bazul claro\b|\bciano\b|\bgelo\b/, "#5fe3ff"],
+  [/\bazul\b/, "#2f6bff"],
+  [/\brosa\b|\bpink\b/, "#ff4fd8"],
+  [/\broxo\b|\blilas\b|\bvioleta\b/, "#a64dff"],
+];
+
+export const DEFAULT_LED_COLORS = ["#ff4fd8", "#38e1ff"];
+
+/** Cores citadas no texto, na ordem em que aparecem ("Branca com tampa preta" → branco, preto). */
+export function colorsIn(text: string, palette: Palette = COLOR_WORDS): string[] {
+  const found: { index: number; length: number; color: string }[] = [];
+  palette.forEach(([pattern, color]) => {
+    for (const match of text.matchAll(new RegExp(pattern.source, "g"))) {
+      found.push({ index: match.index ?? 0, length: match[0].length, color });
+    }
+  });
+  found.sort((a, b) => a.index - b.index || b.length - a.length);
+  const colors: string[] = [];
+  let end = -1;
+  for (const hit of found) {
+    if (hit.index < end) continue;
+    colors.push(hit.color);
+    end = hit.index + hit.length;
+  }
+  return colors;
 }
 
-export function mockupSpec(
-  product: { name: string; category: string; options: Record<string, string[]> },
-  selection: Selection,
-): MockupSpec {
-  const name = product.name.toLowerCase();
-  const kind = RULES.find((rule) => rule.test.test(name))?.kind ?? "sheet";
-  const [dw, dh, dd] = DEFAULT_SIZE[kind];
+function metalFrom(text: string): MockupSpec["metal"] {
+  if (/\brose gold\b/.test(text) || (/\brose\b/.test(text) && /cromad/.test(text))) return "rose";
+  if (/\bdourad/.test(text)) return "gold";
+  if (/cromad|\bprata\b|\binox\b|\baluminio\b/.test(text)) return "silver";
+  return "none";
+}
+
+const NOT_PRINTABLE = /\bs\/ impressao\b|\bsem impressao\b|\bs\/ personalizacao\b|\bsem personalizacao\b|\bnao personalizavel\b|\bpct\b|\bpacote\b|\bcaneta p\/ porcelana\b/;
+const SHAPED_KINDS: MockupKind[] = ["cushion", "sticker", "mat", "coaster", "keychain", "card", "petbed"];
+const PAINTABLE_METAL: MockupKind[] = ["bottle", "tumbler"];
+
+export function mockupSpec(product: MockupProduct, selection: Selection): MockupSpec {
+  const { kind, source } = resolveKind(product);
+  const info = KIND_INFO[kind];
+  const [dw, dh, dd] = info.defaultSize;
+  const name = normalizeName(product.name);
+
+  const chosen = Object.entries(product.options).map(([k, values]) => ({
+    key: optionKey(k),
+    value: normalizeName(selection[k] ?? values[0] ?? ""),
+  }));
+  const allValues = chosen.map((c) => c.value).join(" | ");
 
   const sizeText =
-    pick(selection, product.options, /^(\d+ - )?(formato|tamanho da arte|formato da arte)/i) ??
-    pick(selection, product.options, /^(\d+ - )?tamanho$/i) ??
+    pick(selection, product.options, /^(formato|tamanho da arte|formato da arte)/) ??
+    pick(selection, product.options, /^tamanho$/) ??
     product.name;
   const parsed = parseSize(sizeText) ?? parseSize(product.name);
   let [widthCm, heightCm] = parsed ?? [dw, dh];
-
   if (kind === "banner" && /faixa/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
-  if ((kind === "mug" || kind === "tumbler" || kind === "bottle" || kind === "tshirt" || kind === "cap") && !parsed) {
-    [widthCm, heightCm] = [dw, dh];
-  }
-
-  const allValues = Object.entries(product.options)
-    .map(([k, values]) => selection[k] ?? values[0])
-    .join(" ")
-    .toLowerCase();
 
   let finish: MockupSpec["finish"] = "satin";
   if (/fosc/.test(allValues)) finish = "matte";
   if (/brilho|glossy|cromad/.test(allValues)) finish = "gloss";
 
   let clearcoat = 0;
-  if (/verniz total|uv total/.test(allValues)) clearcoat = 1;
+  if (/verniz total|uv total|u\.v\. total/.test(allValues)) clearcoat = 1;
   else if (/verniz local|uv local/.test(allValues)) clearcoat = 0.55;
   if (finish === "gloss") clearcoat = Math.max(clearcoat, 0.7);
 
-  const color = pick(selection, product.options, /^(\d+ - )?cor( da impress[aã]o)?$/i) ?? "";
-  let back: MockupSpec["back"] = kind === "card" || kind === "sheet" ? "same" : "blank";
-  if (/4\/0/.test(color)) back = "blank";
-  if (/4\/1/.test(color)) back = "gray";
-  if (/4\/4/.test(color)) back = "same";
+  // "Cor" pode ser a carga de impressão (4/0, 4/4) ou a cor da peça.
+  const printColors = pick(selection, product.options, /^cor( da impressao)?$/) ?? "";
+  let back: MockupSpec["back"] = kind === "card" || kind === "sheet" || kind === "folded" ? "same" : "blank";
+  if (/4\/0/.test(printColors)) back = "blank";
+  if (/4\/1/.test(printColors)) back = "gray";
+  if (/4\/4/.test(printColors) || /\bdupla face\b/.test(name)) back = "same";
 
-  const shirtColor = pick(selection, product.options, /cor da camisa|cor$/i);
+  const colorValue = chosen.find(
+    (c) => /^cor( d[aoe]s? (caneca|garrafa|bone|camisa|pulseira|estrutura))?$|^cor base$/.test(c.key) && !/\d\/\d/.test(c.value),
+  )?.value;
+  const bodyColors = colorValue ? colorsIn(colorValue) : [];
+  const plastic = /plastic/.test(name) || /plastic/.test(allValues);
+  const coloredInterior = kind === "mug" && /\binterior\b/.test(name);
+
   let baseColor = "#ffffff";
-  if (kind === "tshirt" || kind === "cap" || kind === "bag") baseColor = colorFrom(shirtColor ?? name, "#ffffff");
-  if (kind === "mug" && /m[aá]gica|preta/.test(name)) baseColor = "#1c1c1e";
-  if (kind === "mat") baseColor = "#2b2b2b";
+  if (bodyColors.length && !coloredInterior) baseColor = bodyColors[0];
+  else if (!bodyColors.length && (kind === "tshirt" || kind === "cap" || kind === "bag")) baseColor = colorsIn(name)[0] ?? "#ffffff";
+  if (kind === "mug" && /\bmagica\b/.test(name) && !bodyColors.length) baseColor = "#1c1c1e";
+  if ((kind === "mat" || kind === "rug") && !bodyColors.length) baseColor = "#2b2b2b";
 
-  const innerMatch = /interior (?:colorido )?(\w+)/.exec(name);
-  const innerColor = colorFrom(innerMatch?.[1], baseColor === "#1c1c1e" ? "#1c1c1e" : "#ffffff");
+  const innerMatch = /\binterior (?:colorido )?([a-z]+(?: (?:claro|escuro))?)/.exec(name) ?? /\binterior ([a-z]+)/.exec(colorValue ?? "");
+  let innerColor = innerMatch ? colorsIn(innerMatch[1])[0] : undefined;
+  if (!innerColor && coloredInterior) innerColor = bodyColors[0];
+  if (!innerColor && kind === "mug" && bodyColors.length > 1) innerColor = bodyColors[1];
+  innerColor ??= baseColor === "#1c1c1e" ? "#1c1c1e" : "#ffffff";
 
-  let metal: MockupSpec["metal"] = "none";
-  if (/dourad/.test(name)) metal = "gold";
-  else if (/ros[eê]/.test(name) && /cromad/.test(name)) metal = "rose";
-  else if (/cromad|prata|inox|alum[ií]nio/.test(name)) metal = "silver";
+  let accentColor: string | null = null;
+  if (coloredInterior) accentColor = innerColor;
+  else if (bodyColors.length > 1 && (kind === "bottle" || kind === "tumbler")) accentColor = bodyColors[1];
+  const lid = pick(selection, product.options, /^cor da tampa$/);
+  if (lid) accentColor = colorsIn(normalizeName(lid))[0] ?? accentColor;
+  if (/\bbambu\b/.test(name)) accentColor = "#c9a46c";
+
+  let metal: MockupSpec["metal"] = plastic ? "none" : metalFrom(name);
+  if (colorValue && ((kind === "mug" && /cromad/.test(name)) || PAINTABLE_METAL.includes(kind))) {
+    const fromValue = metalFrom(colorValue);
+    if (fromValue !== "none") metal = fromValue;
+    else if (bodyColors.length && PAINTABLE_METAL.includes(kind)) metal = "none";
+  }
+  const glitter = /\bglitter\b/.test(name) || /\bglitter\b/.test(colorValue ?? "");
+  // "branca com base dourada": só a base é metálica.
+  const baseBand = /\bbase (dourad\w*|pratead\w*|prata)\b/.exec(colorValue ?? "");
+  if (baseBand) {
+    accentColor = colorsIn(baseBand[1])[0] ?? accentColor;
+    metal = "none";
+  } else if (glitter && metal === "none") {
+    metal = metalFrom(`${name} ${colorValue ?? ""}`);
+  }
+  const glass = /\bvidro\b|\bchopp\b|\bjatead/.test(name) || (kind === "box" && /\bacrilic/.test(name));
+
+  const ledValue = pick(selection, product.options, /^cor(es)? d[oa]s? leds?$/) ?? (kind === "neon" ? colorValue : undefined);
+  const ledFound = ledValue ? colorsIn(normalizeName(ledValue), LED_WORDS) : [];
+  const ledColors = ledFound.length ? ledFound : DEFAULT_LED_COLORS;
 
   const thickness = /(\d+(?:[.,]\d+)?)\s*mm/.exec(allValues);
   const depthCm = thickness ? Number(thickness[1].replace(",", ".")) / 10 : dd;
 
+  const shapeText = `${name} | ${allValues}`;
   let shape: MockupShape = "rect";
-  if (/redond|bola/.test(name) || (kind === "mat" && /porta copo|sousplat/.test(name))) shape = "round";
-  if (/cora[cç][aã]o/.test(name)) shape = "heart";
-  if (shape !== "rect" && kind !== "cushion" && kind !== "sticker" && kind !== "mat") shape = "rect";
-  if (shape === "round") heightCm = widthCm = Math.max(widthCm, heightCm);
+  let circle = false;
+  if (/\bcoracao\b/.test(shapeText)) shape = "heart";
+  else if (/\bredond[ao]s?\b|\bcircular\b/.test(shapeText) || (kind === "coaster" && /\bsousplat\b/.test(name))) {
+    shape = "round";
+    circle = true;
+  } else if (/\boval\b/.test(shapeText)) shape = "round";
+  if (!SHAPED_KINDS.includes(kind)) shape = "rect";
+  if (shape === "round" && circle) heightCm = widthCm = Math.max(widthCm, heightCm);
 
-  const stack = kind === "sheet" ? 3 : kind === "card" ? 2 : 1;
-  const flagStyle: MockupSpec["flagStyle"] = /bandeira/.test(name) && !/wind/.test(name) ? "rect" : "feather";
+  let flagStyle: FlagStyle = "pena";
+  if (/\bfaca\b/.test(name)) flagStyle = "faca";
+  else if (/\bgota\b/.test(name)) flagStyle = "gota";
+  else if (/\bvela\b/.test(name)) flagStyle = "vela";
+  else if (/\bretangular\b/.test(name) || (/\bbandeira\b/.test(name) && !/\bwind\b/.test(name))) flagStyle = "rect";
+
+  const folds: MockupSpec["folds"] = /\b2 dobras\b/.test(name) ? 2 : /\bdobras?\b/.test(name) || kind === "folded" ? 1 : 0;
+
+  const override = product.slug ? MOCKUP_OVERRIDES[product.slug] : undefined;
+  const printable = info.printable && override?.printable !== false && !NOT_PRINTABLE.test(name) && !NOT_PRINTABLE.test(allValues);
 
   return {
     kind,
+    source,
+    printable,
     widthCm,
     heightCm,
     depthCm,
@@ -214,34 +353,25 @@ export function mockupSpec(
     back,
     baseColor,
     innerColor,
+    accentColor,
     metal,
-    sleeveless: /regata|abad[aá]|colete/.test(name),
-    grommets: /ilh[oó]s|faixa/.test(name) || /ilh[oó]s/.test(allValues),
+    glass,
+    glitter,
+    ledColors,
+    sleeveless: /\bregata\b|\babada\b|\bcolete\b/.test(name),
+    longSleeve: /\bmanga (comprida|longa)\b|\bpijama\b/.test(name),
+    collar: /\bpolo\b/.test(name) ? "polo" : "crew",
+    grommets: /\bilhos\b|\bfaixa\b/.test(name) || /\bilhos\b/.test(allValues),
     flagStyle,
-    stack,
+    folds,
     label: formatSize(widthCm, heightCm),
   };
 }
 
 export function formatSize(w: number, h: number): string {
-  const fmt = (v: number) => (v >= 100 ? `${(v / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m` : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} cm`);
+  const fmt = (v: number) =>
+    v >= 100
+      ? `${(v / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m`
+      : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} cm`;
   return `${fmt(w)} × ${fmt(h)}`;
 }
-
-export function artAspect(spec: MockupSpec): number {
-  switch (spec.kind) {
-    case "mug":
-      return 2.35;
-    case "tumbler":
-    case "bottle":
-      return 2.2;
-    case "tshirt":
-      return 0.78;
-    case "cap":
-      return 1.6;
-    default:
-      return spec.widthCm / spec.heightCm;
-  }
-}
-
-export const FLAT_KINDS: MockupKind[] = ["card", "sheet", "sticker", "panel", "acrylic", "neon", "canvas", "mat", "banner"];

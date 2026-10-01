@@ -49,6 +49,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             slug: product.slug,
             name: product.name,
             category: product.category,
+            categorySlug: product.categorySlug,
             image: product.image,
             images: product.images,
             options: product.options,

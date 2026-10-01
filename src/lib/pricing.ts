@@ -72,12 +72,3 @@ export function availableValues(
   if (seen.size === 0) return new Set(options[key]);
   return seen;
 }
-
-export function cheapestFor(variations: Variation[], key: string, value: string): number | null {
-  let min: number | null = null;
-  for (const variation of variations) {
-    if (variation.v[key] !== value) continue;
-    if (min === null || variation.p < min) min = variation.p;
-  }
-  return min;
-}

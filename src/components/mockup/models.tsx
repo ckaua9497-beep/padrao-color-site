@@ -5,7 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import { Billboard, Line, RoundedBox } from "@react-three/drei";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
-import { artAspect } from "@/lib/mockup";
+import { artAspect } from "@/lib/mockup-kinds";
 import {
   type ArtSettings,
   type ArtVariant,
@@ -580,7 +580,7 @@ function MugModel({ spec, art, label }: ModelProps) {
         <cylinderGeometry args={[r, r, h, 96, 1, true]} />
         <meshPhysicalMaterial
           map={texture}
-          color={metal ? metalColor(spec.metal) : "#ffffff"}
+          color={metal ? metalColor(spec.metal) : spec.baseColor}
           metalness={metal ? 0.85 : 0}
           roughness={metal ? 0.18 : 0.12}
           clearcoat={metal ? 0.6 : 1}
@@ -606,7 +606,7 @@ function MugModel({ spec, art, label }: ModelProps) {
       <group position={[0, 0.02, r - 0.02]} rotation-y={-Math.PI / 2}>
         <mesh rotation-z={-Math.PI / 2} castShadow>
           <torusGeometry args={[0.36, 0.075, 20, 48, Math.PI]} />
-          <meshPhysicalMaterial color={spec.innerColor !== "#ffffff" ? spec.innerColor : metal ? metalColor(spec.metal) : "#ffffff"} metalness={metal ? 0.85 : 0} roughness={0.15} clearcoat={1} />
+          <meshPhysicalMaterial color={spec.accentColor ?? (metal ? metalColor(spec.metal) : spec.baseColor)} metalness={metal ? 0.85 : 0} roughness={0.15} clearcoat={1} />
         </mesh>
       </group>
     </group>
@@ -938,20 +938,28 @@ export function MockupModel(props: ModelProps) {
     case "panel":
       return <PanelModel {...props} />;
     case "acrylic":
+    case "keychain":
       return <AcrylicModel {...props} />;
     case "neon":
       return <NeonModel {...props} />;
     case "canvas":
       return <CanvasModel {...props} />;
     case "mat":
+    case "rug":
+    case "coaster":
+    case "board":
       return <MatModel {...props} />;
     case "banner":
+    case "lightbox":
       return <BannerModel {...props} />;
     case "rollup":
       return <RollupModel {...props} />;
     case "flag":
+    case "hardware":
       return <FlagModel {...props} />;
     case "cloth":
+    case "apron":
+    case "bandana":
       return <ClothModel {...props} />;
     case "mug":
       return <MugModel {...props} />;
@@ -964,6 +972,7 @@ export function MockupModel(props: ModelProps) {
     case "cap":
       return <CapModel {...props} />;
     case "cushion":
+    case "petbed":
       return <CushionModel {...props} />;
     case "book":
       return <BookModel {...props} />;

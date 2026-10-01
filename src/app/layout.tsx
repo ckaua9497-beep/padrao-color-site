@@ -16,7 +16,6 @@ export const metadata: Metadata = {
   },
   description:
     "Gráfica e comunicação visual: cartões, banners, brindes, vestuário e LED neon. Configure, envie sua arte e veja o produto em 3D antes de imprimir.",
-  icons: { icon: "/logo-padrao-color.png" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

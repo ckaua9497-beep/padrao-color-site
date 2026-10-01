@@ -18,6 +18,7 @@ export type ClientProduct = {
   slug: string;
   name: string;
   category: string;
+  categorySlug: string;
   image: string;
   images: string[];
   options: Record<string, string[]>;

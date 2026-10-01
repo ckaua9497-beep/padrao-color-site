@@ -13,6 +13,7 @@ export type DemoProduct = {
   slug: string;
   name: string;
   category: string;
+  categorySlug: string;
   options: Record<string, string[]>;
 };
 
