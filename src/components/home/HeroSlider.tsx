@@ -52,7 +52,7 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
     <section
       aria-roledescription="carrossel"
       aria-label="Destaques"
-      className="relative h-[620px] overflow-hidden md:h-[640px]"
+      className="relative grid min-h-[620px] overflow-hidden md:min-h-[640px]"
       onPointerEnter={() => (hovering.current = true)}
       onPointerLeave={() => (hovering.current = false)}
       onFocusCapture={() => (focused.current = true)}
@@ -73,12 +73,12 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
             aria-hidden={!active}
             inert={!active}
             className={cx(
-              "absolute inset-0 transition-all duration-[1200ms] ease-reveal motion-reduce:transition-none",
+              "[grid-area:1/1] transition-all duration-[1200ms] ease-reveal motion-reduce:transition-none",
               active ? "visible scale-100 opacity-100" : "invisible scale-[1.04] opacity-0",
             )}
             style={{ background: slide.tone }}
           >
-            <div className="container-site grid h-full grid-cols-1 items-center gap-6 pb-36 pt-10 md:grid-cols-[1.05fr_1fr] md:pb-40">
+            <div className="container-site grid h-full grid-cols-1 items-center gap-6 pb-44 pt-10 md:grid-cols-[1.05fr_1fr] md:pb-48">
               <div className={cx("transition-all delay-200 duration-1000 ease-reveal motion-reduce:transition-none", active ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0")}>
                 <Title className="leading-[0.95]">
                   <span className="block text-[clamp(40px,6vw,76px)] font-light tracking-[-0.02em] text-ink/80">{slide.light}</span>
@@ -135,8 +135,8 @@ export default function HeroSlider({ slides, stats }: { slides: HeroSlide[]; sta
           </div>
         );
       })}
-      <Arrow dir="prev" onClick={() => go(-1)} className="absolute left-4 top-[42%] z-10 hidden md:left-8 md:grid" />
-      <Arrow dir="next" onClick={() => go(1)} className="absolute right-4 top-[42%] z-10 hidden md:right-8 md:grid" />
+      <Arrow dir="prev" onClick={() => go(-1)} className="absolute left-3 top-[42%] z-10 hidden xl:grid" />
+      <Arrow dir="next" onClick={() => go(1)} className="absolute right-3 top-[42%] z-10 hidden xl:grid" />
       <div className="absolute bottom-32 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 md:bottom-36">
         {slides.map((s, i) => (
           <Dot key={s.bold} active={i === index} label={`Destaque ${i + 1}`} onClick={() => setIndex(i)} />

@@ -177,7 +177,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   };
 
   return (
-    <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] xl:gap-14">
+    <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] xl:gap-14">
       <div className="lg:sticky lg:top-28 lg:self-start">
         <SegmentedControl
           label="Visualização do produto"
@@ -304,7 +304,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             </div>
             <div className="flex items-center gap-2">
               <QtyStepper value={qty} onChange={setQty} label="Quantidade de pedidos" />
-              <Button variant="preview" size="md" onClick={openPreview} icon={<IconCube className="size-5" />}>
+              <Button variant="preview" size="md" className="px-5" onClick={openPreview} icon={<IconCube className="size-5" />}>
                 Pré-visualizar
               </Button>
             </div>
