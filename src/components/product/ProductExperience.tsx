@@ -302,9 +302,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
               </p>
               <p className="text-2xl font-black">{formatBRL(total)}</p>
             </div>
-            <div className="flex items-center gap-2">
+            {/* Em telas estreitas o botão desce para a linha de baixo e ocupa a largura toda. */}
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <QtyStepper value={qty} onChange={setQty} label="Quantidade de pedidos" />
-              <Button variant="preview" size="md" className="px-5" onClick={openPreview} icon={<IconCube className="size-5" />}>
+              <Button variant="preview" size="md" className="grow px-5 sm:grow-0" onClick={openPreview} icon={<IconCube className="size-5" />}>
                 Pré-visualizar
               </Button>
             </div>

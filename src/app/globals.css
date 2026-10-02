@@ -188,6 +188,15 @@
     scroll-behavior: smooth;
   }
 
+  /*
+   * Grid sem colunas explícitas: uma coluna que nunca passa da largura disponível. Sem isto a coluna
+   * implícita (auto) cresce até o min-content do conteúdo — um carrossel com 20 cards esticava a home
+   * para 1435 px no celular. As utilidades grid-cols-* (camada utilities) continuam valendo por cima.
+   */
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   body {
     background: var(--color-paper);
     color: var(--color-ink);
