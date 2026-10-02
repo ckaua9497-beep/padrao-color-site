@@ -20,7 +20,7 @@ export default async function ContactSheetPage({ searchParams }: { searchParams:
   const seen = new Map<string, SheetItem>();
   for (const p of getProducts()) {
     const spec = mockupSpec(p, {});
-    if (kind && spec.kind !== kind) continue;
+    if (kind && !kind.split(",").includes(spec.kind)) continue;
     const key = spec.variant ? `${spec.kind}:${spec.variant}` : spec.kind;
     if (!seen.has(key)) seen.set(key, { key, product: { slug: p.slug, name: p.name, categorySlug: p.categorySlug, options: p.options, image: p.image } });
   }

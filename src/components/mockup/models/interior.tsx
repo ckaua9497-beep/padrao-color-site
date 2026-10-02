@@ -463,11 +463,118 @@ const PAD_CM = 0.14;
 const PAD_ASPECT = 5 / 6.5;
 /** Fração da altura do bloquinho colada atrás do ímã (fica escondida). */
 const PAD_TUCK = 0.16;
+/** Folha do bilhete (~0,1 mm) entre a porta e o ímã. */
+const NOTE_CM = 0.02;
+/** Trecho de porta: chapa esmaltada com borda boleada; a borracha de vedação aparece em volta. */
+const DOOR_CM = { depth: 0.9, bevel: 0.35, seal: 0.22 };
+/**
+ * Puxador em perfil cromado na borda esquerda, em medida real (não acompanha o tamanho do ímã). Fica à
+ * esquerda porque a foto do carrinho gira a câmera para a direita: o puxador, à frente da porta, nunca tapa o ímã.
+ */
+const HANDLE_CM = { inset: 1.15, radius: 0.55, reach: 1.25, gap: 0.9, end: 1.1 };
 
 function maskFor(shape: ModelProps["spec"]["shape"]): MaskPath | undefined {
   if (shape === "round") return roundPath;
   if (shape === "heart") return heartPath;
   return undefined;
+}
+
+/** Medida do pedido em cm; um valor ausente ou inválido não pode virar NaN na geometria. */
+function specCm(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? Math.max(value, 1) : fallback;
+}
+
+type Box = { l: number; r: number; b: number; t: number };
+const EMPTY_BOX: Box = { l: Infinity, r: -Infinity, b: Infinity, t: -Infinity };
+
+/** Caixa ampliada por um retângulo w × h centrado em (cx, cy) e girado `angle` em torno da origem. */
+function growBox(box: Box, cx: number, cy: number, w: number, h: number, angle = 0): Box {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const next = { ...box };
+  for (const [kx, ky] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const x = cx + (kx * w) / 2;
+    const y = cy + (ky * h) / 2;
+    const rx = x * cos - y * sin;
+    const ry = x * sin + y * cos;
+    next.l = Math.min(next.l, rx);
+    next.r = Math.max(next.r, rx);
+    next.b = Math.min(next.b, ry);
+    next.t = Math.max(next.t, ry);
+  }
+  return next;
+}
+
+type MagnetLayout = {
+  mw: number;
+  mh: number;
+  /** Giro do ímã principal (rad). */
+  tilt: number;
+  /** Bloquinho do calendário; `ownSize` quando a medida do pedido é a dele. */
+  pad: { w: number; h: number; y: number; ownSize: boolean } | null;
+  /** Bilhete preso pelo ímã, no referencial girado `angle` em torno do centro do ímã. */
+  note: { w: number; h: number; x: number; y: number; angle: number; hidden: number; curl: number } | null;
+  /** Trecho de porta: tamanho e centro. */
+  panel: { w: number; h: number; x: number; y: number };
+};
+
+/**
+ * Composição em cm com o centro do ímã principal na origem. A porta é só um pouco maior que as peças
+ * (≈2× o ímã): o viewer enquadra a caixa do modelo inteiro, então uma porta grande deixaria o ímã minúsculo.
+ */
+function magnetLayout(spec: ModelProps["spec"]): MagnetLayout {
+  const photo = spec.variant === "photo";
+  const calendar = spec.variant === "calendar";
+  const sw = specCm(spec.widthCm, 5);
+  const sh = specCm(spec.heightCm, 5);
+  // "Calendário para Imã" (sem impressão) é o próprio bloquinho: a medida do pedido vale para ele e o
+  // ímã é derivado; no "Imã c/ Calendário" a medida é a do ímã e o bloquinho pende embaixo dele.
+  const ownSize = calendar && spec.blank;
+  let mw = sw;
+  let mh = sh;
+  let pad: MagnetLayout["pad"] = null;
+  if (calendar) {
+    const padW = ownSize ? sw : sw * 0.92;
+    const padH = ownSize ? sh : padW / PAD_ASPECT;
+    if (ownSize) {
+      mw = padW / 0.92;
+      mh = mw * 1.11;
+    }
+    pad = { w: padW, h: padH, y: -mh / 2 + padH * PAD_TUCK - padH / 2, ownSize };
+  }
+  const tilt = photo ? -0.03 : calendar ? 0 : -0.04;
+  // Peças e as sombras macias delas (planos maiores que a peça): a porta precisa cobrir as duas.
+  let objects = growBox(EMPTY_BOX, 0, 0, mw, mh, tilt);
+  let shadows = growBox(EMPTY_BOX, 0.04, -0.12, mw * 1.25, mh * 1.25, tilt);
+  if (pad) {
+    objects = growBox(objects, 0, pad.y, pad.w, pad.h);
+    shadows = growBox(shadows, 0.06, pad.y - 0.2, pad.w * 1.3, pad.h * 1.3);
+  }
+  let note: MagnetLayout["note"] = null;
+  if (!photo && !calendar) {
+    // Bilhete preso pelo próprio ímã: a ponta de cima fica embaixo dele e o resto pende, girado ao contrário.
+    const angle = 0.08;
+    const top = mh * 0.12;
+    // Ponto mais baixo do ímã no referencial do bilhete: daí para baixo o papel aparece e se descola.
+    const rel = tilt - angle;
+    const under = -(Math.abs(Math.sin(rel)) * mw + Math.cos(rel) * mh) / 2;
+    const covered = top - under;
+    const visible = 0.55 * Math.min(mw, mh);
+    const h = covered + visible;
+    const w = THREE.MathUtils.clamp(mw * 0.94, visible * 1.1, visible * 3);
+    const x = -mw * 0.1;
+    const y = top - h / 2;
+    note = { w, h, x, y, angle, hidden: covered / h, curl: Math.min(0.8, (h - covered) * 0.13) };
+    objects = growBox(objects, x, y, w, h, angle);
+    shadows = growBox(shadows, x + 0.2, y - 0.35, w * 1.3, h * 1.3, angle);
+  }
+  const margin = THREE.MathUtils.clamp(0.36 * Math.min(mw, mh), 1.5, 3.2);
+  const grip = Math.max(margin, HANDLE_CM.inset + HANDLE_CM.radius + HANDLE_CM.gap);
+  const l = Math.min(objects.l - grip, shadows.l - 0.3);
+  const r = Math.max(objects.r + margin, shadows.r + 0.3);
+  const b = Math.min(objects.b - margin, shadows.b - 0.3);
+  const t = Math.max(objects.t + margin, shadows.t + 0.3);
+  return { mw, mh, tilt, pad, note, panel: { w: r - l, h: t - b, x: (l + r) / 2, y: (b + t) / 2 } };
 }
 
 /**
@@ -515,23 +622,27 @@ function monthTexture(aspect: number, hidden: number) {
   });
 }
 
-/** Bilhete de papel pautado com rabiscos de lista de compras. */
-function noteTexture(aspect: number) {
+/**
+ * Bilhete de papel pautado com rabiscos de lista de compras. A faixa de cima (`hidden`, fração da altura)
+ * fica embaixo do ímã, então a escrita começa abaixo dela.
+ */
+function noteTexture(aspect: number, hidden: number) {
   const random = rng(11);
   const cw = 320;
   return canvasTexture(cw, cw / aspect, (ctx, w, h) => {
     ctx.fillStyle = "#fffdf6";
     ctx.fillRect(0, 0, w, h);
-    const gap = h / 13;
+    const gap = w / 8;
     ctx.fillStyle = "rgba(90,140,200,0.35)";
-    for (let y = gap * 2; y < h; y += gap) ctx.fillRect(0, y, w, 1.5);
+    for (let y = gap; y < h; y += gap) ctx.fillRect(0, y, w, 1.5);
     ctx.fillStyle = "rgba(220,80,80,0.35)";
     ctx.fillRect(w * 0.12, 0, 1.5, h);
     ctx.strokeStyle = "rgba(38,52,105,0.8)";
     ctx.lineWidth = 2.2;
     ctx.lineCap = "round";
-    for (let line = 0; line < 6; line += 1) {
-      const y = gap * (2 + line) - gap * 0.3;
+    const first = Math.ceil((h * hidden) / gap + 0.6) * gap;
+    for (let line = first; line < h - gap * 0.4; line += gap) {
+      const y = line - gap * 0.3;
       const end = w * (0.45 + random() * 0.4);
       ctx.beginPath();
       ctx.moveTo(w * 0.17, y);
@@ -543,13 +654,19 @@ function noteTexture(aspect: number) {
   });
 }
 
-/** Papel preso pelo topo que se descola embaixo (curvatura para fora e um canto mais levantado). */
-function curledPlane(w: number, h: number, curl: number) {
-  const geometry = new THREE.PlaneGeometry(w, h, 6, 20);
+/**
+ * Papel preso no alto que se descola embaixo (curvatura para fora e um canto mais levantado). A fração
+ * `flat` de cima, embaixo do ímã, fica plana na porta.
+ */
+function curledPlane(w: number, h: number, curl: number, flat: number) {
+  const geometry = new THREE.PlaneGeometry(w, h, 6, 24);
   const pos = geometry.attributes.position;
+  const span = Math.max(1 - flat, 1e-3);
   for (let i = 0; i < pos.count; i += 1) {
     const x = pos.getX(i);
-    const t = (h / 2 - pos.getY(i)) / h;
+    // A posição é Float32: a linha do topo pode passar de h/2 no arredondamento, e Math.pow(negativo, 2,4)
+    // dá NaN (raio NaN, enquadramento quebrado e peça invisível). Por isso o clamp.
+    const t = THREE.MathUtils.clamp(((h / 2 - pos.getY(i)) / h - flat) / span, 0, 1);
     pos.setZ(i, curl * Math.pow(t, 2.4) * (1 + 0.6 * (x / w)));
   }
   pos.needsUpdate = true;
@@ -577,28 +694,36 @@ function MagnetPiece({ w, h, s, spec, front, shadow }: { w: number; h: number; s
   );
 }
 
-/** Porta de geladeira retrô (esmalte pastel, borda boleada, vedação de borracha e puxador cromado). */
+/**
+ * Trecho de porta de geladeira retrô (esmalte pastel, borda boleada e vedação de borracha) só um pouco
+ * maior que os ímãs. O puxador em perfil cromado corre pela borda esquerda inteira, como o pedaço de um
+ * puxador longo de porta de verdade: não vira uma geladeira em miniatura.
+ */
 function FridgeDoor({ w, h, s }: { w: number; h: number; s: number }) {
   const parts = useMemo(() => {
-    const bevel = 0.6 * s;
-    const depth = 3 * s;
-    const door = new THREE.ExtrudeGeometry(makeShape("rect", w - bevel * 2, h - bevel * 2, 2.6 * s), {
+    const bevel = DOOR_CM.bevel * s;
+    const depth = DOOR_CM.depth * s;
+    const radius = Math.min(1.4 * s, Math.min(w, h) * 0.08);
+    const door = new THREE.ExtrudeGeometry(makeShape("rect", w - bevel * 2, h - bevel * 2, radius), {
       depth,
       bevelEnabled: true,
       bevelThickness: bevel,
       bevelSize: bevel,
-      bevelSegments: 5,
-      curveSegments: 16,
+      bevelSegments: 4,
+      curveSegments: 12,
     });
     door.translate(0, 0, -(depth + bevel));
-    const seal = new THREE.ExtrudeGeometry(makeShape("rect", w + 0.5 * s, h + 0.5 * s, 3 * s), { depth: 1.4 * s, bevelEnabled: false, curveSegments: 16 });
-    seal.translate(0, 0, -(depth + bevel * 2 + 1.2 * s));
+    const rim = DOOR_CM.seal * s;
+    const seal = new THREE.ExtrudeGeometry(makeShape("rect", w + rim * 2, h + rim * 2, radius + bevel + rim), { depth: 0.7 * s, bevelEnabled: false, curveSegments: 12 });
+    seal.translate(0, 0, -(depth + bevel * 2 + 0.55 * s));
     return { door, seal, list: [door, seal] };
   }, [w, h, s]);
   useGeometryListCleanup(parts.list);
-  // Puxador em barra quase da altura do trecho: lê como parte de uma porta grande, não miniatura.
-  const handleX = w / 2 - 2.8 * s;
-  const handleLen = h * 0.74;
+  const shade = useMemo(() => radialShade(), []);
+  useTextureCleanup(shade);
+  const railR = HANDLE_CM.radius * s;
+  const railLen = Math.max(h - (HANDLE_CM.end + HANDLE_CM.radius) * 2 * s, h * 0.3);
+  const reach = HANDLE_CM.reach * s;
   return (
     <group>
       <mesh geometry={parts.door}>
@@ -607,43 +732,39 @@ function FridgeDoor({ w, h, s }: { w: number; h: number; s: number }) {
       <mesh geometry={parts.seal}>
         <meshStandardMaterial color="#9ea5a2" roughness={0.85} />
       </mesh>
-      <group position={[handleX, h * 0.04, 0]}>
-        <mesh position-z={3.2 * s}>
-          <capsuleGeometry args={[1.05 * s, handleLen, 8, 24]} />
+      <group position-x={-w / 2 + HANDLE_CM.inset * s}>
+        {/* Sombra macia do perfil na porta (luz do alto, à esquerda). */}
+        <mesh position={[0.35 * s, -0.3 * s, 0.0005]}>
+          <planeGeometry args={[railR * 3.4, railLen + railR * 2]} />
+          <ShadeMaterial map={shade} opacity={0.3} />
+        </mesh>
+        <mesh position-z={reach / 2}>
+          <boxGeometry args={[railR * 0.7, railLen, reach]} />
+          <meshStandardMaterial color="#d5d8db" metalness={1} roughness={0.24} />
+        </mesh>
+        <mesh position-z={reach}>
+          <capsuleGeometry args={[railR, railLen, 8, 24]} />
           <meshStandardMaterial color="#eceef0" metalness={1} roughness={0.16} />
         </mesh>
-        {[-1, 1].map((k) => (
-          <mesh key={k} position={[0, k * handleLen * 0.44, 1.6 * s]} rotation-x={Math.PI / 2}>
-            <cylinderGeometry args={[0.75 * s, 0.9 * s, 3.2 * s, 24]} />
-            <meshStandardMaterial color="#e2e4e7" metalness={1} roughness={0.22} />
-          </mesh>
-        ))}
       </group>
     </group>
   );
 }
 
-/** Ímãs na porta da geladeira: ímã padrão (com bilhete preso por outro igual), foto ímã e ímã com calendário. */
+/**
+ * Ímãs num trecho de porta de geladeira, com o ímã do pedido como protagonista: padrão (segurando um
+ * bilhete pelo topo), foto ímã sozinho e ímã com o bloquinho de calendário pendurado embaixo.
+ */
 function FridgeMagnets({ spec, art, label, showDims }: ModelProps) {
-  const photo = spec.variant === "photo";
-  const calendar = spec.variant === "calendar";
-  const withNote = !photo && !calendar;
-  const sw = Math.max(spec.widthCm, 1);
-  const sh = Math.max(spec.heightCm, 1);
-  // "Calendário para Imã" (sem impressão) é o próprio bloquinho: a medida do pedido vale para ele e o
-  // ímã é derivado; no "Imã c/ Calendário" a medida é a do ímã e o bloquinho pende embaixo dele.
-  const padIsSpec = calendar && spec.blank;
-  const padW = padIsSpec ? sw : sw * 0.92;
-  const padH = padIsSpec ? sh : padW / PAD_ASPECT;
-  const mw = padIsSpec ? padW / 0.92 : sw;
-  const mh = padIsSpec ? mw * 1.11 : sh;
-  const tuck = padH * PAD_TUCK;
-  const pieceH = calendar ? mh + padH - tuck : mh;
-  const doorW = Math.max(photo ? mw * 2.3 : mw * 3, 13);
-  const noteW = doorW * 0.42;
-  const noteH = noteW * 1.25;
-  const doorH = Math.max(doorW * 1.3, pieceH * 2.3, withNote ? (pieceH + noteH + 3) * 1.25 : 0);
-  const s = 2.5 / doorH;
+  const layout = useMemo(() => magnetLayout(spec), [spec]);
+  const { mw, mh, tilt, pad, note, panel } = layout;
+  const s = 2.5 / Math.max(panel.w, panel.h);
+  const padW = pad?.w ?? 0;
+  const padH = pad?.h ?? 0;
+  const noteW = note?.w ?? 0;
+  const noteH = note?.h ?? 0;
+  const noteHidden = note?.hidden ?? 0;
+  const noteCurl = note?.curl ?? 0;
 
   const mask = maskFor(spec.shape);
   const front = useArtTexture(mw / mh, "front", art, label, mask);
@@ -651,72 +772,69 @@ function FridgeMagnets({ spec, art, label, showDims }: ModelProps) {
   const paper = useMemo(() => ({ ...spec, shape: "rect" as const, finish: "matte" as const, clearcoat: 0, spotVarnish: false }), [spec]);
   const textures = useMemo(() => {
     const hero = shadowTexture(mask ?? rectPath, mw / mh, 1.25);
-    const sheet = shadowTexture(rectPath, calendar ? padW / padH : noteW / noteH, 1.3);
-    const extra = calendar ? monthTexture(padW / padH, PAD_TUCK) : withNote ? noteTexture(noteW / noteH) : null;
-    return { hero, sheet, extra, list: [hero, sheet, ...(extra ? [extra] : [])] };
-  }, [mask, mw, mh, calendar, withNote, padW, padH, noteW, noteH]);
+    let sheet: THREE.CanvasTexture | null = null;
+    let extra: THREE.CanvasTexture | null = null;
+    if (padW > 0) {
+      sheet = shadowTexture(rectPath, padW / padH, 1.3);
+      extra = monthTexture(padW / padH, PAD_TUCK);
+    } else if (noteW > 0) {
+      sheet = shadowTexture(rectPath, noteW / noteH, 1.3);
+      extra = noteTexture(noteW / noteH, noteHidden);
+    }
+    const list = [hero, ...(sheet ? [sheet] : []), ...(extra ? [extra] : [])];
+    return { hero, sheet, extra, list };
+  }, [mask, mw, mh, padW, padH, noteW, noteH, noteHidden]);
   useEffect(() => () => textures.list.forEach((t) => t.dispose()), [textures]);
-  const note = useMemo(() => (withNote ? curledPlane(noteW * s, noteH * s, 0.9 * s) : null), [withNote, noteW, noteH, s]);
-  useGeometryCleanup(note);
+  const noteGeometry = useMemo(() => (noteW > 0 ? curledPlane(noteW * s, noteH * s, noteCurl * s, noteHidden) : null), [noteW, noteH, noteCurl, noteHidden, s]);
+  useGeometryCleanup(noteGeometry);
 
   const mag = MAGNET_CM * s;
-  // Afastado do puxador (que fica 3 cm à frente da porta e taparia a borda do ímã).
-  let heroX = -doorW * 0.02;
-  let heroY = -doorH / 2 + doorH * 0.13 + mh / 2;
-  if (photo) {
-    heroX = -doorW * 0.05;
-    heroY = 0;
-  } else if (calendar) {
-    heroX = -doorW * 0.06;
-    heroY = pieceH / 2 - mh / 2;
-  }
-  const padY = heroY - mh / 2 + tuck - padH / 2;
+  // O ímã fica por cima do bloquinho ou do bilhete que ele segura.
+  const lift = pad ? PAD_CM : note ? NOTE_CM * 1.5 : 0;
   const showDimsHere = showDims && KIND_INFO[spec.kind].dims;
-  const lift = calendar ? PAD_CM : 0;
-  const noteX = -doorW * 0.16;
-  const noteY = doorH / 2 - doorH * 0.09 - noteH / 2;
   const [lw, lh] = sizeLabels(spec);
 
   return (
     <group>
-      <FridgeDoor w={doorW * s} h={doorH * s} s={s} />
+      <FridgeDoor w={panel.w * s} h={panel.h * s} s={s} />
 
-      {withNote && note && textures.extra && (
-        <group position={[noteX * s, noteY * s, 0.015 * s]} rotation-z={0.07}>
-          <SoftShadow map={textures.sheet} w={noteW * s} h={noteH * s} spread={1.3} z={-0.01 * s} offset={[0.25 * s, -0.45 * s]} opacity={0.3} />
-          <mesh geometry={note}>
-            <meshStandardMaterial map={textures.extra} roughness={0.92} />
-          </mesh>
-          <mesh geometry={note}>
-            <meshStandardMaterial color="#f3f1ea" roughness={0.95} side={THREE.BackSide} />
-          </mesh>
-          {/* Outro ímã igual segurando o bilhete pelo topo. */}
-          <group position={[0.4 * s, (noteH / 2 - mh * 0.3) * s, 0.02 * s + mag / 2]} rotation-z={-0.16} scale={0.82}>
+      {/* Peças com o centro do ímã principal na origem da composição. */}
+      <group position={[-panel.x * s, -panel.y * s, 0]}>
+        {note && noteGeometry && textures.sheet && textures.extra && (
+          <group rotation-z={note.angle}>
+            <group position={[note.x * s, note.y * s, (NOTE_CM / 2) * s]}>
+              <SoftShadow map={textures.sheet} w={noteW * s} h={noteH * s} spread={1.3} z={-0.006 * s} offset={[0.2 * s, -0.35 * s]} opacity={0.26} />
+              <mesh geometry={noteGeometry}>
+                <meshStandardMaterial map={textures.extra} roughness={0.92} />
+              </mesh>
+              <mesh geometry={noteGeometry}>
+                <meshStandardMaterial color="#f3f1ea" roughness={0.95} side={THREE.BackSide} />
+              </mesh>
+            </group>
+          </group>
+        )}
+
+        {pad && textures.sheet && textures.extra && (
+          <group position={[0, pad.y * s, (PAD_CM / 2) * s]}>
+            <SoftShadow map={textures.sheet} w={padW * s} h={padH * s} spread={1.3} z={(-PAD_CM / 2) * s + 0.0004} offset={[0.06 * s, -0.2 * s]} opacity={0.32} />
+            <Slab w={padW * s} h={padH * s} d={PAD_CM * s} spec={paper} front={textures.extra} radius={0.12 * s} edgeColor="#efece5" backColor="#efece5" />
+            {/* Folhas do bloco: linhas finas na lateral. */}
+            {[0.25, 0.5, 0.75].map((k) => (
+              <mesh key={k} position={[padW * s * 0.5 + 0.0006, 0, (-PAD_CM / 2 + PAD_CM * k) * s]} rotation-y={Math.PI / 2}>
+                <planeGeometry args={[0.012 * s, padH * s * 0.96]} />
+                <meshBasicMaterial color="#c9c4ba" toneMapped={false} />
+              </mesh>
+            ))}
+            {pad.ownSize && showDimsHere && <Dimensions w={padW * s} h={padH * s} z={(PAD_CM / 2) * s + 0.01} labelW={lw} labelH={lh} />}
+          </group>
+        )}
+
+        <group position-z={lift * s + mag / 2 + 0.002 * s}>
+          <group rotation-z={tilt}>
             <MagnetPiece w={mw * s} h={mh * s} s={s} spec={face} front={front} shadow={textures.hero} />
           </group>
+          {!pad?.ownSize && showDimsHere && <Dimensions w={mw * s} h={mh * s} z={mag + 0.01} labelW={lw} labelH={lh} />}
         </group>
-      )}
-
-      {calendar && textures.extra && (
-        <group position={[heroX * s, padY * s, (PAD_CM / 2) * s]}>
-          <SoftShadow map={textures.sheet} w={padW * s} h={padH * s} spread={1.3} z={(-PAD_CM / 2) * s + 0.0004} offset={[0.06 * s, -0.2 * s]} opacity={0.32} />
-          <Slab w={padW * s} h={padH * s} d={PAD_CM * s} spec={paper} front={textures.extra} radius={0.12 * s} edgeColor="#efece5" backColor="#efece5" />
-          {/* Folhas do bloco: linhas finas na lateral. */}
-          {[0.25, 0.5, 0.75].map((k) => (
-            <mesh key={k} position={[padW * s * 0.5 + 0.0006, 0, (-PAD_CM / 2 + PAD_CM * k) * s]} rotation-y={Math.PI / 2}>
-              <planeGeometry args={[0.012 * s, padH * s * 0.96]} />
-              <meshBasicMaterial color="#c9c4ba" toneMapped={false} />
-            </mesh>
-          ))}
-          {padIsSpec && showDimsHere && <Dimensions w={padW * s} h={padH * s} z={(PAD_CM / 2) * s + 0.01} labelW={lw} labelH={lh} />}
-        </group>
-      )}
-
-      <group position={[heroX * s, heroY * s, lift * s + mag / 2 + 0.002 * s]}>
-        <group rotation-z={photo ? -0.03 : calendar ? 0 : 0.04}>
-          <MagnetPiece w={mw * s} h={mh * s} s={s} spec={face} front={front} shadow={textures.hero} />
-        </group>
-        {!padIsSpec && showDimsHere && <Dimensions w={mw * s} h={mh * s} z={mag + 0.01} labelW={lw} labelH={lh} />}
       </group>
     </group>
   );
@@ -825,8 +943,8 @@ function MagnetSheetRoll({ spec, art, label, showDims }: ModelProps) {
 
 /**
  * Ímã de geladeira. Padrão, foto ímã e com calendário: ímã flexível de 0,8 mm com impressão brilhante
- * (formato do pedido: retângulo, redondo ou coração) colado numa porta de geladeira retrô; o padrão vem
- * com um bilhete preso por outro ímã igual e o de calendário traz o bloquinho mensal embaixo.
+ * (formato do pedido: retângulo, redondo ou coração) num trecho de porta de geladeira retrô pouco maior
+ * que ele; o padrão segura um bilhete pelo topo e o de calendário traz o bloquinho mensal embaixo.
  * Manta adesiva: rolo meio desenrolado com a face branca mostrando a arte.
  */
 export function MagnetModel(props: ModelProps) {

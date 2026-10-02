@@ -894,7 +894,9 @@ export function DrawstringModel({ spec, art, label }: ModelProps) {
   const w = clamp(spec.widthCm, 15, 80);
   const h = clamp(spec.heightCm, 18, 100);
   const chan = 3.2;
-  const texture = useArtTexture(w / (h - chan), "front", art, label);
+  // Sublimada de ponta a ponta: a arte cobre a frente toda, com fundo pintado.
+  const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
+  const texture = useArtTexture(w / (h - chan), "front", panelArt, label);
   const p = useMemo(() => buildDrawstring(w, h, chan), [w, h]);
   useGeometriesCleanup(p.all);
   const base = spec.baseColor;
@@ -1464,7 +1466,9 @@ function BarrelDuffel({ spec, art, label }: ModelProps) {
   const R = D / 2;
   const L = clamp(spec.widthCm, D * 1.6, D * 2.2);
   const aspect = safeAspect(spec);
-  const texture = useArtTexture(aspect, "front", art, label);
+  // A faixa impressa da bolsa cilindro é opaca (o painel inteiro recebe a arte).
+  const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
+  const texture = useArtTexture(aspect, "front", panelArt, label);
   const hw = useHardware();
   const p = useMemo(() => buildBarrel(L, R, aspect), [L, R, aspect]);
   useGeometriesCleanup(p.all);

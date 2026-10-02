@@ -33,7 +33,8 @@ type ViewerProps = {
 /** Vista inicial: de frente e um pouco acima; os modelos já se giram em 3/4. */
 const HOME_DIRECTION = new THREE.Vector3(0, 0.12, 1).normalize();
 /** Ângulo do snapshot que vai para o carrinho: giro de ~24° e altura mínima de ~14°. */
-const CAPTURE_AZIMUTH = Math.atan2(0.45, 1);
+// ~11°: um toque de 3/4 sem tirar de frente a arte das peças cilíndricas (caneca, garrafa).
+const CAPTURE_AZIMUTH = Math.atan2(0.2, 1);
 const CAPTURE_ELEVATION = 0.25;
 const FIT_MARGIN = 1.22;
 const RESUME_AFTER_MS = 4000;
@@ -482,7 +483,7 @@ const REFRAME_TOLERANCE = 0.025;
 function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetToken, reducedMotion, ready, onReady, framingRef }: StageProps) {
   const group = useRef<THREE.Group>(null);
   // A arte leva o tipo da peça (escolhe o template) e as cores do LED (neon).
-  const renderArt = useMemo(() => ({ ...art, kind: spec.kind, ledColors: spec.ledColors }), [art, spec.kind, spec.ledColors]);
+  const renderArt = useMemo(() => ({ ...art, kind: spec.kind, ledColors: spec.ledColors, surface: spec.baseColor }), [art, spec.kind, spec.ledColors, spec.baseColor]);
   const get = useThree((state) => state.get);
   const hasControls = useThree((state) => Boolean(state.controls));
   const invalidate = useThree((state) => state.invalidate);

@@ -13,6 +13,9 @@ import { UNIT, radiusOnProfile, smoothProfile, type Pt } from "./vessel";
  * Canecas e xícaras em escala real (UNIT = cm → cena, de vessel.tsx). A arte é uma faixa com a largura
  * física da área de impressão, centrada em θ = 0 (+z); a alça fica em θ = π, nunca sob a arte. Quando a
  * arte não cabe (alça, altura), ela encolhe por igual: a proporção nunca muda.
+ *
+ * Nenhum grupo gira em y: o centro da arte fica exatamente em +z, de frente para a vista inicial do
+ * visualizador, e a alça (oposta, como no gabarito real de sublimação) fica escondida atrás do corpo.
  */
 
 const MUG_CM = { diameter: 8.2, height: 9.5 };
@@ -20,11 +23,6 @@ const TEACUP_CM = { top: 7.8, bottom: 4.6, height: 6.4 };
 const SAUCER_CM = 13.6;
 const CHOPP_CM = { diameter: 8.4, height: 14.8, base: 1.7 };
 
-/**
- * Giro da peça na vista inicial. A alça fica oposta ao centro da arte (como na caneca real), então
- * a arte vem de frente: um leve giro para +x equilibra a vista inicial (+z) e a foto 3/4 do carrinho.
- */
-const VIEW = 0.12;
 /** Ângulo livre em volta da alça (rad). */
 const HANDLE_GAP = 0.85;
 /** Fração revelada da caneca mágica parada. */
@@ -565,7 +563,7 @@ function CeramicMug({ spec, art, label }: ModelProps) {
   }
 
   return (
-    <group rotation-y={VIEW}>
+    <group>
       <mesh geometry={parts.foot}>
         <meshStandardMaterial color="#ebe5da" roughness={0.85} />
       </mesh>
@@ -652,7 +650,7 @@ function BeerMug({ spec, art, label }: ModelProps) {
 
   // Ordem fixa das camadas transparentes: interior, fundo, alça, parede, arte.
   return (
-    <group rotation-y={VIEW}>
+    <group>
       <mesh geometry={parts.inner} renderOrder={1}>
         <GlassMaterial opacity={0.28} />
       </mesh>
@@ -815,7 +813,7 @@ function Teacup({ spec, art, label }: ModelProps) {
   const animate = useAnimate();
   const parts = useTeacupParts(spec.widthCm, spec.heightCm);
   return (
-    <group rotation-y={VIEW}>
+    <group>
       <TeacupMeshes parts={parts} texture={texture} color={spec.baseColor} innerColor={spec.innerColor} />
       {animate && <Steam y={SAUCER_WELL + parts.height + 0.03} spread={0.12} />}
     </group>
@@ -825,8 +823,6 @@ function Teacup({ spec, art, label }: ModelProps) {
 /* ------------------------------------------------------------------ kit com suporte */
 
 const WIRE = 0.022;
-/** Giro do suporte na vista inicial. */
-const KIT_TURN = -0.25;
 const RING_R = SAUCER_R * 0.62;
 
 /** Quantas xícaras o kit traz: lido do nome ("Kit com 4 unidades"); 2 quando não diz. */
@@ -907,9 +903,14 @@ function TeacupKit({ spec, art, label }: ModelProps) {
     [rack],
   );
   const metal = <meshStandardMaterial color="#d7dbe0" metalness={1} roughness={0.22} />;
-  // O suporte fica em 3/4; cada xícara gira de volta para a arte vir de frente (mesma vista da xícara solta).
+  /*
+   * Suporte de frente para a câmera, sem giro: todas as xícaras mostram a arte centrada em +z (alça atrás)
+   * e a caixa da peça fica a mais justa possível. O visualizador enquadra pela esfera que envolve a caixa:
+   * qualquer giro do suporte aumenta a profundidade da caixa e afasta a câmera (com 3/4 de −0,25 rad as
+   * xícaras saíam ~6% menores), e adiantar as xícaras só desloca a caixa junto.
+   */
   return (
-    <group rotation-y={KIT_TURN}>
+    <group>
       {rack.wires.map((geometry, i) => (
         <mesh key={i} geometry={geometry}>
           {metal}
@@ -929,7 +930,7 @@ function TeacupKit({ spec, art, label }: ModelProps) {
         {metal}
       </mesh>
       {rack.seats.map(([x, y]) => (
-        <group key={`${x}:${y}`} position={[x, y, 0]} rotation-y={VIEW - KIT_TURN}>
+        <group key={`${x}:${y}`} position={[x, y, 0]}>
           <TeacupMeshes parts={parts} texture={texture} color={spec.baseColor} innerColor={spec.innerColor} />
         </group>
       ))}

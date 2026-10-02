@@ -426,13 +426,14 @@ const CUP = {
 };
 
 /**
- * Travel mug: alça atrás e à direita (θ = π − 0,55) e o grupo gira −0,45 rad. Assim a alça sai inteira
- * pela lateral direita (atrás do corpo ela some) e a arte fica quase de frente para a câmera.
+ * Travel mug: alça atrás e à direita, em θ = π − 0,85 (≈ 131°) já no referencial da cena (o grupo não gira).
+ * A faixa é simétrica em θ = 0, então o centro da arte fica exatamente em +z, de frente para a vista
+ * inicial, e a alça sai pela lateral direita (~2 cm do arco aparecem além da silhueta, o resto some
+ * atrás do corpo). Antes o grupo girava −0,45 rad e levava o centro da arte 26° para a esquerda.
  * A faixa deixa um vão de ±0,3 rad em volta da alça, como o gabarito real de sublimação.
  */
-const HANDLE_THETA = Math.PI - 0.55;
+const HANDLE_THETA = Math.PI - 0.85;
 const HANDLE_GAP = 0.3;
-const TRAVEL_VIEW = -0.45;
 
 function cupWall(travel: boolean, y: number) {
   const d = travel ? CUP.travel : CUP.tumbler;
@@ -527,7 +528,7 @@ function SteelTumbler({ spec, art, label, travel }: ModelProps & { travel: boole
   };
   const pad = geo.pad;
   return (
-    <group rotation-y={travel ? TRAVEL_VIEW : 0}>
+    <group>
       <mesh geometry={geo.body}>
         <FinishMaterial finish={finish} />
       </mesh>

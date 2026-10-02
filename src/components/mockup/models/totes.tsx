@@ -949,9 +949,11 @@ function PaperGiftBag({ spec, art, label }: ModelProps) {
   const H = cm(spec.heightCm, 22, 10, 60);
   const D = clamp(cm(spec.depthCm, 10, 2, 30) * 0.8, 4, W * 0.6);
   const drop = clamp(H * 0.42, 6, 16);
-  const front = useArtTexture(W / H, "front", art, label);
+  // A face inteira da sacola é impressa: fundo pintado, não transparente.
+  const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
+  const front = useArtTexture(W / H, "front", panelArt, label);
   const backKind = backVariant(spec);
-  const back = useArtTexture(W / H, backKind, art, label);
+  const back = useArtTexture(W / H, backKind, panelArt, label);
 
   const parts = useMemo(() => {
     const foldH = Math.min(3.5, H * 0.16);

@@ -42,7 +42,12 @@ export const DEFAULT_ART: ArtSettings = {
 };
 
 /** Contexto de render que o visualizador acrescenta à arte (tipo da peça e cores do LED). */
-export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[] };
+/**
+ * `surface`: cor da peça por baixo da estampa (tecido escuro pede texto claro).
+ * `opaque`: estampa que cobre o painel inteiro (sublimação de ponta a ponta) — o modelo de vestuário
+ * pinta o fundo em vez de deixá-lo transparente para o tecido aparecer.
+ */
+export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[]; surface?: string; opaque?: boolean };
 
 export type ArtFamily = "card" | "wrap" | "apparel" | "sign" | "badge" | "neon" | "home";
 
@@ -571,7 +576,7 @@ const ACCENTS: Record<ArtStyle, { primary: readonly string[]; secondary: readonl
   elegante: { primary: [C.gold, C.paleGold, C.amber], secondary: [C.ink, "#ffffff"] },
 };
 
-function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, opts: { transparent: boolean; sample: boolean }): Scene {
+function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, opts: { transparent: boolean; sample: boolean; surface?: string }): Scene {
   const family = artFamily(art.kind);
   const style = styleOf(art.style);
   let text = art.text.trim();
@@ -586,7 +591,9 @@ function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
     sub = SAMPLE_SUBTEXT[family];
   }
   let ink = art.textColor;
-  const bg = opts.transparent ? readableInk(ink) : art.background;
+  // Estampa direto no tecido: texto escuro em peça escura (ou claro em clara) troca para o que aparece.
+  if (opts.transparent && opts.surface && contrastRatio(ink, opts.surface) < 2.2) ink = readableInk(opts.surface);
+  const bg = opts.transparent ? (opts.surface ?? readableInk(ink)) : art.background;
   // Texto invisível (mesma cor do fundo) vira preto ou branco.
   if (!opts.transparent && contrastRatio(ink, bg) < 1.35) ink = readableInk(bg);
   const accents = ACCENTS[style];
@@ -1733,19 +1740,45 @@ const PAINTERS: Record<ArtStyle, (s: Scene) => void> = {
   elegante: paintElegante,
 };
 
+/**
+ * Caneca, copo e garrafa: a faixa dá quase a volta toda, mas só ~120° ficam de frente para a câmera.
+ * O desenho vai nessa janela central (fração da largura da faixa); o resto fica com o fundo.
+ */
+const FRONT_WINDOW: Partial<Record<MockupKind, number>> = { mug: 0.38, tumbler: 0.38, bottle: 0.38 };
+
+/** Pinta só na janela frontal das peças cilíndricas; nas demais, na área toda. */
+function inFrontWindow(ctx: CanvasRenderingContext2D, w: number, h: number, kind: MockupKind | undefined, paint: (w: number) => void) {
+  const share = kind ? FRONT_WINDOW[kind] : undefined;
+  if (!share) {
+    paint(w);
+    return;
+  }
+  const ww = Math.round(w * share);
+  ctx.save();
+  ctx.translate(Math.round((w - ww) / 2), 0);
+  ctx.beginPath();
+  ctx.rect(0, 0, ww, h);
+  ctx.clip();
+  paint(ww);
+  ctx.restore();
+}
+
 /** Arte de exemplo de cada família no estilo escolhido, já com o texto do cliente. */
 function drawTemplate(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string) {
   const family = artFamily(art.kind);
   // Estampa de tecido: fundo transparente (o tecido aparece).
-  const transparent = family === "apparel";
-  const scene = makeScene(ctx, w, h, art, label, { transparent, sample: true });
+  const transparent = family === "apparel" && !art.opaque;
+  const surface = transparent ? art.surface : undefined;
   if (!transparent) {
-    ctx.fillStyle = scene.bg;
+    ctx.fillStyle = makeScene(ctx, w, h, art, label, { transparent, sample: true }).bg;
     ctx.fillRect(0, 0, w, h);
   }
-  ctx.save();
-  PAINTERS[styleOf(art.style)](scene);
-  ctx.restore();
+  inFrontWindow(ctx, w, h, art.kind, (width) => {
+    const scene = makeScene(ctx, width, h, art, label, { transparent, sample: true, surface });
+    ctx.save();
+    PAINTERS[styleOf(art.style)](scene);
+    ctx.restore();
+  });
 }
 
 function drawImage(ctx: CanvasRenderingContext2D, w: number, h: number, image: HTMLImageElement, art: ArtSettings) {
@@ -2015,7 +2048,7 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
   }
   if (image) {
     drawImage(ctx, w, h, image, art);
-    if (art.text.trim() || (art.subtext ?? "").trim()) drawCaption(ctx, w, h, art, label);
+    if (art.text.trim() || (art.subtext ?? "").trim()) inFrontWindow(ctx, w, h, art.kind, (width) => drawCaption(ctx, width, h, art, label));
   } else {
     drawTemplate(ctx, w, h, art, label);
   }

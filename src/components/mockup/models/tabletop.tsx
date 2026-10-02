@@ -836,20 +836,32 @@ function LaserEngraving({ map, w, h, x, z }: PanelProps) {
   );
 }
 
-/** Painel sublimado embutido: placa brilhante levemente saliente, com o friso do encaixe em volta. */
+/**
+ * Painel sublimado embutido: placa brilhante (arte em UV planar, sem distorção) 1,2 mm acima da madeira,
+ * com o friso escuro do encaixe em volta.
+ *
+ * O friso é um anel (contorno do encaixe menos a placa) e não um retângulo cheio sob a placa: com
+ * polygonOffset, o deslocamento cresce com a inclinação e com o tamanho do pixel e, em canvas pequeno
+ * (render headless, miniatura, celular), passava dos 1,2 mm da placa, e o friso marrom cobria a arte inteira.
+ */
 function SublimatedPanel({ map, w, h, x, z, s, spec }: PanelProps & { spec: MockupSpec }) {
-  const plate = useSoftLayer("rect", w, h, 0.2 * s, 1 * s, 0.06 * s);
+  const radius = 1 * s;
+  const plate = useSoftLayer("rect", w, h, 0.2 * s, radius, 0.06 * s);
   const groove = useMemo(() => {
-    const gw = w + 0.35 * s;
-    const gh = h + 0.35 * s;
-    return faceGeometry(makeShape("rect", gw, gh, 1.15 * s), gw, gh);
-  }, [w, h, s]);
+    const gap = 0.175 * s;
+    // O furo entra 0,5 mm por baixo da parede da placa: sem fresta clara entre friso e placa.
+    const tuck = 0.05 * s;
+    const ring = makeShape("rect", w + 2 * gap, h + 2 * gap, radius + gap);
+    ring.holes.push(makeShape("rect", w - 2 * tuck, h - 2 * tuck, Math.max(radius - tuck, 1e-4)));
+    return new THREE.ShapeGeometry(ring, 24);
+  }, [w, h, radius, s]);
   useGeometryCleanup(groove);
   const glossy = useMemo(() => ({ ...spec, finish: "gloss" as const, clearcoat: 1, spotVarnish: false }), [spec]);
   return (
     <group position={[x, 0, 0]}>
+      {/* Levemente acima do tampo: vence a madeira no teste de profundidade sem polygonOffset. */}
       <mesh geometry={groove} position-z={z + 0.0008}>
-        <meshStandardMaterial color="#5a3a1e" roughness={0.9} polygonOffset polygonOffsetFactor={-1} />
+        <meshStandardMaterial color="#5a3a1e" roughness={0.9} />
       </mesh>
       <mesh geometry={plate} position-z={z - 0.08 * s}>
         <PrintMaterial map={map} spec={glossy} />
