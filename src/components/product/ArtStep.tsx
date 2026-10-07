@@ -30,9 +30,13 @@ import { OptionGroup } from "@/components/ui/OptionGroup";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { TextField } from "@/components/ui/TextField";
 import { cx } from "@/components/ui/cx";
+import type { SizeChartRow } from "@/lib/catalog";
 import type { MockupKind } from "@/lib/mockup-kinds";
 
 type Props = {
+  /** Grade de tamanhos e medidas da camisa (manequim proporcional). */
+  sizes?: string[] | null;
+  sizeChart?: SizeChartRow[] | null;
   step: number;
   family: ArtFamily;
   /** Produto vendido sem impressão: a arte serve só para simular, não é exigida. */

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Figtree } from "next/font/google";
 import { CartProvider } from "@/components/cart/CartProvider";
+import { CustomerProvider } from "@/lib/customer";
 import "./globals.css";
 
 // Figtree é variável (300–900): um arquivo só, sem lista de pesos.
@@ -28,7 +29,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: JS_FLAG }} />
       </head>
       <body className="flex min-h-full flex-col">
-        <CartProvider>{children}</CartProvider>
+        <CustomerProvider>
+          <CartProvider>{children}</CartProvider>
+        </CustomerProvider>
       </body>
     </html>
   );

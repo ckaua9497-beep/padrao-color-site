@@ -41,8 +41,17 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
 
         <ProductExperience
           product={{
+            groupId: product.groupId,
             slug: product.slug,
             name: product.name,
+            sizes: product.sizes ?? null,
+            sizeChart: product.sizeChart ?? null,
+            customSize: product.customSize ?? null,
+            template: product.template ?? null,
+            summary: product.summary,
+            attachments: product.attachments,
+            artCreationPrice: product.artCreationPrice ?? null,
+            minQty: product.minQty,
             category: product.category,
             categorySlug: product.categorySlug,
             image: product.image,

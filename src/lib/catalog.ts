@@ -1,19 +1,51 @@
 import data from "@/data/catalog.json";
+import storefrontData from "@/data/storefront.json";
+import businessTypesData from "@/data/business-types.json";
+
+/*
+ * Catálogo gerado da API Padrão Color por scripts/sync-catalog.mjs (npm run sync:catalog).
+ * Produto = grupo da API (uma página); variação = produto da API (combinação vendável, com preço e prazo).
+ */
 
 export type Variation = {
+  /** ID do produto na API (vai no pedido). */
+  id?: number;
+  /** Preço no prazo econômico (por m² quando o produto tem medida livre). */
   p: number;
+  /** Preço no prazo expresso. */
+  pe?: number;
+  /** Quantidade do preço (ex.: 1000 cartões). */
   q: number;
+  /** Prazo econômico em dias úteis. */
   d: number | null;
+  /** Prazo expresso em dias úteis. */
+  de?: number | null;
   v: Record<string, string>;
 };
 
+export type InfoBlock = { title: string; text: string };
+
+export type SizeChartRow = { size: string; widthCm: number; lengthCm: number };
+
+/** Medida livre (preço por m²). Valores em metros; 0 = sem limite. */
+export type CustomSize = { minWidth: number; maxWidth: number; minHeight: number; maxHeight: number; minArea: number; maxArea: number };
+
 export type Product = {
   id: string;
+  groupId?: number;
   slug: string;
   name: string;
   category: string;
+  categoryId?: number;
   categorySlug: string;
   description: string;
+  summary?: string;
+  info?: InfoBlock[];
+  /** URL do gabarito (.zip/.rar) na API, ou null. */
+  template?: string | null;
+  tags?: string[];
+  metaTitle?: string;
+  metaDescription?: string;
   image: string;
   images: string[];
   options: Record<string, string[]>;
@@ -26,13 +58,30 @@ export type Product = {
   bestSeller: boolean;
   isNew: boolean;
   sourceUrl: string;
+  related?: number[];
+  /** Grade de tamanhos de vestuário (P, M, G…), quando houver. */
+  sizes?: string[] | null;
+  /** Medidas por tamanho, lidas da "Tabela de Medidas" da API. */
+  sizeChart?: SizeChartRow[] | null;
+  customSize?: CustomSize | null;
+  web2print?: boolean;
+  /** Preço do serviço de criação de arte, quando a API informa. */
+  artCreationPrice?: number | null;
+  attachments?: string[];
+  minQty?: number;
+  maxQty?: number;
 };
 
 export type Category = {
+  id?: number;
   slug: string;
   name: string;
   count: number;
   image: string;
+  banner?: string | null;
+  bannerMobile?: string | null;
+  metaTitle?: string;
+  metaDescription?: string;
   minLeadDays: number | null;
   minPrice: number;
 };
@@ -42,15 +91,44 @@ export type ProductSummary = Pick<
   "id" | "slug" | "name" | "category" | "categorySlug" | "image" | "price" | "priceQty" | "leadDays" | "isNew" | "bestSeller"
 >;
 
+/** Vitrine do padraocolor.com.br (GET /configuracoes). */
+export type Storefront = {
+  generatedAt: string;
+  banners: { name: string; desktop: string; mobile: string; href: string | null }[];
+  buttons: { name: string; image: string; href: string | null; newTab: boolean; row: number }[];
+  featuredCategories: { id: number; name: string; image: string; price: number; slug: string }[];
+  /** IDs de grupo dos "Nossos Destaques", na ordem do site oficial. */
+  highlights: number[];
+  /** IDs de grupo dos "Produtos mais Vendidos". */
+  bestSellers: number[];
+  menu: { categoryId: number; name: string; slug: string; groups: { id: number; name: string }[] }[];
+  headerText: string | null;
+  topHeader: { image: string; href: string | null } | null;
+};
+
+export type BusinessType = {
+  id: string;
+  slug: string;
+  name: string;
+  image: string;
+  banner: string | null;
+  metaTitle: string;
+  metaDescription: string;
+  groupIds: number[];
+};
+
 const catalog = data as unknown as {
   generatedAt: string;
+  source?: string;
   categories: Category[];
   products: Product[];
 };
 
+export const storefront = storefrontData as unknown as Storefront;
+export const businessTypes = businessTypesData as unknown as BusinessType[];
+
 export { STORE } from "./store";
 export { MENU_GROUPS } from "./menu";
-
 
 export function getCategories(): Category[] {
   return catalog.categories;
@@ -68,19 +146,30 @@ export function getProduct(slug: string): Product | undefined {
   return catalog.products.find((p) => p.slug === slug);
 }
 
+/** Produto pelo ID do grupo na API (o "Tags" derivado não entra: ele tem ID próprio). */
+export function getProductByGroupId(groupId: number): Product | undefined {
+  return catalog.products.find((p) => p.groupId === groupId && p.id === String(groupId));
+}
+
 export function getProductsByCategory(slug: string): Product[] {
   return catalog.products.filter((p) => p.categorySlug === slug);
 }
 
-export function getFeatured(): Product[] {
-  const featured = catalog.products.filter((p) => p.featured || p.bestSeller || p.isNew);
-  return featured.sort((a, b) => Number(b.bestSeller) - Number(a.bestSeller) || Number(b.isNew) - Number(a.isNew));
+/** Produtos na ordem da lista de IDs de grupo (ignora os que não existem mais). */
+export function getProductsByGroupIds(ids: number[]): Product[] {
+  return ids.map((id) => getProductByGroupId(id)).filter((p): p is Product => Boolean(p));
 }
 
+export function getFeatured(): Product[] {
+  const featured = catalog.products.filter((p) => p.featured || p.bestSeller || p.isNew);
+  return featured.sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.bestSeller) - Number(a.bestSeller) || Number(b.isNew) - Number(a.isNew));
+}
+
+/** "Veja também" da API; completa com a mesma categoria. */
 export function getRelated(product: Product, limit = 10): Product[] {
-  return catalog.products
-    .filter((p) => p.categorySlug === product.categorySlug && p.slug !== product.slug)
-    .slice(0, limit);
+  const fromApi = getProductsByGroupIds(product.related ?? []).filter((p) => p.slug !== product.slug);
+  const sameCategory = catalog.products.filter((p) => p.categorySlug === product.categorySlug && p.slug !== product.slug && !fromApi.includes(p));
+  return [...fromApi, ...sameCategory].slice(0, limit);
 }
 
 export function searchProducts(term: string): Product[] {
@@ -88,7 +177,7 @@ export function searchProducts(term: string): Product[] {
   if (!needle) return catalog.products;
   const words = needle.split(" ").filter(Boolean);
   return catalog.products.filter((p) => {
-    const haystack = normalize(`${p.name} ${p.category}`);
+    const haystack = normalize(`${p.name} ${p.category} ${(p.tags ?? []).join(" ")}`);
     return words.every((w) => haystack.includes(w));
   });
 }
@@ -112,7 +201,7 @@ export function toSummary(p: Product): ProductSummary {
 export function normalize(value: string): string {
   return value
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
@@ -122,4 +211,5 @@ export const CATALOG_STATS = {
   products: catalog.products.length,
   categories: catalog.categories.length,
   minLeadDays: Math.min(...catalog.products.map((p) => p.leadDays ?? 99)),
+  generatedAt: catalog.generatedAt,
 };

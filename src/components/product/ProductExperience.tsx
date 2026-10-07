@@ -15,7 +15,8 @@ import { Price } from "@/components/ui/Price";
 import QtyStepper from "@/components/ui/QtyStepper";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
-import type { Variation } from "@/lib/catalog";
+import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
+import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, imageUrl, leadLabel, quantityLabel } from "@/lib/format";
 import { mockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
@@ -24,6 +25,8 @@ import { ArtStep } from "./ArtStep";
 import PreviewModal from "./PreviewModal";
 
 export type ClientProduct = {
+  /** Grupo da API (vai no pedido junto com o ID da variação). */
+  groupId?: number;
   slug: string;
   name: string;
   category: string;
@@ -37,6 +40,17 @@ export type ClientProduct = {
   leadDays: number | null;
   isNew: boolean;
   bestSeller: boolean;
+  /** Grade de tamanhos de vestuário e medidas por tamanho (API). */
+  sizes?: string[] | null;
+  sizeChart?: SizeChartRow[] | null;
+  /** Medida livre: preço por m² (banner, adesivo, papel, lona, tecido). */
+  customSize?: CustomSize | null;
+  template?: string | null;
+  summary?: string;
+  info?: InfoBlock[];
+  attachments?: string[];
+  artCreationPrice?: number | null;
+  minQty?: number;
 };
 
 const MAX_UPLOAD_MB = 25;
@@ -90,10 +104,12 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const [adding, setAdding] = useState(false);
   const captureRef = useRef<CaptureFn | null>(null);
   const { add } = useCart();
+  // Revendedor logado vê a tabela de revenda; conta comum segue no preço de balcão.
+  const { variations } = useCustomerVariations(product, product.variations);
 
   const price = useMemo(
-    () => quote(product.variations, selection, { price: product.price, qty: product.priceQty, leadDays: product.leadDays }, keys.length),
-    [product, selection, keys.length],
+    () => quote(variations, selection, { price: product.price, qty: product.priceQty, leadDays: product.leadDays }, keys.length),
+    [variations, product.price, product.priceQty, product.leadDays, selection, keys.length],
   );
   const spec = useMemo(() => mockupSpec(product, selection), [product, selection]);
   const family = artFamily(spec.kind);
@@ -169,6 +185,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       setQty: price.qty,
       quantity: qty,
       leadDays: price.leadDays,
+      groupId: product.groupId,
+      variationId: price.variation?.id,
       // O carrinho mostra "Arte: …"; null vira "enviar depois".
       artName: spec.blank ? "produto sem impressão" : artLater ? null : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
     });
@@ -250,7 +268,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
         <ol className="mt-8 space-y-6">
           {keys.map((key, i) => {
-            const available = availableValues(key, product.options, product.variations, selection);
+            const available = availableValues(key, product.options, variations, selection);
             return (
               <li key={key} className="motion-safe:animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
                 <p className="mb-2.5 flex items-center gap-2 text-[15px] font-bold">
@@ -290,6 +308,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             aspect={artAspect(spec)}
             ledColors={spec.ledColors}
             label={product.name}
+            sizes={product.sizes ?? null}
+            sizeChart={product.sizeChart ?? null}
           />
         </ol>
 

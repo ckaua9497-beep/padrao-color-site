@@ -483,7 +483,11 @@ const REFRAME_TOLERANCE = 0.025;
 function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetToken, reducedMotion, ready, onReady, framingRef }: StageProps) {
   const group = useRef<THREE.Group>(null);
   // A arte leva o tipo da peça (escolhe o template) e as cores do LED (neon).
-  const renderArt = useMemo(() => ({ ...art, kind: spec.kind, ledColors: spec.ledColors, surface: spec.baseColor }), [art, spec.kind, spec.ledColors, spec.baseColor]);
+  // Cores de LED escolhidas pelo cliente (neon) valem mais que a cor da opção do produto.
+  const renderArt = useMemo(
+    () => ({ ...art, kind: spec.kind, ledColors: art.ledColors?.length ? art.ledColors : spec.ledColors, surface: spec.baseColor }),
+    [art, spec.kind, spec.ledColors, spec.baseColor],
+  );
   const get = useThree((state) => state.get);
   const hasControls = useThree((state) => Boolean(state.controls));
   const invalidate = useThree((state) => state.invalidate);

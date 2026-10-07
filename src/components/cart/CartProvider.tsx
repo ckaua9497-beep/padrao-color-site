@@ -14,6 +14,21 @@ export type CartItem = {
   quantity: number;
   leadDays: number | null;
   artName: string | null;
+  /*
+   * Campos para gerar o pedido na API (POST /gerarpedido). Opcionais: carrinhos salvos antes deles
+   * continuam válidos.
+   */
+  /** Grupo da API (a página de produto). */
+  groupId?: number;
+  /** Produto da API (a variação escolhida). */
+  variationId?: number;
+  /** Medida livre, em cm (produtos por m²). */
+  widthCm?: number;
+  heightCm?: number;
+  /** Prazo expresso escolhido (o econômico é o padrão). */
+  express?: boolean;
+  /** Kit ou festa que adicionou o item (Monte Seu Kit / Crie Sua Festa). */
+  bundle?: { id: string; name: string } | null;
 };
 
 type CartContextValue = {

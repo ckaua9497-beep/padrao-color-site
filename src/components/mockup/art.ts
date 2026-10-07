@@ -24,6 +24,34 @@ export type ArtSettings = {
   style: ArtStyle;
   /** Linha secundária opcional: cargo, contato, @perfil, data. */
   subtext: string;
+  /**
+   * Posição livre (web-to-print): onde o cliente colocou o texto e a imagem na área de impressão.
+   * null/ausente = layout automático do template.
+   */
+  layout?: ArtLayout | null;
+  /** Arte do verso (camisas: logo nas costas; almofadas: verso). null/ausente = sem arte própria no verso. */
+  back?: ArtSettings | null;
+  /** Cores de LED escolhidas pelo cliente no neon (sobrepõem a cor da opção do produto). */
+  ledColors?: string[] | null;
+  /** Chinelo: região personalizada ("inteira", "dedos", "meio", "calcanhar"). */
+  region?: string | null;
+  /** Camisa: manequim no tamanho escolhido e no tipo de corpo (medidas em cm da tabela da API). */
+  mannequin?: MannequinSettings | null;
+};
+
+/** Posição de um elemento em fração da área de impressão (x/y = centro, 0..1; scale 1 = encaixe máximo). */
+export type LayerPlacement = { x: number; y: number; scale: number; rotation: number };
+
+export type ArtLayout = { text?: LayerPlacement | null; image?: LayerPlacement | null };
+
+export type BodyType = "magro" | "medio" | "cheio";
+
+export type MannequinSettings = {
+  size: string;
+  body: BodyType;
+  /** Medidas da peça no tamanho escolhido (Tabela de Medidas da API), quando houver. */
+  widthCm?: number | null;
+  lengthCm?: number | null;
 };
 
 export const DEFAULT_ART: ArtSettings = {

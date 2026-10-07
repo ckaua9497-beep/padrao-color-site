@@ -50,6 +50,8 @@ export type MockupSpec = {
   handle: boolean;
   /** Garrafa com mosquetão. */
   carabiner: boolean;
+  /** Garrafa térmica: área personalizável de 60% da volta (frente e laterais). */
+  thermal: boolean;
   /** Encadernação de agenda, caderno, photobook. */
   binding: "spiral" | "spine";
   /** Bolsa pequena com zíper (estojo, necessaire) em vez de sacola com alças. */
@@ -136,7 +138,7 @@ const RULES: Rule[] = [
     test: /\bps\b|\bpvc expandido\b|\bxps\b|\bpolionda\b|\bquadro\b|\bplaca\b|\bdisplay\b|\bporteiro\b|\bmosaico\b/,
   },
   { kind: "sticker", test: /\badesivo\b|\brotulo\b|\bdtf\b|\betiqueta\b/ },
-  { kind: "hangtag", test: /\btag\b/ },
+  { kind: "hangtag", test: /\btags?\b/ },
   { kind: "bookmark", test: /\bmarcador\b/ },
   { kind: "card", test: /\bcartao de (visita|pvc)\b|\bcalendario de bolso\b/ },
 ];
@@ -601,6 +603,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     teacup,
     handle: kind === "mug" || (kind === "tumbler" && (/\btravel mug\b/.test(name) || /\balca\b/.test(allValues))),
     carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
+    thermal: kind === "bottle" && (/\btermic/.test(name) || /\binox\b/.test(name)),
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
     pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b/.test(name),
     spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),

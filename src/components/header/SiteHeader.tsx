@@ -14,7 +14,9 @@ import { IconButton } from "@/components/ui/IconButton";
 import { cx } from "@/components/ui/cx";
 import { formatBRL, imageUrl, spectrumAt } from "@/lib/format";
 import type { BenefitIcon, MenuBenefit } from "@/lib/menu";
+import { EXTRA_TABS } from "@/lib/menu";
 import { STORE } from "@/lib/store";
+import { AccountLink } from "@/components/account/AccountLink";
 
 export type MenuCategory = { slug: string; name: string; count: number; image: string; minLeadDays: number | null };
 export type MenuGroup = { label: string; blurb: string; categories: MenuCategory[]; benefits: MenuBenefit[] };
@@ -138,6 +140,11 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
             <Link href="/produtos" onMouseEnter={leave} aria-current={pathname === "/produtos" ? "page" : undefined} className={cx(navItem, pathname === "/produtos" ? "bg-ink text-white" : "hover:bg-mist")}>
               Todos os produtos
             </Link>
+            {EXTRA_TABS.map((tab) => (
+              <Link key={tab.href} href={tab.href} onMouseEnter={leave} aria-current={pathname === tab.href ? "page" : undefined} className={cx(navItem, "hidden 2xl:flex", pathname === tab.href ? "bg-ink text-white" : "hover:bg-mist")}>
+                {tab.label}
+              </Link>
+            ))}
           </nav>
 
           <div className="ml-auto flex items-center gap-1 xl:ml-0">
@@ -148,6 +155,7 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
               <IconHeadset aria-hidden className="size-5" />
               Ajuda
             </a>
+            <AccountLink />
             <IconButton label={`Abrir carrinho, ${count} ${count === 1 ? "item" : "itens"}`} variant="ghost" onClick={() => openCart(true)} className="relative hover:bg-mist">
               <IconBag className="size-5.5" />
               {count > 0 && (
@@ -353,6 +361,14 @@ function MobileMenu({ open, onClose, menu }: { open: boolean; onClose: () => voi
           </Link>
           <Link href="/produtos" className="py-4 text-xl font-bold">
             Todos os produtos
+          </Link>
+          {EXTRA_TABS.map((tab) => (
+            <Link key={tab.href} href={tab.href} className="py-4 text-xl font-bold">
+              {tab.label}
+            </Link>
+          ))}
+          <Link href="/conta" className="py-4 text-xl font-bold">
+            Minha conta
           </Link>
         </nav>
         <div className="mt-auto grid gap-2 pt-8 text-[15px]">

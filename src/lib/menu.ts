@@ -51,3 +51,10 @@ export const MENU_GROUPS = [
     ],
   },
 ] as const satisfies readonly { label: string; blurb: string; categories: readonly string[]; benefits: readonly MenuBenefit[] }[];
+
+/** Abas do checklist: festa sob medida, kits prontos e simulador de fachada. */
+export const EXTRA_TABS = [
+  { href: "/crie-sua-festa", label: "Crie Sua Festa" },
+  { href: "/monte-seu-kit", label: "Monte Seu Kit" },
+  { href: "/fachadas", label: "Fachadas" },
+] as const;

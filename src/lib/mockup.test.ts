@@ -173,7 +173,7 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
     flag: 9,
     flipflop: 1,
     folded: 8,
-    hangtag: 1,
+    hangtag: 2,
     hardware: 3,
     keychain: 1,
     lanyard: 1,
@@ -181,10 +181,10 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
     lightbox: 2,
     magnet: 5,
     mat: 3,
-    mug: 27,
+    mug: 25,
     neckpillow: 2,
     neon: 33,
-    panel: 12,
+    panel: 11,
     paperpack: 2,
     passport: 1,
     pen: 2,
@@ -285,7 +285,7 @@ test("produtos vendidos sem impressão ficam marcados como blank (a arte vira si
 });
 
 test("subtipos vêm do nome, não de regex dentro dos modelos", () => {
-  assert.equal(spec("Caneca de Cerâmica c/ Colher e Interior Preto para Sublimação").variant, "spoon");
+  assert.equal(spec("Caneca de Cerâmica c/ Colher e Interior Colorido").variant, "spoon");
   assert.equal(spec("Xícara London com Suporte - Kit com 2 unidades").variant, "kit");
   assert.equal(spec("Kit Soneca").variant, "kit");
   assert.equal(spec("Lancheira Brinde").variant, "lunch");
