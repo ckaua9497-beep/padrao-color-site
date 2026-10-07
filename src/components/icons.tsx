@@ -172,10 +172,3 @@ export const IconStorefront = (p: IconProps) => (
     <path d="M10 20v-5h4v5" />
   </svg>
 );
-
-export const IconTemplate = (p: IconProps) => (
-  <svg {...base} {...p} aria-hidden>
-    <rect x="4" y="3.5" width="16" height="17" rx="2" strokeDasharray="2.6 2" />
-    <rect x="7.5" y="7" width="9" height="10" rx="1" />
-  </svg>
-);

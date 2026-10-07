@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import Logo from "@/components/Logo";
 import { Marquee } from "@/components/motion";
-import { IconArrow, IconBag, IconBalloon, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconSearch, IconShield, IconStorefront, IconTemplate, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
+import { IconArrow, IconBag, IconBalloon, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconSearch, IconShield, IconStorefront, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
 import { useCart } from "@/components/cart/CartProvider";
 import { AccordionItem } from "@/components/ui/Accordion";
 import { Drawer } from "@/components/ui/Drawer";
@@ -27,7 +27,6 @@ const TAB_ICONS: Record<TabIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   balloon: IconBalloon,
   gift: IconGift,
   store: IconStorefront,
-  template: IconTemplate,
 };
 
 const BENEFIT_ICONS: Record<BenefitIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
@@ -185,7 +184,7 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
         <SearchPanel open={searchOpen} onClose={() => setSearchOpen(false)} />
       </header>
 
-      <nav aria-label="Festas, kits, fachadas e gabaritos" className="hidden border-y border-line bg-white xl:block">
+      <nav aria-label="Festas, kits e fachadas" className="hidden border-y border-line bg-white xl:block">
         <div className="container-site flex h-12 items-center gap-1">
           {EXTRA_TABS.map((tab) => {
             const Icon = TAB_ICONS[tab.icon];
