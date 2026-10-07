@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo } from "react";
 import { Decal } from "@react-three/drei";
-import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { dressFor, figureOf, type Figure } from "@/components/product/art-editor/mannequin";
 import { DEFAULT_ART, hasArtContent, type ArtRender } from "../art";
 import { useApparelArt, useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
 import { useArtTexture, type MaskPath, type ModelProps } from "./shared";
-import { useSceneMode } from "../viewer-hooks";
+import { TeeModel } from "./apparel/TeeModel";
+import { TurnGroup } from "./apparel/TurnGroup";
 
 /*
  * Têxteis procedurais: camiseta (e variações), boné, avental e bandana.
@@ -1281,7 +1281,15 @@ function buildFigure(cut: ShirtCut, parts: ShirtParts, figure: Figure, lift: num
  * (gola V, raglan e risca sublimada), regata de basquete (viés duplo, faixas laterais) e abadá cavado.
  * A estampa entra por Decal no peito (logo pequeno vai para o peito esquerdo), sem distorcer.
  */
-export function TshirtModel({ spec, art, label }: ModelProps) {
+/**
+ * Camiseta: o modelo novo (busto de vitrine e tecido com caimento) em todas as peças adultas; o body de
+ * bebê e o pijama (que não vestem o manequim) seguem no modelo de painéis.
+ */
+export function TshirtModel(props: ModelProps) {
+  return props.spec.variant === "body" || props.spec.variant === "pajama" ? <PanelTshirtModel {...props} /> : <TeeModel {...props} />;
+}
+
+function PanelTshirtModel({ spec, art, label }: ModelProps) {
   const printArt = useApparelArt(art);
   const { collar, variant, sleeveless, longSleeve } = spec;
   // Manequim: undefined = padrão (M, intermediário); null = escondido. Body de bebê e pijama ficam sem.
@@ -1469,57 +1477,6 @@ export function TshirtModel({ spec, art, label }: ModelProps) {
         </group>
       )}
     </TurnGroup>
-  );
-}
-
-/** Duração do giro da camiseta para as costas ("Ver verso" ou o passo "Verso" da arte). */
-const TURN_SECONDS = 0.7;
-
-/**
- * Grupo da camiseta que gira 180° no eixo vertical quando o viewer pede o verso (useSceneMode().back):
- * um giro curto com easing; sem animação com reduced motion. `base` é a leve rotação de 3/4 da vitrine.
- */
-function TurnGroup({ base, scale, children }: { base: number; scale: number; children: ReactNode }) {
-  const { back, motion } = useSceneMode();
-  const ref = useRef<THREE.Group>(null);
-  const invalidate = useThree((state) => state.invalidate);
-  const anim = useRef({ angle: base, from: base, to: base, t: 1, mounted: false });
-  const target = base + (back ? Math.PI : 0);
-
-  useLayoutEffect(() => {
-    const group = ref.current;
-    if (!group) return;
-    const state = anim.current;
-    if (!state.mounted || !motion) {
-      state.mounted = true;
-      state.angle = state.to = target;
-      state.t = 1;
-      group.rotation.y = target;
-      invalidate();
-      return;
-    }
-    if (Math.abs(state.to - target) < 1e-6) return;
-    state.from = state.angle;
-    state.to = target;
-    state.t = 0;
-    invalidate();
-  }, [target, motion, invalidate]);
-
-  useFrame((_, delta) => {
-    const group = ref.current;
-    const state = anim.current;
-    if (!group || state.t >= 1) return;
-    state.t = Math.min(1, state.t + Math.min(delta, 0.05) / TURN_SECONDS);
-    const k = state.t < 0.5 ? 2 * state.t * state.t : 1 - (-2 * state.t + 2) ** 2 / 2;
-    state.angle = state.from + (state.to - state.from) * k;
-    group.rotation.y = state.angle;
-    invalidate();
-  });
-
-  return (
-    <group ref={ref} scale={scale}>
-      {children}
-    </group>
   );
 }
 
