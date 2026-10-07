@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { dressFor } from "@/components/product/art-editor/mannequin";
 import { DEFAULT_ART, hasArtContent, type ArtRender } from "../../art";
@@ -44,26 +44,31 @@ type TeeStyle = {
   neck: NeckKind;
   knit: Knit;
   edge: "rib" | "binding";
-  /** Mangas e gola na cor de destaque (raglan da camisa de futebol). */
+  /** Gola, punhos e viés na cor de destaque. */
   accentTrim: boolean;
+  /** Mangas inteiras na cor de destaque (raglan da camisa de futebol). */
+  accentSleeves: boolean;
 };
 
 /** Modelo da peça pelo subtipo e pelo tecido do nome do produto. */
 function teeStyle(spec: ModelProps["spec"], label: string): TeeStyle {
   const name = label.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
   const sporty = /\b(dry ?fit|helanca|polifil|poliester)\b/.test(name);
-  if (spec.collar === "polo") return { sleeve: "short", neck: "polo", knit: "pique", edge: "rib", accentTrim: false };
+  const plain = { accentTrim: false, accentSleeves: false };
+  if (spec.collar === "polo") return { sleeve: "short", neck: "polo", knit: "pique", edge: "rib", ...plain };
   switch (spec.variant) {
+    case "pajama":
+      return { sleeve: "long", neck: "crew", knit: "jersey", edge: "rib", accentTrim: true, accentSleeves: false };
     case "jersey":
-      return { sleeve: "short", neck: "v", knit: "dryfit", edge: "rib", accentTrim: true };
+      return { sleeve: "short", neck: "v", knit: "dryfit", edge: "rib", accentTrim: true, accentSleeves: true };
     case "vest":
-      return { sleeve: "none", neck: "v", knit: "mesh", edge: "binding", accentTrim: true };
+      return { sleeve: "none", neck: "v", knit: "mesh", edge: "binding", accentTrim: true, accentSleeves: false };
     case "basketball":
-      return { sleeve: "none", neck: "scoop", knit: "dryfit", edge: "binding", accentTrim: true };
+      return { sleeve: "none", neck: "scoop", knit: "dryfit", edge: "binding", accentTrim: true, accentSleeves: false };
     case "abada":
-      return { sleeve: "none", neck: "scoop", knit: "dryfit", edge: "binding", accentTrim: false };
+      return { sleeve: "none", neck: "scoop", knit: "dryfit", edge: "binding", ...plain };
     default:
-      return { sleeve: spec.sleeveless ? "none" : spec.longSleeve ? "long" : "short", neck: "crew", knit: sporty ? "dryfit" : "jersey", edge: "rib", accentTrim: false };
+      return { sleeve: spec.sleeveless ? "none" : spec.longSleeve ? "long" : "short", neck: "crew", knit: sporty ? "dryfit" : "jersey", edge: "rib", ...plain };
   }
 }
 
@@ -186,9 +191,16 @@ function Stitches({ geometry, matrices, color }: { geometry: THREE.BufferGeometr
  * = null): tecido com caimento e dobras, gola canelada, barras dobradas, costuras e a estampa como uma
  * pele sobre o tecido. Frente em +z; o lado −x é o espelho do +x.
  */
-export function TeeModel({ spec, art, label }: ModelProps) {
+type TeeProps = ModelProps & {
+  /** Pijama: blusa sem manequim (a calça dobrada vem em `extra`). */
+  pajama?: boolean;
+  /** Peças extras no mesmo espaço da camiseta (cm, y = 0 no ombro): barra e frente da peça. */
+  extra?: (info: { yHem: number; front: number }) => ReactNode;
+};
+
+export function TeeModel({ spec, art, label, pajama = false, extra }: TeeProps) {
   const style = useMemo(() => teeStyle(spec, label), [spec, label]);
-  const mannequin = art.mannequin;
+  const mannequin = pajama ? null : art.mannequin;
   const dressed = mannequin !== null;
   const size = mannequin?.size ?? "M";
   const bodyType = mannequin?.body ?? "medio";
@@ -237,7 +249,7 @@ export function TeeModel({ spec, art, label }: ModelProps) {
   const base = spec.baseColor;
   const accent = spec.accentColor ?? (luminance(base) > 0.5 ? "#1d1d22" : "#f2f2f2");
   const trimColor = style.accentTrim ? accent : base;
-  const sleeveColor = style.accentTrim && style.sleeve !== "none" ? accent : base;
+  const sleeveColor = style.accentSleeves && style.sleeve !== "none" ? accent : base;
   const lining = shade(base, 0.82);
   const dark = luminance(base) < 0.35;
   const sporty = style.knit === "dryfit" || style.knit === "mesh";
@@ -302,8 +314,9 @@ export function TeeModel({ spec, art, label }: ModelProps) {
 
   return (
     <TurnGroup base={0.14} scale={UNIT}>
+      {extra?.({ yHem: shape.yHem, front: shape.point(0, shape.yHem).z })}
       {/* Peça sem manequim: um apoio invisível embaixo deixa a camiseta "flutuando" sobre a sombra. */}
-      {!figure && (
+      {!figure && !extra && (
         <mesh position={[0, shape.yHem - 12, 0]}>
           <boxGeometry args={[1, 0.1, 1]} />
           <meshBasicMaterial colorWrite={false} depthWrite={false} />

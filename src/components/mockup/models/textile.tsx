@@ -1061,7 +1061,7 @@ function NeckLabel({ position, size = "M" }: { position: Vec3; size?: string }) 
 }
 
 /** Calça do pijama dobrada (empilhada à frente da blusa): volume inflado, cós com cordão e debrum. */
-function FoldedPants({ color, accent, position }: { color: string; accent: string; position: Vec3 }) {
+export function FoldedPants({ color, accent, position }: { color: string; accent: string; position: Vec3 }) {
   const parts = useMemo(() => {
     const shape = (w: number, h: number, r: number) => {
       const s = new THREE.Shape();
@@ -1282,11 +1282,22 @@ function buildFigure(cut: ShirtCut, parts: ShirtParts, figure: Figure, lift: num
  * A estampa entra por Decal no peito (logo pequeno vai para o peito esquerdo), sem distorcer.
  */
 /**
- * Camiseta: o modelo novo (busto de vitrine e tecido com caimento) em todas as peças adultas; o body de
- * bebê e o pijama (que não vestem o manequim) seguem no modelo de painéis.
+ * Camiseta: o modelo novo (busto de vitrine e tecido com caimento) em todas as peças; o pijama usa a
+ * blusa sem manequim com a calça dobrada na frente. Só o body de bebê segue no modelo de painéis.
  */
 export function TshirtModel(props: ModelProps) {
-  return props.spec.variant === "body" || props.spec.variant === "pajama" ? <PanelTshirtModel {...props} /> : <TeeModel {...props} />;
+  if (props.spec.variant === "body") return <PanelTshirtModel {...props} />;
+  if (props.spec.variant === "pajama") {
+    const accent = props.spec.accentColor ?? contrast(props.spec.baseColor);
+    return (
+      <TeeModel
+        {...props}
+        pajama
+        extra={({ yHem, front }) => <FoldedPants color={props.spec.baseColor} accent={accent} position={[0, yHem - 1.6, front + 15]} />}
+      />
+    );
+  }
+  return <TeeModel {...props} />;
 }
 
 function PanelTshirtModel({ spec, art, label }: ModelProps) {
