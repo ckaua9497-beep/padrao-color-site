@@ -67,19 +67,19 @@ export function poloCollar(shape: GarmentShape): PoloParts {
   for (let i = 0; i < cols; i += 1) {
     const f: Frame = standFrames[i];
     const t = i / (cols - 1);
-    // Largura da gola: 6,6 cm atrás, crescendo para as pontas da frente (bico).
+    // Largura da gola deitada: 5,2 cm atrás e nos ombros, crescendo para as pontas da frente (bico).
     const endness = Math.min(t, 1 - t);
     const tip = 1 - smoothstep(0, 0.08, endness);
-    const width = (6.6 + 1.3 * (1 - Math.sin(Math.PI * t)) ** 2 + 1.6 * tip) * k;
+    const width = (5.2 + 1.1 * (1 - Math.sin(Math.PI * t)) ** 2 + 1.5 * tip) * k;
     fold.copy(f.p).addScaledVector(f.h, standH + 0.05).addScaledVector(f.n, 0.36);
-    const yOut = walkDown(shape, curve[i].phi, curve[i].y, width * 0.92);
+    const yOut = walkDown(shape, curve[i].phi, curve[i].y, width * 0.8);
     shape.point(curve[i].phi, yOut, out);
     shape.normal(curve[i].phi, yOut, nrm);
     out.addScaledVector(nrm, 0.42);
     // Pontas: um pouco para o meio da frente (a gola fecha em bico sobre a carcela).
     if (tip > 0) out.x *= 1 - 0.18 * tip;
     outer.push(out.clone());
-    ctrl.copy(fold).addScaledVector(f.n, 1.25 * k).addScaledVector(f.h, 0.35 * k).lerp(out, 0.22);
+    ctrl.copy(fold).addScaledVector(f.n, 0.8 * k).addScaledVector(f.h, 0.25 * k).lerp(out, 0.25);
     if (prevFold) along += fold.distanceTo(prevFold);
     prevFold = fold.clone();
     let rowArc = 0;
