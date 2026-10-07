@@ -6,14 +6,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import Logo from "@/components/Logo";
 import { Marquee } from "@/components/motion";
-import { IconArrow, IconBag, IconChevron, IconClock, IconClose, IconCube, IconHeadset, IconLayers, IconMenu, IconSearch, IconShield, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
+import { IconArrow, IconBag, IconBalloon, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconSearch, IconShield, IconStorefront, IconTemplate, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
 import { useCart } from "@/components/cart/CartProvider";
 import { AccordionItem } from "@/components/ui/Accordion";
 import { Drawer } from "@/components/ui/Drawer";
 import { IconButton } from "@/components/ui/IconButton";
 import { cx } from "@/components/ui/cx";
 import { formatBRL, imageUrl, spectrumAt } from "@/lib/format";
-import type { BenefitIcon, MenuBenefit } from "@/lib/menu";
+import type { BenefitIcon, MenuBenefit, TabIcon } from "@/lib/menu";
 import { EXTRA_TABS } from "@/lib/menu";
 import { STORE } from "@/lib/store";
 import { AccountLink } from "@/components/account/AccountLink";
@@ -22,6 +22,13 @@ export type MenuCategory = { slug: string; name: string; count: number; image: s
 export type MenuGroup = { label: string; blurb: string; categories: MenuCategory[]; benefits: MenuBenefit[]; more?: { href: string; label: string } };
 
 type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number };
+
+const TAB_ICONS: Record<TabIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
+  balloon: IconBalloon,
+  gift: IconGift,
+  store: IconStorefront,
+  template: IconTemplate,
+};
 
 const BENEFIT_ICONS: Record<BenefitIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   cube: IconCube,
@@ -92,7 +99,7 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
   return (
     <>
       {/* Texto pequeno sobre coral: preto passa AA (6,2:1); branco não passaria. */}
-      <div className="relative overflow-hidden bg-coral text-ink">
+      <div className="bg-coral text-ink">
         <Marquee
           className="h-9 items-center text-[13px] font-semibold"
           itemClassName="gap-6 pr-6"
@@ -103,29 +110,6 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
             </>
           ))}
         />
-        {/* Abas do checklist (festa, kits, fachada) no desktop: à direita da faixa, sem mexer na linha do menu. */}
-        <div className="pointer-events-none absolute inset-0 hidden xl:block">
-          <div className="container-site flex h-full items-center justify-end">
-            <nav
-              aria-label="Festas e fachadas"
-              className="pointer-events-auto relative flex h-full items-center gap-1.5 bg-coral pl-3 shadow-[-20px_0_14px_-6px_var(--color-coral)] after:absolute after:inset-y-0 after:left-full after:w-screen after:bg-coral"
-            >
-              {EXTRA_TABS.map((tab) => {
-                const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
-                return (
-                  <Link
-                    key={tab.href}
-                    href={tab.href}
-                    aria-current={pathname === tab.href ? "page" : undefined}
-                    className={cx("rounded-full px-3 text-[13px] font-bold leading-6 transition-colors", active ? "bg-ink text-white" : "bg-white/90 hover:bg-white")}
-                  >
-                    {tab.label}
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-        </div>
       </div>
 
       <header
@@ -200,6 +184,21 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
 
         <SearchPanel open={searchOpen} onClose={() => setSearchOpen(false)} />
       </header>
+
+      <nav aria-label="Festas, kits, fachadas e gabaritos" className="hidden border-y border-line bg-white xl:block">
+        <div className="container-site flex h-12 items-center gap-1">
+          {EXTRA_TABS.map((tab) => {
+            const Icon = TAB_ICONS[tab.icon];
+            const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+            return (
+              <Link key={tab.href} href={tab.href} aria-current={pathname === tab.href ? "page" : undefined} className={cx(navItem, "gap-2", active ? "bg-ink text-white" : "hover:bg-mist")}>
+                <Icon aria-hidden className={cx("size-[18px]", active ? "text-white" : "text-coral-700")} />
+                {tab.label}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
 
       <MobileMenu open={mobileOpen} onClose={() => setMobileOpen(false)} menu={menu} />
     </>

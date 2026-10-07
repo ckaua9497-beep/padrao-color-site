@@ -148,3 +148,34 @@ export const IconCheck = (p: IconProps) => (
     <path d="m5 12.5 4.5 4.5L19 7.5" />
   </svg>
 );
+
+export const IconBalloon = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M12 3c3.3 0 6 2.6 6 6.2 0 3.8-3 6.8-6 6.8s-6-3-6-6.8C6 5.6 8.7 3 12 3z" />
+    <path d="m11 16-1 1.6h4L13 16" />
+    <path d="M12 17.6c0 1.6-1.5 2-1.5 3.4" />
+  </svg>
+);
+
+export const IconGift = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="3.5" y="8" width="17" height="4" rx="1" />
+    <path d="M5 12v8h14v-8M12 8v12" />
+    <path d="M12 8C10.5 4.5 7 4.6 7 6.4 7 8 10 8 12 8zM12 8c1.5-3.5 5-3.4 5-1.6C17 8 14 8 12 8z" />
+  </svg>
+);
+
+export const IconStorefront = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M4 10v10h16V10" />
+    <path d="M3 10 5 4h14l2 6c0 1.4-1.2 2.4-2.6 2.4S16 11.4 16 10c0 1.4-1.2 2.4-2.6 2.4S11 11.4 11 10c0 1.4-1.2 2.4-2.6 2.4S6 11.4 6 10c0 1.4-1.1 2.4-1.5 2.4S3 11.4 3 10z" />
+    <path d="M10 20v-5h4v5" />
+  </svg>
+);
+
+export const IconTemplate = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="4" y="3.5" width="16" height="17" rx="2" strokeDasharray="2.6 2" />
+    <rect x="7.5" y="7" width="9" height="10" rx="1" />
+  </svg>
+);
