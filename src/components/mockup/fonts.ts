@@ -1,4 +1,4 @@
-import { Bebas_Neue, Fraunces, Great_Vibes, Pacifico, Playfair_Display, Righteous, Tilt_Neon, Unbounded } from "next/font/google";
+import { Bebas_Neue, Comfortaa, Fraunces, Great_Vibes, Pacifico, Playfair_Display, Righteous, Sacramento, Tilt_Neon, Unbounded, Yellowtail } from "next/font/google";
 
 // Fontes do "Texto da arte". preload: false — só baixam quando o cliente escolhe a fonte (ou o estilo pede).
 const bebas = Bebas_Neue({ weight: "400", subsets: ["latin"], preload: false, display: "swap" });
@@ -11,6 +11,10 @@ const fraunces = Fraunces({ subsets: ["latin"], preload: false, display: "swap" 
 const unbounded = Unbounded({ subsets: ["latin"], preload: false, display: "swap" });
 const greatVibes = Great_Vibes({ weight: "400", subsets: ["latin"], preload: false, display: "swap" });
 const righteous = Righteous({ weight: "400", subsets: ["latin"], preload: false, display: "swap" });
+// Letras de tubo do neon: arredondada (traço contínuo), manuscrita fina e letreiro anos 50.
+const comfortaa = Comfortaa({ subsets: ["latin"], preload: false, display: "swap" });
+const sacramento = Sacramento({ weight: "400", subsets: ["latin"], preload: false, display: "swap" });
+const yellowtail = Yellowtail({ weight: "400", subsets: ["latin"], preload: false, display: "swap" });
 
 type FontInfo = {
   label: string;
@@ -33,11 +37,23 @@ export const ART_FONTS = {
   unbounded: { label: "Larga", weight: 700, family: unbounded.style.fontFamily, weights: [200, 900] },
   greatvibes: { label: "Caligrafia", weight: 400, family: greatVibes.style.fontFamily, script: true },
   righteous: { label: "Display", weight: 400, family: righteous.style.fontFamily },
+  comfortaa: { label: "Arredondada", weight: 500, family: comfortaa.style.fontFamily, weights: [300, 700] },
+  sacramento: { label: "Fina", weight: 400, family: sacramento.style.fontFamily, script: true },
+  yellowtail: { label: "Letreiro", weight: 400, family: yellowtail.style.fontFamily, script: true },
 } as const satisfies Record<string, FontInfo>;
 
 export type ArtFont = keyof typeof ART_FONTS;
 
 export const ART_FONT_KEYS = Object.keys(ART_FONTS) as ArtFont[];
+
+/** Fontes do "Texto da arte" nas peças impressas. */
+export const TEXT_FONT_KEYS: readonly ArtFont[] = ["figtree", "bebas", "playfair", "pacifico", "neon", "fraunces", "unbounded", "greatvibes", "righteous"];
+
+/**
+ * "Letras" do neon: "figtree" é a letra de tubo do estilo; as demais têm traço contínuo e funcionam
+ * como tubo de LED (sem serifa fina nem contraste alto).
+ */
+export const NEON_FONT_KEYS: readonly ArtFont[] = ["figtree", "neon", "comfortaa", "sacramento", "yellowtail", "pacifico", "greatvibes", "righteous", "unbounded"];
 
 function info(font: ArtFont): FontInfo {
   return ART_FONTS[font] ?? ART_FONTS.figtree;

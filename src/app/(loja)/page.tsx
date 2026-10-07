@@ -7,7 +7,7 @@ import ProductCard from "@/components/ProductCard";
 import Rail from "@/components/Rail";
 import { Marker, Reveal, WordReveal } from "@/components/motion";
 import { IconArrow, IconCube, IconUpload, IconLayers, IconTruck } from "@/components/icons";
-import { CATALOG_STATS, getCategories, getFeatured, getProducts, getProductsByCategory, toSummary, type Product } from "@/lib/catalog";
+import { CATALOG_STATS, getFeatured, getProducts, getProductsByCategory, getShowcaseCategories, toSummary, type Product } from "@/lib/catalog";
 import { imageUrl, spectrumAt } from "@/lib/format";
 import { Button, buttonClass } from "@/components/ui/Button";
 
@@ -44,7 +44,7 @@ const FAQ = [
 ];
 
 export default function HomePage() {
-  const categories = getCategories();
+  const categories = getShowcaseCategories();
   const featured = getFeatured().slice(0, 16).map(toSummary);
 
   const card = find("Cartão de Visita com Verniz Local e Lam. Fosca 9x5cm");

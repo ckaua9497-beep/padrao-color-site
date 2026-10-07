@@ -43,6 +43,8 @@ export const MENU_GROUPS = [
     label: "Para o seu negócio",
     blurb: "Itens para restaurantes, embalagens e insumos de personalização.",
     categories: ["restaurantes", "embalagens", "suprimentos"],
+    // Tipos de negócio do padraocolor.com.br (GET /tiposnegocio).
+    more: { href: "/negocios", label: "Produtos por tipo de negócio" },
     benefits: [
       { icon: "headset", title: "Atendimento comercial", text: "Seg a sex, das 8h às 18h" },
       { icon: "layers", title: "Insumos de sublimação", text: "Canecas, garrafas e papéis" },
@@ -50,7 +52,7 @@ export const MENU_GROUPS = [
       { icon: "truck", title: "Pedido recorrente", text: "Reposição sem complicação" },
     ],
   },
-] as const satisfies readonly { label: string; blurb: string; categories: readonly string[]; benefits: readonly MenuBenefit[] }[];
+] as const satisfies readonly { label: string; blurb: string; categories: readonly string[]; benefits: readonly MenuBenefit[]; more?: { href: string; label: string } }[];
 
 /** Abas do checklist: festa sob medida, kits prontos e simulador de fachada. */
 export const EXTRA_TABS = [

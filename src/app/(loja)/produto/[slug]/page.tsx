@@ -1,34 +1,85 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import ProductCard from "@/components/ProductCard";
 import Rail from "@/components/Rail";
 import ProductExperience from "@/components/product/ProductExperience";
+import ProductInfo from "@/components/product/ProductInfo";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { IconClock, IconCube, IconShield } from "@/components/icons";
-import { getProduct, getProducts, getRelated, toSummary } from "@/lib/catalog";
-import { spectrumAt } from "@/lib/format";
+import { getProduct, getProductById, getProducts, getRelated, seoTitle, toSummary } from "@/lib/catalog";
+import { imageUrl, spectrumAt } from "@/lib/format";
 import { cleanOptionLabel, optionKeys } from "@/lib/pricing";
 
 export function generateStaticParams() {
   return getProducts().map((p) => ({ slug: p.slug }));
 }
 
+/** Descrição curta para buscadores: meta description da API, resumo ou o começo da descrição. */
+function shortDescription(product: { metaDescription?: string; summary?: string; description: string }): string {
+  const text = product.metaDescription || product.summary || product.description;
+  return text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text;
+}
+
 export async function generateMetadata(props: PageProps<"/produto/[slug]">): Promise<Metadata> {
   const { slug } = await props.params;
   const product = getProduct(slug);
   if (!product) return {};
-  return { title: product.name, description: product.description.slice(0, 160) };
+  const description = shortDescription(product);
+  return {
+    title: seoTitle(product.metaTitle, product.name),
+    description,
+    openGraph: {
+      title: product.metaTitle || product.name,
+      description,
+      type: "website",
+      locale: "pt_BR",
+      siteName: "Padrão Color",
+      images: product.images.slice(0, 4).map((src) => ({ url: imageUrl(src), alt: product.name })),
+    },
+  };
 }
 
 export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
   const { slug } = await props.params;
   const product = getProduct(slug);
-  if (!product) notFound();
+  if (!product) {
+    // Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-preto"): o ID do começo do slug leva ao atual.
+    const id = /^(\d+)-/.exec(slug)?.[1];
+    const moved = id ? getProductById(id) : undefined;
+    if (moved) permanentRedirect(`/produto/${moved.slug}`);
+    notFound();
+  }
+  // "Veja também" da API primeiro; completa com a mesma categoria.
   const related = getRelated(product).map(toSummary);
   const keys = optionKeys(product.options);
+  const prices = product.variations.map((v) => v.p).filter((p) => p > 0);
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: product.name,
+    description: shortDescription(product),
+    image: product.images.slice(0, 4).map(imageUrl),
+    sku: product.id,
+    category: product.category,
+    brand: { "@type": "Brand", name: "Padrão Color" },
+    ...(prices.length
+      ? {
+          offers: {
+            "@type": "AggregateOffer",
+            priceCurrency: "BRL",
+            lowPrice: Math.min(...prices),
+            highPrice: Math.max(...prices),
+            offerCount: prices.length,
+            availability: "https://schema.org/InStock",
+          },
+        }
+      : {}),
+  };
 
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
       <div className="container-site pb-16 pt-8">
         <Breadcrumb
           className="mb-6"
@@ -41,6 +92,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
 
         <ProductExperience
           product={{
+            id: product.id,
             groupId: product.groupId,
             slug: product.slug,
             name: product.name,
@@ -52,6 +104,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             attachments: product.attachments,
             artCreationPrice: product.artCreationPrice ?? null,
             minQty: product.minQty,
+            maxQty: product.maxQty,
             category: product.category,
             categorySlug: product.categorySlug,
             image: product.image,
@@ -67,10 +120,12 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
         />
       </div>
 
-      <section className="bg-mist">
+      <section className="bg-mist" aria-labelledby="sobre-o-produto">
         <div className="container-site grid gap-12 py-16 lg:grid-cols-[1.2fr_1fr]">
           <div>
-            <h2 className="text-title">Sobre o produto</h2>
+            <h2 id="sobre-o-produto" className="text-title">
+              Sobre o produto
+            </h2>
             <p className="mt-5 whitespace-pre-line text-body text-ink/80">{product.description}</p>
             <ul className="mt-8 grid gap-4 sm:grid-cols-3">
               {[
@@ -104,13 +159,17 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
                 <dd className="text-ink/75">{product.variationCount} combinações</dd>
               </div>
             </dl>
+            {/* Informações do produto vindas da API (material, tabela de medidas, tipo de serviço…). */}
+            <ProductInfo className="mt-6" info={product.info ?? []} options={[]} variationCount={product.variationCount} />
           </div>
         </div>
       </section>
 
       {related.length > 0 && (
-        <section className="container-site py-16">
-          <h2 className="mb-6 text-title font-bold">Você também pode gostar</h2>
+        <section className="container-site py-16" aria-labelledby="veja-tambem">
+          <h2 id="veja-tambem" className="mb-6 text-title font-bold">
+            Você também pode gostar
+          </h2>
           <Rail label="Produtos relacionados" itemClassName="w-[70%] sm:w-[40%] md:w-[30%] lg:w-[calc((100%-4*16px)/5)]">
             {related.map((p, i) => (
               <ProductCard key={p.slug} product={p} tone={spectrumAt(i).soft} />

@@ -10,6 +10,7 @@ export default function LojaLayout({ children }: { children: React.ReactNode }) 
     label: group.label,
     blurb: group.blurb,
     benefits: [...group.benefits],
+    more: "more" in group ? group.more : undefined,
     categories: group.categories
       .map((slug) => getCategory(slug))
       .filter((c) => c !== undefined)

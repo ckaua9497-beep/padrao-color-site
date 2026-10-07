@@ -13,12 +13,20 @@ import { KIND_INFO } from "@/lib/mockup-kinds";
 import { imageUrl } from "@/lib/format";
 import type { ArtSettings } from "./art";
 import { MockupModel } from "./models";
+import { sizeLabels } from "./models/shared";
 import { MockupSkeleton, backdropCss, paintBackdrop, studioBackdrop, type Backdrop } from "./MockupSkeleton";
-import { AnimateContext, canUseWebGL, useFullscreenSupport, useInViewport, useIsFullscreen, useMediaQuery } from "./viewer-hooks";
+import { AnimateContext, SceneContext, canUseWebGL, useFullscreenSupport, useInViewport, useIsFullscreen, useMediaQuery, type SceneMode } from "./viewer-hooks";
+import { PRESETS, environmentFor, roomBackdropColor, roomsFor, type RoomEnvironment, type RoomId } from "./environments/presets";
+import { RoomLights, RoomScene } from "./environments/Room";
+import { RoomDims } from "./environments/RoomDims";
+import { measureBox, placeInRoom } from "./environments/placement";
 
 export type CaptureFn = () => string | null;
 /** Foto do estúdio: `jpeg` no ângulo 3/4 do carrinho; `png` na vista atual (botão "Baixar imagem"). */
 type ShotFn = (format: "jpeg" | "png") => string | null;
+
+/** Lado da peça mostrado (almofada): a página pode pedir o verso quando o cliente edita a arte do verso. */
+export type ViewerSide = "front" | "back";
 
 type ViewerProps = {
   spec: MockupSpec;
@@ -27,6 +35,11 @@ type ViewerProps = {
   captureRef?: MutableRefObject<CaptureFn | null>;
   /** Foto do catálogo, mostrada quando o 3D não abre. */
   fallbackImage?: string;
+  /**
+   * Lado mostrado ao abrir e sempre que este valor mudar (ex.: aba "Verso" do passo da arte). O botão
+   * "Ver verso" do viewer continua valendo até a página mudar o valor de novo.
+   */
+  side?: ViewerSide;
   className?: string;
 };
 
@@ -48,8 +61,37 @@ const RIG_NAME = "studio-rig";
 const SHADOW_FRAMES = 3;
 const HEX = /^#[0-9a-f]{6}$/i;
 const DEFAULT_GLOW = ["#ff4fd8", "#38e1ff"];
+const STUDIO_FOV = 30;
+/** Lente mais aberta no ambiente: mostra o móvel sem levar a câmera para fora do cômodo. */
+const ROOM_FOV = 42;
+/** No ambiente o cômodo pode sair do quadro; a peça e o móvel de escala ficam. */
+const ROOM_MARGIN = 1.04;
+const STUDIO_ZOOM: [number, number] = [0.45, 2];
+/** Na sala dá para chegar perto da arte, mas não sair do cômodo. */
+const ROOM_ZOOM: [number, number] = [0.4, 1.25];
+/** Troca estúdio ↔ ambiente: o canvas some, a cena troca e volta (sem pulo de câmera visível). */
+const FADE_MS = 200;
+/** Duração da virada da almofada ("Ver verso"); a sombra de contato acompanha. */
+const FLIP_MS = 750;
+/** Tipos que viram para mostrar o verso (os mesmos que têm "Frente | Verso" no passo da arte, menos a camisa). */
+const BACK_VIEW_KINDS: ReadonlySet<MockupSpec["kind"]> = new Set(["cushion", "petbed", "tshirt"]);
 
-type Framing = { center: THREE.Vector3; distance: number; home: THREE.Vector3; radius: number; footprint: number; height: number };
+type Framing = {
+  center: THREE.Vector3;
+  distance: number;
+  home: THREE.Vector3;
+  radius: number;
+  footprint: number;
+  height: number;
+  /** Folga do enquadramento (estúdio: FIT_MARGIN; ambiente: ROOM_MARGIN). */
+  margin: number;
+  /** Zoom mínimo e máximo, em × distância de enquadramento. */
+  zoom: [number, number];
+  /** Direção da foto do carrinho; null = 3/4 do estúdio (captureDirection). */
+  capture: THREE.Vector3 | null;
+  /** Luz fixa do ambiente: o snapshot não gira o estúdio junto com a câmera. */
+  fixed: boolean;
+};
 
 /**
  * Ângulo inicial pedido pelo modelo: `userData.view = { elevation, azimuth }` (radianos) em qualquer grupo
@@ -94,31 +136,13 @@ function makeTween(fromPos: THREE.Vector3, fromTarget: THREE.Vector3, toPos: THR
   return { t: 0, started: false, seconds, power, from, to, turn, fromTarget: fromTarget.clone(), toTarget: toTarget.clone() };
 }
 
-const point = new THREE.Vector3();
 const orbit = new THREE.Spherical();
 
-/** Caixa das malhas do modelo, ignorando cotas e rótulos (userData.noBounds). */
-function measureBox(root: THREE.Object3D): THREE.Box3 {
-  const box = new THREE.Box3();
-  root.updateWorldMatrix(true, true);
-  const visit = (object: THREE.Object3D) => {
-    if (object.userData.noBounds) return;
-    const mesh = object as THREE.Mesh;
-    const position = mesh.isMesh ? mesh.geometry?.getAttribute("position") : undefined;
-    if (position) {
-      for (let i = 0; i < position.count; i += 1) box.expandByPoint(point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld));
-    }
-    object.children.forEach(visit);
-  };
-  visit(root);
-  return box;
-}
-
-function fitDistance(radius: number, camera: THREE.PerspectiveCamera): number {
+function fitDistance(radius: number, camera: THREE.PerspectiveCamera, margin = FIT_MARGIN): number {
   const vertical = THREE.MathUtils.degToRad(camera.fov);
   const aspect = camera.aspect > 0 && Number.isFinite(camera.aspect) ? camera.aspect : 1;
   const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
-  return (Math.max(radius, 1e-3) / Math.sin(Math.min(vertical, horizontal) / 2)) * FIT_MARGIN;
+  return (Math.max(radius, 1e-3) / Math.sin(Math.min(vertical, horizontal) / 2)) * margin;
 }
 
 function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera, home: THREE.Vector3): Framing {
@@ -131,6 +155,10 @@ function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera, home: THREE.
     radius: Math.max(sphere.radius, 1e-3),
     footprint: Math.max(size.x, size.z, 1e-3),
     height: Math.max(size.y, 1e-3),
+    margin: FIT_MARGIN,
+    zoom: STUDIO_ZOOM,
+    capture: null,
+    fixed: false,
   };
 }
 
@@ -320,11 +348,14 @@ function renderShadows(kit: ShadowKit, gl: THREE.WebGLRenderer, scene: THREE.Sce
 
 /**
  * Duas sombras de contato no tamanho da peça (pegada e raio do enquadramento): uma curta e densa onde ela
- * encosta, outra larga e macia. Renderizadas só depois de uma troca (`stamp`), nunca a cada quadro.
+ * encosta, outra larga e macia. Renderizadas só depois de uma troca (`stamp`), nunca a cada quadro; quando
+ * a peça se move sozinha (`follow`: almofada virando), a sombra acompanha até o fim do movimento.
  */
-function StudioShadows({ framingRef, stamp, dark }: { framingRef: MutableRefObject<Framing | null>; stamp: string; dark: boolean }) {
+function StudioShadows({ framingRef, stamp, dark, follow }: { framingRef: MutableRefObject<Framing | null>; stamp: string; dark: boolean; follow: boolean }) {
   const holder = useRef<THREE.Group>(null);
   const kit = useRef<ShadowKit | null>(null);
+  const followUntil = useRef(0);
+  const followed = useRef(follow);
   const invalidate = useThree((state) => state.invalidate);
 
   useEffect(() => {
@@ -346,13 +377,27 @@ function StudioShadows({ framingRef, stamp, dark }: { framingRef: MutableRefObje
     invalidate();
   }, [stamp, invalidate]);
 
+  useEffect(() => {
+    if (followed.current === follow) return;
+    followed.current = follow;
+    followUntil.current = performance.now() + FLIP_MS + 120;
+    invalidate();
+  }, [follow, invalidate]);
+
   useFrame((state) => {
     const active = kit.current;
     const frame = framingRef.current;
-    if (!active || !frame || active.pending <= 0) return;
-    active.pending -= 1;
+    if (!active || !frame) return;
+    const following = followUntil.current > 0 && performance.now() < followUntil.current;
+    if (!following && followUntil.current > 0) {
+      // Fim do movimento: mais alguns quadros para a sombra pousar na pose final.
+      followUntil.current = 0;
+      active.pending = Math.max(active.pending, SHADOW_FRAMES);
+    }
+    if (!following && active.pending <= 0) return;
+    if (!following) active.pending -= 1;
     renderShadows(active, state.gl, state.scene, frame);
-    if (active.pending > 0) state.invalidate();
+    if (following || active.pending > 0) state.invalidate();
   });
 
   return <group ref={holder} />;
@@ -383,13 +428,15 @@ function snapshot(state: RootState, { fixedAngle, framing, backdrop, format }: S
   scene.traverse(hideOverlay);
   const saved = camera.position.clone();
   if (fixedAngle) {
-    // Sempre a peça inteira, mesmo que o cliente tenha dado zoom.
+    // Sempre a peça inteira, mesmo que o cliente tenha dado zoom. No ambiente: a vista composta da sala.
     const center = framing?.center ?? target;
     const distance = framing?.distance ?? saved.distanceTo(target);
-    camera.position.copy(center).addScaledVector(captureDirection(scene), distance);
+    camera.position.copy(center).addScaledVector(framing?.capture ?? captureDirection(scene), distance);
     camera.lookAt(center);
   }
-  orientStudio(scene, rig, cameraAzimuth(camera, target));
+  // A luz do estúdio gira com a câmera; a do ambiente é fixa.
+  const turn = !framing?.fixed;
+  if (turn) orientStudio(scene, rig, cameraAzimuth(camera, target));
   gl.render(scene, camera);
   const source = gl.domElement;
   const out = document.createElement("canvas");
@@ -404,7 +451,7 @@ function snapshot(state: RootState, { fixedAngle, framing, backdrop, format }: S
   restoreOverlays();
   camera.position.copy(saved);
   camera.lookAt(target);
-  orientStudio(scene, rig, cameraAzimuth(camera, target));
+  if (turn) orientStudio(scene, rig, cameraAzimuth(camera, target));
   gl.render(scene, camera);
   if (!ctx) return null;
   return format === "png" ? out.toDataURL("image/png") : out.toDataURL("image/jpeg", 0.85);
@@ -475,13 +522,25 @@ type StageProps = {
   onReady: (kind: MockupSpec["kind"]) => void;
   /** Enquadramento atual, compartilhado com o snapshot. */
   framingRef: MutableRefObject<Framing | null>;
+  /** Ambiente mostrado (null = estúdio). */
+  env: RoomEnvironment | null;
+  /** Cotas da peça no ambiente (no estúdio, o próprio modelo desenha as dele). */
+  roomDims: boolean;
+  /** A cena nova (estúdio ou sala) já compilou e está enquadrada. */
+  onSceneReady: (key: string) => void;
+  /** Verso à mostra (almofada virando): a sombra de contato acompanha o movimento. */
+  back: boolean;
 };
 
 /** Mudança de raio ou centro (× raio) a partir da qual a câmera reenquadra a peça. */
 const REFRAME_TOLERANCE = 0.025;
 
-function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetToken, reducedMotion, ready, onReady, framingRef }: StageProps) {
+function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetToken, reducedMotion, ready, onReady, framingRef, env, roomDims, onSceneReady, back }: StageProps) {
   const group = useRef<THREE.Group>(null);
+  const roomRef = useRef<THREE.Group>(null);
+  const dimsRef = useRef<THREE.Group>(null);
+  const sceneKey = env?.key ?? "studio";
+  const framedScene = useRef(sceneKey);
   // A arte leva o tipo da peça (escolhe o template) e as cores do LED (neon).
   // Cores de LED escolhidas pelo cliente (neon) valem mais que a cor da opção do produto.
   const renderArt = useMemo(
@@ -498,28 +557,73 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
   const handledReset = useRef(resetToken);
   const introDone = useRef(false);
 
-  // Apoia a peça no chão (y = 0), centraliza em x/z e enquadra a câmera na vista inicial. Roda a cada opção
-  // (variante, alça, profundidade… mudam a altura da peça), mas só move a câmera quando o tamanho muda de verdade.
+  // Estúdio: apoia a peça no chão (y = 0), centraliza em x/z e enquadra a câmera na vista inicial.
+  // Ambiente: tira o 3/4 da peça, escala e move a sala em volta dela e enquadra peça + móvel de escala.
+  // Roda a cada opção (variante, alça, profundidade… mudam a altura da peça), mas só move a câmera quando
+  // o tamanho ou a cena mudam de verdade.
   useLayoutEffect(() => {
     const root = group.current;
     if (!root) return;
     const camera = get().camera as THREE.PerspectiveCamera;
     const controls = get().controls as unknown as OrbitControlsImpl | null;
-    root.position.set(0, 0, 0);
-    const raw = measureBox(root);
-    if (raw.isEmpty()) return;
-    const center = raw.getCenter(new THREE.Vector3());
-    root.position.set(-center.x, -raw.min.y, -center.z);
-    const next = frameBox(measureBox(root), camera, homeDirection(viewHint(root)));
+    let next: Framing | null = null;
+    const room = roomRef.current;
+    if (env && room) {
+      if (camera.fov !== ROOM_FOV) {
+        camera.fov = ROOM_FOV;
+        camera.updateProjectionMatrix();
+      }
+      const placed = placeInRoom(root, room, env, spec);
+      if (placed) {
+        const dims = dimsRef.current;
+        if (dims && placed.dims) {
+          dims.position.copy(placed.dims.position);
+          // Deitadas no tapete (giradas como a peça) ou de pé na frente da peça.
+          dims.rotation.set(placed.dims.flat ? -Math.PI / 2 : 0, placed.dims.flat ? 0 : placed.dims.yaw, placed.dims.flat ? placed.dims.yaw : 0);
+          dims.scale.setScalar(placed.unitsPerCm);
+        }
+        const size = placed.box.getSize(new THREE.Vector3());
+        next = {
+          center: placed.center,
+          distance: fitDistance(placed.radius, camera, ROOM_MARGIN),
+          home: placed.home,
+          radius: placed.radius,
+          footprint: Math.max(size.x, size.z, 1e-3),
+          height: Math.max(size.y, 1e-3),
+          margin: ROOM_MARGIN,
+          zoom: ROOM_ZOOM,
+          capture: placed.home.clone(),
+          fixed: true,
+        };
+      }
+    }
+    if (!next) {
+      if (camera.fov !== STUDIO_FOV) {
+        camera.fov = STUDIO_FOV;
+        camera.updateProjectionMatrix();
+      }
+      root.rotation.set(0, 0, 0);
+      root.scale.set(1, 1, 1);
+      root.position.set(0, 0, 0);
+      const raw = measureBox(root);
+      if (raw.isEmpty()) return;
+      const center = raw.getCenter(new THREE.Vector3());
+      root.position.set(-center.x, -raw.min.y, -center.z);
+      next = frameBox(measureBox(root), camera, homeDirection(viewHint(root)));
+    }
+    const frameKey = `${modelKey}|${sceneKey}`;
     const previous = framingRef.current;
-    const sameModel = previous !== null && framedKey.current === modelKey;
+    const sameModel = previous !== null && framedKey.current === frameKey;
     const resized =
       previous === null ||
       Math.abs(next.radius - previous.radius) > previous.radius * REFRAME_TOLERANCE ||
       next.center.distanceTo(previous.center) > previous.radius * REFRAME_TOLERANCE ||
       next.home.distanceTo(previous.home) > 1e-3;
+    // Troca de cena (estúdio ↔ ambiente, outra sala): o canvas está apagado, a câmera vai direto.
+    const sceneChanged = framedScene.current !== sceneKey;
+    framedScene.current = sceneKey;
     framingRef.current = next;
-    framedKey.current = modelKey;
+    framedKey.current = frameKey;
     camera.near = next.distance / 50;
     camera.far = next.distance * 20;
     camera.updateProjectionMatrix();
@@ -527,15 +631,15 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
       // Cor, acabamento ou outra opção que não muda o tamanho: a câmera fica onde o cliente deixou.
       if (controls) {
         controls.target.copy(next.center);
-        controls.minDistance = next.distance * 0.45;
-        controls.maxDistance = next.distance * 2;
+        controls.minDistance = next.distance * next.zoom[0];
+        controls.maxDistance = next.distance * next.zoom[1];
         controls.update();
       }
       invalidate();
       return;
     }
     // Outra medida/forma com a peça já na tela: desliza até a nova vista em vez de saltar.
-    const glide = previous !== null && controls !== null && !reducedMotion;
+    const glide = previous !== null && controls !== null && !reducedMotion && !sceneChanged;
     const fromOffset = camera.position.clone().sub(controls?.target ?? next.center);
     const homePos = next.center.clone().addScaledVector(next.home, next.distance);
     if (glide && previous) {
@@ -548,12 +652,30 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     camera.lookAt(next.center);
     if (controls) {
       controls.target.copy(next.center);
-      controls.minDistance = next.distance * 0.45;
-      controls.maxDistance = next.distance * 2;
+      controls.minDistance = next.distance * next.zoom[0];
+      controls.maxDistance = next.distance * next.zoom[1];
       controls.update();
     }
     invalidate();
-  }, [modelKey, shadowKey, hasControls, reducedMotion, framingRef, get, invalidate]);
+  }, [modelKey, shadowKey, sceneKey, env, spec, hasControls, reducedMotion, framingRef, get, invalidate]);
+
+  // Cena nova (sala ou volta ao estúdio) depois da primeira: compila os materiais novos com o canvas
+  // apagado e só então avisa para ele voltar.
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    const { gl, scene, camera } = get();
+    gl.compileAsync(scene, camera)
+      .catch(() => undefined)
+      .then(() => {
+        if (!alive) return;
+        onSceneReady(sceneKey);
+        invalidate();
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sceneKey, ready, get, onSceneReady, invalidate]);
 
   // Compila os shaders sem travar a página antes de mostrar a peça.
   useEffect(() => {
@@ -582,8 +704,13 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     if (reducedMotion || !goal || !controls) return;
     const homePos = goal.center.clone().addScaledVector(goal.home, goal.distance);
     const start = new THREE.Spherical().setFromVector3(goal.home.clone().multiplyScalar(goal.distance * INTRO_ORBIT.zoom));
-    start.theta += INTRO_ORBIT.azimuth;
-    start.phi = THREE.MathUtils.clamp(start.phi + INTRO_ORBIT.polar, 0.4, Math.PI / 1.9);
+    if (goal.fixed) {
+      // Na sala o giro é limitado: a entrada é só uma aproximação.
+      start.radius = goal.distance * 1.15;
+    } else {
+      start.theta += INTRO_ORBIT.azimuth;
+      start.phi = THREE.MathUtils.clamp(start.phi + INTRO_ORBIT.polar, 0.4, Math.PI / 1.9);
+    }
     camera.position.setFromSpherical(start).add(goal.center);
     camera.lookAt(goal.center);
     controls.target.copy(goal.center);
@@ -598,7 +725,7 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     if (!goal || width <= 0 || height <= 0) return;
     const camera = get().camera as THREE.PerspectiveCamera;
     const controls = get().controls as unknown as OrbitControlsImpl | null;
-    const distance = fitDistance(goal.radius, camera);
+    const distance = fitDistance(goal.radius, camera, goal.margin);
     if (!Number.isFinite(distance) || Math.abs(distance - goal.distance) < goal.distance * 0.01) return;
     const scale = distance / goal.distance;
     const target = controls?.target ?? goal.center;
@@ -613,8 +740,8 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
       active.to.radius *= scale;
     }
     if (controls) {
-      controls.minDistance = distance * 0.45;
-      controls.maxDistance = distance * 2;
+      controls.minDistance = distance * goal.zoom[0];
+      controls.maxDistance = distance * goal.zoom[1];
       controls.update();
     }
     invalidate();
@@ -677,9 +804,21 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
   return (
     <>
       <group ref={group} visible={ready}>
-        <MockupModel key={modelKey} spec={spec} art={renderArt} label={label} showDims={showDims} />
+        <MockupModel key={modelKey} spec={spec} art={renderArt} label={label} showDims={env ? false : showDims} />
       </group>
-      <StudioShadows framingRef={framingRef} stamp={`${shadowKey}|${ready}`} dark={dark} />
+      {env ? (
+        <>
+          {/* A sala é desenhada em metros; o posicionamento escala o grupo para a escala da peça. */}
+          <group ref={roomRef} visible={ready}>
+            <RoomScene key={env.key} env={env} />
+          </group>
+          <group ref={dimsRef} visible={ready && roomDims}>
+            {roomDims && <RoomDims widthCm={spec.widthCm} heightCm={spec.heightCm} labels={sizeLabels(spec)} light={env.night} widthOnTop={env.placement.spot === "paper"} />}
+          </group>
+        </>
+      ) : (
+        <StudioShadows framingRef={framingRef} stamp={`${shadowKey}|${ready}`} dark={dark} follow={back} />
+      )}
     </>
   );
 }
@@ -770,7 +909,20 @@ function fileName(label: string): string {
   return `${slug || "mockup"}-mockup-3d.png`;
 }
 
-export default function MockupViewer({ spec, art, label, captureRef, fallbackImage, className = "" }: ViewerProps) {
+type SceneChoice = { mode: "studio" | "room"; room: RoomId | null };
+
+const STUDIO_CHOICE: SceneChoice = { mode: "studio", room: null };
+
+/** Sala efetiva da escolha: a pedida, se o tipo tem essa sala; senão a primeira do tipo. */
+function roomOf(choice: SceneChoice, rooms: RoomId[]): RoomId | null {
+  if (choice.mode !== "room" || !rooms.length) return null;
+  return choice.room && rooms.includes(choice.room) ? choice.room : rooms[0];
+}
+
+/** Cotas no ambiente: só onde a peça tem frente plana para medir (parede, papel, chão, tampo). */
+const DIM_SPOTS = new Set(["wall", "paper", "window", "towel", "top", "floor", "stand"]);
+
+export default function MockupViewer({ spec, art, label, captureRef, fallbackImage, side, className = "" }: ViewerProps) {
   const surface = useRef<HTMLDivElement>(null);
   const shot = useRef<ShotFn | null>(null);
   const framingRef = useRef<Framing | null>(null);
@@ -789,23 +941,45 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   const [engaged, setEngaged] = useState(false);
   const [dims, setDims] = useState(true);
   const [resetToken, setResetToken] = useState(0);
+  // Cenário pedido (botões) e cenário na tela: a troca espera o canvas apagar.
+  const [choice, setChoice] = useState<SceneChoice>(STUDIO_CHOICE);
+  const [shown, setShown] = useState<SceneChoice>(STUDIO_CHOICE);
+  const [fading, setFading] = useState(false);
+  // Lado escolhido no botão "Ver verso"; vale enquanto a página não mudar o `side`.
+  const [manualSide, setManualSide] = useState<{ back: boolean; prop: ViewerSide | undefined; kind: MockupSpec["kind"] } | null>(null);
   const idleTimer = useRef<number | null>(null);
+  const switchTimer = useRef<number | null>(null);
+  const shownKey = useRef("studio");
 
   const info = KIND_INFO[spec.kind];
   const dark = info.scene === "dark";
   const ready = readyKind === spec.kind;
+  const rooms = useMemo(() => roomsFor(spec), [spec]);
+  const shownRoom = roomOf(shown, rooms);
+  const env = useMemo(() => (shownRoom ? environmentFor(spec, shownRoom) : null), [shownRoom, spec]);
+  const sceneKey = env?.key ?? "studio";
+  const chosenRoom = roomOf(choice, rooms);
+  const inRoom = chosenRoom !== null;
   const showDims = dims && info.dims;
-  const autoRotate = ready && visible && !paused && !interacting && !reducedMotion;
+  const roomDims = showDims && env !== null && DIM_SPOTS.has(env.placement.spot);
+  // Na sala a peça fica parada (a luz e o móvel não giram); a órbita é limitada.
+  const autoRotate = ready && visible && !paused && !interacting && !reducedMotion && !env;
   const modelKey = `${spec.kind}-${spec.variant ?? ""}-${spec.widthCm}-${spec.heightCm}-${spec.depthCm}-${spec.shape}-${spec.sleeveless}-${spec.grommets}`;
   const shadowKey = useMemo(() => JSON.stringify(spec), [spec]);
+  const canFlip = BACK_VIEW_KINDS.has(spec.kind);
+  const showBack = canFlip && (manualSide && manualSide.prop === side && manualSide.kind === spec.kind ? manualSide.back : side === "back");
 
-  // Fundo de estúdio: no neon, o brilho tem as cores do LED escolhidas.
-  const ledKey = dark ? spec.ledColors.filter((c) => HEX.test(c)).join(",") : "";
-  const backdrop = useMemo(() => studioBackdrop(dark, ledKey ? ledKey.split(",") : []), [dark, ledKey]);
+  // Fundo de estúdio: no neon, o brilho tem as cores do LED escolhidas (as do cliente valem mais que a
+  // da opção do produto, como na arte). No ambiente, a cor da parede.
+  const ledSource = art.ledColors?.length ? art.ledColors : spec.ledColors;
+  const ledKey = dark ? ledSource.filter((c) => HEX.test(c)).join(",") : "";
+  const roomTone = env ? roomBackdropColor(env) : null;
+  const backdrop = useMemo<Backdrop>(() => (roomTone ? { base: { color: roomTone }, layers: [] } : studioBackdrop(dark, ledKey ? ledKey.split(",") : [])), [roomTone, dark, ledKey]);
   const background = useMemo(() => backdropCss(backdrop), [backdrop]);
   const leds = ledKey ? ledKey.split(",") : DEFAULT_GLOW;
   const glowA = leds[0] ?? DEFAULT_GLOW[0];
   const glowB = leds[1] ?? glowA;
+  const sceneMode = useMemo<SceneMode>(() => ({ room: env ? env.placement.surface : null, back: showBack, motion: !reducedMotion }), [env, showBack, reducedMotion]);
 
   const onInteractStart = useCallback(() => {
     if (idleTimer.current) window.clearTimeout(idleTimer.current);
@@ -818,9 +992,40 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   useEffect(
     () => () => {
       if (idleTimer.current) window.clearTimeout(idleTimer.current);
+      if (switchTimer.current) window.clearTimeout(switchTimer.current);
     },
     [],
   );
+  useEffect(() => {
+    shownKey.current = sceneKey;
+  }, [sceneKey]);
+
+  /** Troca de cenário: apaga o canvas, troca a cena e acende de novo quando ela compilar. */
+  const pickScene = useCallback(
+    (next: SceneChoice) => {
+      setChoice(next);
+      if (switchTimer.current) window.clearTimeout(switchTimer.current);
+      if (reducedMotion) {
+        setShown(next);
+        return;
+      }
+      setFading(true);
+      switchTimer.current = window.setTimeout(() => {
+        switchTimer.current = null;
+        const room = roomOf(next, rooms);
+        const key = room ? environmentFor(spec, room).key : "studio";
+        // Mesma cena de antes (ida e volta rápida): nada para compilar, só acende.
+        if (key === shownKey.current) setFading(false);
+        setShown(next);
+      }, FADE_MS);
+    },
+    [reducedMotion, rooms, spec],
+  );
+  const onSceneReady = useCallback(() => setFading(false), []);
+
+  const toggleSide = useCallback(() => {
+    setManualSide({ back: !showBack, prop: side, kind: spec.kind });
+  }, [showBack, side, spec.kind]);
 
   const onCreated = useCallback((state: RootState) => {
     state.gl.domElement.addEventListener(
@@ -836,6 +1041,7 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   const retry = useCallback(() => {
     setLost(false);
     setReadyKind(null);
+    setFading(false);
     setAttempt((a) => a + 1);
   }, []);
 
@@ -859,12 +1065,15 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
 
   const failed = !supported || lost;
   const glass = dark ? "bg-white/10 text-white ring-1 ring-white/15" : "bg-white/70 text-ink ring-1 ring-ink/5";
+  const view = env?.view;
 
   return (
     <div
       ref={surface}
       data-kind={spec.kind}
       data-ready={ready}
+      data-scene={env ? "room" : "studio"}
+      data-room={env?.preset.id}
       onPointerDown={() => {
         setArmed(true);
         setEngaged(true);
@@ -880,36 +1089,45 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
           <Canvas
             frameloop="demand"
             dpr={[1, 2]}
-            camera={{ position: [0, 0.6, 6], fov: 30 }}
+            camera={{ position: [0, 0.6, 6], fov: STUDIO_FOV }}
             gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping }}
             onCreated={onCreated}
             role="img"
-            aria-label={`Mockup 3D: ${label}`}
+            aria-label={env ? `Mockup 3D: ${label} — ambiente ${PRESETS[env.preset.id].label.toLowerCase()}` : `Mockup 3D: ${label}`}
+            className={`motion-safe:transition-opacity motion-safe:duration-200 ${fading ? "opacity-0" : "opacity-100"}`}
           >
             <AnimateContext.Provider value={visible && !reducedMotion}>
-              <Stage
-                spec={spec}
-                art={art}
-                label={label}
-                showDims={showDims}
-                modelKey={modelKey}
-                shadowKey={shadowKey}
-                dark={dark}
-                resetToken={resetToken}
-                reducedMotion={reducedMotion}
-                ready={ready}
-                onReady={setReadyKind}
-                framingRef={framingRef}
-              />
-              {/* Depois do palco: a luz segue a câmera já movida neste quadro. */}
-              <StudioLights dark={dark} glowA={glowA} glowB={glowB} />
+              <SceneContext.Provider value={sceneMode}>
+                <Stage
+                  spec={spec}
+                  art={art}
+                  label={label}
+                  showDims={showDims}
+                  modelKey={modelKey}
+                  shadowKey={shadowKey}
+                  dark={dark}
+                  resetToken={resetToken}
+                  reducedMotion={reducedMotion}
+                  ready={ready}
+                  onReady={setReadyKind}
+                  framingRef={framingRef}
+                  env={env}
+                  roomDims={roomDims}
+                  onSceneReady={onSceneReady}
+                  back={showBack}
+                />
+              </SceneContext.Provider>
+              {/* Depois do palco: a luz do estúdio segue a câmera já movida neste quadro; a da sala é fixa. */}
+              {env ? <RoomLights night={env.night} wall={roomBackdropColor(env)} /> : <StudioLights dark={dark} glowA={glowA} glowB={glowB} />}
               <OrbitControls
                 makeDefault
                 enablePan={false}
                 enableZoom={coarse || armed}
                 autoRotate={autoRotate}
-                minPolarAngle={0.35}
-                maxPolarAngle={Math.PI / 1.85}
+                minPolarAngle={view ? view.minPolar : 0.35}
+                maxPolarAngle={view ? view.maxPolar : Math.PI / 1.85}
+                minAzimuthAngle={view ? view.azimuth - view.range : -Infinity}
+                maxAzimuthAngle={view ? view.azimuth + view.range : Infinity}
                 onStart={onInteractStart}
                 onEnd={onInteractEnd}
               />
@@ -931,9 +1149,20 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
         </div>
       )}
 
+      {!failed && ready && fading && (
+        // Só aparece se a troca demorar (aparelho lento compilando a sala): o atraso esconde trocas rápidas.
+        <div role="status" className="pointer-events-none absolute inset-0 grid place-items-center">
+          <span className={`rounded-full px-3 py-1.5 text-[12px] font-bold shadow-float backdrop-blur-xl motion-safe:animate-fade-up motion-safe:[animation-delay:350ms] ${glass}`}>
+            {inRoom ? "Montando o ambiente…" : "Voltando ao estúdio…"}
+          </span>
+        </div>
+      )}
+
       {!failed && ready && (
         <>
-          <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2 motion-safe:animate-fade-up">
+          <div
+            className={`pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2 motion-safe:animate-fade-up ${rooms.length || canFlip ? "max-w-[calc(100%-11.5rem)]" : ""}`}
+          >
             <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide backdrop-blur-xl ${glass}`}>
               <span className="flex h-2 w-3.5 overflow-hidden rounded-full" aria-hidden>
                 <span className="flex-1 bg-red" />
@@ -956,13 +1185,67 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
             </span>
           </div>
 
+          {(rooms.length > 0 || canFlip) && (
+            <div className={`absolute right-3 top-3 flex flex-col items-end gap-2 motion-safe:animate-fade-up ${dark ? "on-dark" : ""}`}>
+              {rooms.length > 0 && (
+                <div role="group" aria-label="Cenário do mockup" className={`flex items-center gap-0.5 rounded-full p-1 shadow-float backdrop-blur-xl ${glass}`}>
+                  <SceneButton dark={dark} active={!inRoom} onClick={() => inRoom && pickScene({ mode: "studio", room: chosenRoom })}>
+                    Estúdio
+                  </SceneButton>
+                  <SceneButton dark={dark} active={inRoom} onClick={() => !inRoom && pickScene({ mode: "room", room: choice.room })}>
+                    Ambiente
+                  </SceneButton>
+                </div>
+              )}
+              {inRoom && chosenRoom && rooms.length > 1 && (
+                <label className={`relative flex items-center rounded-full shadow-float backdrop-blur-xl ${glass}`}>
+                  <span className="sr-only">Ambiente</span>
+                  <select
+                    value={chosenRoom}
+                    onChange={(event) => pickScene({ mode: "room", room: event.target.value as RoomId })}
+                    className="cursor-pointer appearance-none rounded-full bg-transparent py-1.5 pl-3 pr-8 text-[12px] font-bold"
+                  >
+                    {rooms.map((id) => (
+                      <option key={id} value={id} className="bg-paper text-ink">
+                        {PRESETS[id].label}
+                      </option>
+                    ))}
+                  </select>
+                  <svg viewBox="0 0 24 24" className="pointer-events-none absolute right-2.5 size-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </label>
+              )}
+              {inRoom && chosenRoom && rooms.length === 1 && (
+                <span className={`rounded-full px-3 py-1.5 text-[12px] font-bold shadow-float backdrop-blur-xl ${glass}`}>{PRESETS[chosenRoom].label}</span>
+              )}
+              {canFlip && (
+                <button
+                  type="button"
+                  onClick={toggleSide}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold shadow-float backdrop-blur-xl transition-[background-color,color,transform] duration-200 motion-safe:active:scale-95 ${
+                    showBack ? (dark ? "bg-white text-ink" : "bg-ink text-white") : `${glass} ${dark ? "hover:bg-white/20" : "hover:bg-white"}`
+                  }`}
+                >
+                  <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.5" />
+                    <path d="M20 4.5v4h-4" />
+                    <path d="M20 12a8 8 0 0 1-13.66 5.66L4 15.5" />
+                    <path d="M4 19.5v-4h4" />
+                  </svg>
+                  {showBack ? "Ver frente" : "Ver verso"}
+                </button>
+              )}
+            </div>
+          )}
+
           <div
             role="toolbar"
             aria-label="Controles do mockup 3D"
             className={`absolute bottom-3 right-3 flex items-center gap-0.5 rounded-full p-1 shadow-float backdrop-blur-xl motion-safe:animate-fade-up ${glass}`}
           >
-            {/* Com reduced motion a peça não gira sozinha: o botão não teria efeito. */}
-            {!reducedMotion && (
+            {/* Com reduced motion (ou no ambiente) a peça não gira sozinha: o botão não teria efeito. */}
+            {!reducedMotion && !env && (
               <ViewerButton dark={dark} label={paused ? "Girar sozinho" : "Pausar rotação"} onClick={() => setPaused((v) => !v)}>
                 {paused ? (
                   <>
@@ -1005,12 +1288,24 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
             </svg>
             <span className="min-w-0">
               <span className="block truncate text-[12px] font-bold">{spec.label}</span>
-              <span className="block text-[10px] font-medium opacity-70">{info.sizeIsArtArea ? "área de arte" : "tamanho"}</span>
+              <span className="block truncate text-[10px] font-medium opacity-70">
+                {info.sizeIsArtArea ? "área de arte" : "tamanho"}
+                {env ? " · em escala real" : ""}
+              </span>
             </span>
           </span>
         </>
       )}
     </div>
+  );
+}
+
+function SceneButton({ children, active, onClick, dark }: { children: ReactNode; active: boolean; onClick: () => void; dark: boolean }) {
+  const tone = active ? (dark ? "bg-white text-ink" : "bg-ink text-white") : dark ? "hover:bg-white/15" : "hover:bg-ink/5";
+  return (
+    <button type="button" aria-pressed={active} onClick={onClick} className={`rounded-full px-3 py-1.5 text-[12px] font-bold transition-[background-color,color] duration-200 ${tone}`}>
+      {children}
+    </button>
   );
 }
 

@@ -62,3 +62,27 @@ export const AnimateContext = createContext(false);
 export function useAnimate(): boolean {
   return useContext(AnimateContext);
 }
+
+/**
+ * Onde a peça está num ambiente: na parede, em cima de um móvel, no assento do sofá, na cama ou no
+ * chão. `null` = estúdio. Os modelos usam para tirar o giro de 3/4 do estúdio (a peça fica reta na
+ * parede) e escolher a pose (almofada encostada no sofá).
+ */
+export type RoomSurface = "wall" | "top" | "seat" | "bed" | "floor";
+
+export type SceneMode = {
+  room: RoomSurface | null;
+  /** O cliente pediu o verso ("Ver verso"): a almofada vira 180°. */
+  back: boolean;
+  /** Animações curtas (virar a almofada) podem rodar; falso com reduced motion. */
+  motion: boolean;
+};
+
+const STUDIO_MODE: SceneMode = { room: null, back: false, motion: true };
+
+/** Fica dentro do Canvas, como o AnimateContext. */
+export const SceneContext = createContext<SceneMode>(STUDIO_MODE);
+
+export function useSceneMode(): SceneMode {
+  return useContext(SceneContext);
+}

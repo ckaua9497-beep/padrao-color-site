@@ -8,9 +8,14 @@
 // As superfícies de tecido são grades paramétricas (u, v) com normais por diferença central: a arte
 // entra pelo UV da própria grade, que segue o comprimento do tecido (nada estica nem espelha).
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MockupShape } from "@/lib/mockup";
+import { artAspect } from "@/lib/mockup-kinds";
+import { hasArtContent, type ArtVariant } from "../art";
+import { useSceneMode, type RoomSurface } from "../viewer-hooks";
 import { useGeometriesCleanup } from "./fabric";
 import { inflatedSurface, shapePolygon } from "./inflate";
 import { backVariant, makeShape, useArtTexture, useGeometryCleanup, type MaskPath, type ModelProps } from "./shared";
@@ -466,28 +471,47 @@ function pillowPoint(o: PillowForm, u: number, v: number, side: 1 | -1, out: THR
   return out.set(x, y, side * (height * fill * sag + wrinkle));
 }
 
+/** Uma face (frente ou verso) da almofada retangular em grade nu × nv. */
+function cushionSide(o: PillowForm, nu: number, nv: number, dir: 1 | -1) {
+  const count = (nu + 1) * (nv + 1);
+  const positions = new Float32Array(count * 3);
+  const uvs = new Float32Array(count * 2);
+  const p = new THREE.Vector3();
+  for (let j = 0; j <= nv; j += 1) {
+    const v = -1 + (2 * j) / nv;
+    for (let i = 0; i <= nu; i += 1) {
+      const u = -1 + (2 * i) / nu;
+      const k = j * (nu + 1) + i;
+      pillowPoint(o, u, v, dir, p).toArray(positions, k * 3);
+      // O verso é lido por trás: u espelhado para a arte não sair invertida.
+      uvs[k * 2] = dir === 1 ? (u + 1) / 2 : (1 - u) / 2;
+      uvs[k * 2 + 1] = (v + 1) / 2;
+    }
+  }
+  return gridGeometry(positions, uvs, nu, nv, dir === -1);
+}
+
+/**
+ * Almofada decorativa lisa dos ambientes (sofá, cama): o mesmo corpo da almofada do produto, em
+ * resolução baixa (~2 mil triângulos), frente e verso numa geometria só, em metros.
+ */
+export function throwPillowGeometry(wCm: number, hCm: number): THREE.BufferGeometry {
+  const short = Math.min(wCm, hCm);
+  const form: PillowForm = { w: wCm, h: hCm, t: short * 0.17, bow: 0.05, ramp: short * 0.5, q: 0.55, crease: 0.09, backScale: 1, seed: 2.2 };
+  const front = cushionSide(form, 22, 22, 1);
+  const back = cushionSide(form, 22, 22, -1);
+  const merged = mergeGeometries([front, back]) ?? front.clone();
+  front.dispose();
+  back.dispose();
+  merged.scale(0.01, 0.01, 0.01);
+  return merged;
+}
+
 function rectCushion(o: PillowForm): CushionBody {
   const short = Math.min(o.w, o.h);
   const nu = clamp(Math.round((72 * o.w) / short), 48, 220);
   const nv = clamp(Math.round((72 * o.h) / short), 48, 220);
-  const side = (dir: 1 | -1) => {
-    const count = (nu + 1) * (nv + 1);
-    const positions = new Float32Array(count * 3);
-    const uvs = new Float32Array(count * 2);
-    const p = new THREE.Vector3();
-    for (let j = 0; j <= nv; j += 1) {
-      const v = -1 + (2 * j) / nv;
-      for (let i = 0; i <= nu; i += 1) {
-        const u = -1 + (2 * i) / nu;
-        const k = j * (nu + 1) + i;
-        pillowPoint(o, u, v, dir, p).toArray(positions, k * 3);
-        // O verso é lido por trás: u espelhado para a arte não sair invertida.
-        uvs[k * 2] = dir === 1 ? (u + 1) / 2 : (1 - u) / 2;
-        uvs[k * 2 + 1] = (v + 1) / 2;
-      }
-    }
-    return gridGeometry(positions, uvs, nu, nv, dir === -1);
-  };
+  const side = (dir: 1 | -1) => cushionSide(o, nu, nv, dir);
   const outline: THREE.Vector3[] = [];
   const push = (u: number, v: number) => outline.push(pillowPoint(o, u, v, 1, new THREE.Vector3()));
   for (let i = 0; i < nu; i += 1) push(-1 + (2 * i) / nu, -1);
@@ -546,6 +570,105 @@ function useSeam(outline: THREE.Vector3[], radius: number) {
 
 /** Almofada em pé, levemente reclinada e girada em 3/4. */
 const CUSHION_POSE: [number, number, number] = [-0.12, 0.3, 0];
+
+/** No ambiente: encostada no encosto do sofá ou nos travesseiros da cama (o ambiente põe no lugar). */
+const ROOM_POSES: Partial<Record<RoomSurface, [number, number, number]>> = {
+  seat: [-0.3, 0.14, 0.04],
+  bed: [-0.36, 0.08, -0.03],
+};
+
+function useCushionPose(): [number, number, number] {
+  const { room } = useSceneMode();
+  return (room && ROOM_POSES[room]) || CUSHION_POSE;
+}
+
+/**
+ * Arte do verso (passo da arte "Frente | Verso"), com o contexto de render da frente e sem texto de
+ * exemplo (como o verso da camisa). Verso vazio ou ausente: null, e vale o `spec.back` (liso, a mesma
+ * arte ou cinza), como antes.
+ */
+function useBackArt(art: ModelProps["art"]): ModelProps["art"] | null {
+  const back = art.back ?? null;
+  const filled = hasArtContent(back);
+  const { kind, surface, opaque } = art;
+  return useMemo(
+    () => (back && filled ? { ...back, back: null, ledColors: undefined, sample: false, kind, surface, opaque } : null),
+    [back, filled, kind, surface, opaque],
+  );
+}
+
+/** Duração da virada da almofada ("Ver verso"). */
+const FLIP_SECONDS = 0.7;
+
+function easeInOut(t: number) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/** Pose do grupo da virada: ângulo (0 = frente, π = verso) e fase do pulinho (0..1). */
+function flipPose(group: THREE.Group, angle: number, phase: number, hop: number, lift: number, roll: boolean) {
+  // Em pé: gira no eixo vertical. Deitada (de corpo): rola no eixo comprido e gira no chão ao mesmo
+  // tempo; no fim dá o mesmo que girar no eixo curto, mas sem a peça "ficar de pé" no meio.
+  if (roll) group.rotation.set(angle, 0, angle, "ZXY");
+  else group.rotation.set(0, angle, 0);
+  const height = (lift * (1 - Math.cos(angle))) / 2 + hop * Math.sin(Math.PI * phase);
+  if (roll) group.position.z = height;
+  else group.position.y = height;
+}
+
+/**
+ * Vira o corpo da almofada 180° quando o cliente pede o verso ("Ver verso"): uma virada curta com
+ * um pulinho; sem animação com reduced motion. `lift` sobe a peça no fim da virada (almofada de
+ * corpo: o verso é mais baixo). A arte do verso já vem espelhada no UV para ler certo depois de virar.
+ */
+function FlipGroup({ children, hop = 0, lift = 0, roll = false }: { children: ReactNode; hop?: number; lift?: number; roll?: boolean }) {
+  const { back, motion } = useSceneMode();
+  const ref = useRef<THREE.Group>(null);
+  const invalidate = useThree((state) => state.invalidate);
+  const anim = useRef({ angle: 0, from: 0, to: 0, t: 1, started: false, mounted: false });
+  const target = back ? Math.PI : 0;
+
+  useLayoutEffect(() => {
+    const group = ref.current;
+    if (!group) return;
+    const state = anim.current;
+    if (!state.mounted || !motion) {
+      state.mounted = true;
+      state.angle = target;
+      state.t = 1;
+      flipPose(group, target, 0, hop, lift, roll);
+      invalidate();
+      return;
+    }
+    if (Math.abs(state.angle - target) < 1e-4 && state.t >= 1) {
+      flipPose(group, target, 0, hop, lift, roll);
+      return;
+    }
+    state.from = state.angle;
+    state.to = target;
+    state.t = 0;
+    state.started = false;
+    invalidate();
+  }, [target, motion, hop, lift, roll, invalidate]);
+
+  useFrame((_, delta) => {
+    const group = ref.current;
+    const state = anim.current;
+    if (!group || state.t >= 1) return;
+    // O primeiro quadro depois de parado traz um delta enorme: só marca o início.
+    if (!state.started) {
+      state.started = true;
+      invalidate();
+      return;
+    }
+    state.t = Math.min(1, state.t + Math.min(delta, 0.05) / FLIP_SECONDS);
+    const k = easeInOut(state.t);
+    state.angle = state.from + (state.to - state.from) * k;
+    flipPose(group, state.angle, k, hop, lift, roll);
+    invalidate();
+  });
+
+  return <group ref={ref}>{children}</group>;
+}
 
 // ---------------------------------------------------------------------------- canetinhas (almofada para colorir)
 
@@ -671,22 +794,31 @@ function PlushCushion({ spec, art, label, coloring }: ModelProps & { coloring: b
   const form = useMemo<PillowForm>(() => ({ w: W, h: H, t: short * 0.16, bow: 0.045, ramp: short * 0.5, q: 0.55, crease: 0.085, backScale: 1, seed: 0.7 }), [W, H, short]);
   const body = useCushionBody(spec.shape, form);
   const piping = useSeam(body.outline, 0.55);
-  const backKind = backVariant(spec);
+  // Verso: a arte própria do verso, se houver (na proporção do editor 2D, para os elementos movidos
+  // caírem no mesmo lugar); senão o que a spec diz (liso, mesma arte ou cinza).
+  const backArt = useBackArt(art);
+  const backKind: ArtVariant = backArt ? "front" : backVariant(spec);
   const front = useArtTexture(body.aspect, "front", art, label, coloring ? lineArtMask : undefined);
-  const back = useArtTexture(body.aspect, backKind, art, label, coloring && backKind !== "blank" ? lineArtMask : undefined);
+  const back = useArtTexture(backArt ? artAspect(spec) : body.aspect, backKind, backArt ?? art, label, coloring && backKind !== "blank" ? lineArtMask : undefined);
   const weave = useTile("weave", W / 3, H / 3);
   const fabric = clothColor(spec.baseColor);
-  const floor = useMemo(() => lowestY([body.front, body.back, piping.geometry], CUSHION_POSE), [body, piping]);
+  const pose = useCushionPose();
+  const { room } = useSceneMode();
+  // No sofá e na cama a almofada afunda no estofado (o ambiente desce 3 e 1,5 cm): as canetinhas, não.
+  const sink = room === "seat" ? 3 : room === "bed" ? 1.5 : 0;
+  const floor = useMemo(() => lowestY([body.front, body.back, piping.geometry], pose) + sink, [body, piping, pose, sink]);
   return (
-    <group scale={s}>
-      <group rotation={CUSHION_POSE}>
-        <mesh geometry={body.front}>
-          <PrintCloth map={front} bump={weave} />
-        </mesh>
-        <mesh geometry={body.back}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
-        <mesh geometry={piping.geometry}>
-          <PlainCloth color={tone(fabric, "#000000", 0.06)} sheen={0.8} />
-        </mesh>
+    <group scale={s} userData={{ unitsPerCm: s, roomPose: true }}>
+      <group rotation={pose}>
+        <FlipGroup hop={short * 0.06}>
+          <mesh geometry={body.front}>
+            <PrintCloth map={front} bump={weave} />
+          </mesh>
+          <mesh geometry={body.back}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
+          <mesh geometry={piping.geometry}>
+            <PlainCloth color={tone(fabric, "#000000", 0.06)} sheen={0.8} />
+          </mesh>
+        </FlipGroup>
       </group>
       {coloring && <MarkerSet floor={floor} front={form.t} />}
     </group>
@@ -709,20 +841,23 @@ function CoverCushion({ spec, art, label }: ModelProps) {
   );
   const body = useCushionBody("rect", form);
   const seam = useSeam(body.outline, 0.3);
-  const backKind = backVariant(spec);
+  const backArt = useBackArt(art);
+  const backKind: ArtVariant = backArt ? "front" : backVariant(spec);
   const front = useArtTexture(body.aspect, "front", art, label);
-  const back = useArtTexture(body.aspect, backKind, art, label);
+  const back = useArtTexture(backArt ? artAspect(spec) : body.aspect, backKind, backArt ?? art, label);
   const weave = useTile("weave", W / 3, H / 3);
   const fabric = clothColor(spec.baseColor);
+  const pose = useCushionPose();
 
   const extras = useMemo(() => {
     const fn: SheetFn = (u, v, out) => pillowPoint(form, u, v, -1, out);
     if (envelope) {
-      // Aba envelope de 17 cm sobre o verso, com bainha e pesponto na borda livre.
+      // Aba envelope de 17 cm sobre o verso, com bainha e pesponto na borda livre. O UV da aba é o
+      // mesmo do verso: com arte no verso, a estampa continua por cima da aba, como na peça costurada.
       const uF = 1 - 34 / W;
       return {
         kind: "envelope" as const,
-        flap: sheetGeometry(fn, [uF, 1, -0.985, 0.985], 24, 64, { offset: -0.35, flip: true }),
+        flap: sheetGeometry(fn, [uF, 1, -0.985, 0.985], 24, 64, { offset: -0.35, flip: true, uv: [(1 - uF) / 2, 0, 0.0075, 0.9925] }),
         hem: tubeAlong(edgeLine(fn, [uF, -0.97], [uF, 0.97], 64, -0.45), 0.32, false, 8),
         stitch: tubeAlong(edgeLine(fn, [uF + 0.05, -0.95], [uF + 0.05, 0.95], 64, -0.48), 0.06, false, 4),
       };
@@ -763,38 +898,38 @@ function CoverCushion({ spec, art, label }: ModelProps) {
   useGeometriesCleanup(extraList);
 
   return (
-    <group scale={s}>
-      <group rotation={CUSHION_POSE}>
-        <mesh geometry={body.front}>
-          <PrintCloth map={front} bump={weave} />
-        </mesh>
-        <mesh geometry={body.back}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
-        <mesh geometry={seam.geometry}>
-          <PlainCloth color={tone(fabric, "#000000", 0.05)} />
-        </mesh>
-        {extras.kind === "envelope" ? (
-          <>
-            <mesh geometry={extras.flap}>
-              <PlainCloth color={fabric} bump={weave} />
-            </mesh>
-            <mesh geometry={extras.hem.geometry}>
-              <PlainCloth color={tone(fabric, "#000000", 0.04)} />
-            </mesh>
-            <Stitches tube={extras.stitch} color={tone(fabric, "#000000", 0.28)} />
-          </>
-        ) : (
-          <>
-            <mesh geometry={extras.line.geometry}>
-              <meshStandardMaterial color="#2b2c30" roughness={0.6} />
-            </mesh>
-            <mesh geometry={extras.slider} position={extras.anchor} quaternion={extras.quaternion}>
-              <Steel color="#c9ccd1" roughness={0.32} />
-            </mesh>
-            <mesh geometry={extras.tab} position={extras.tabPosition} quaternion={extras.tabQuaternion}>
-              <Steel color="#c9ccd1" roughness={0.32} />
-            </mesh>
-          </>
-        )}
+    <group scale={s} userData={{ unitsPerCm: s, roomPose: true }}>
+      <group rotation={pose}>
+        <FlipGroup hop={short * 0.06}>
+          <mesh geometry={body.front}>
+            <PrintCloth map={front} bump={weave} />
+          </mesh>
+          <mesh geometry={body.back}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
+          <mesh geometry={seam.geometry}>
+            <PlainCloth color={tone(fabric, "#000000", 0.05)} />
+          </mesh>
+          {extras.kind === "envelope" ? (
+            <>
+              <mesh geometry={extras.flap}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
+              <mesh geometry={extras.hem.geometry}>
+                <PlainCloth color={tone(fabric, "#000000", 0.04)} />
+              </mesh>
+              <Stitches tube={extras.stitch} color={tone(fabric, "#000000", 0.28)} />
+            </>
+          ) : (
+            <>
+              <mesh geometry={extras.line.geometry}>
+                <meshStandardMaterial color="#2b2c30" roughness={0.6} />
+              </mesh>
+              <mesh geometry={extras.slider} position={extras.anchor} quaternion={extras.quaternion}>
+                <Steel color="#c9ccd1" roughness={0.32} />
+              </mesh>
+              <mesh geometry={extras.tab} position={extras.tabPosition} quaternion={extras.tabQuaternion}>
+                <Steel color="#c9ccd1" roughness={0.32} />
+              </mesh>
+            </>
+          )}
+        </FlipGroup>
       </group>
     </group>
   );
@@ -809,21 +944,25 @@ function BodyPillow({ spec, art, label }: ModelProps) {
   const form = useMemo<PillowForm>(() => ({ w: W, h: H, t: short * 0.27, bow: 0.018, ramp: short * 0.55, q: 0.55, crease: 0.07, backScale: 0.6, seed: 3.1 }), [W, H, short]);
   const body = useCushionBody("rect", form);
   const seam = useSeam(body.outline, 0.4);
+  const backArt = useBackArt(art);
+  const backKind: ArtVariant = backArt ? "front" : backVariant(spec);
   const front = useArtTexture(body.aspect, "front", art, label);
+  const back = useArtTexture(backArt ? artAspect(spec) : body.aspect, backKind, backArt ?? art, label);
   const weave = useTile("weave", W / 3, H / 3);
   const fabric = clothColor(spec.baseColor);
+  // Deitada: para mostrar o verso ela rola de lado; o verso é mais baixo, então sobe a diferença.
   return (
-    <group scale={s} userData={{ view: { elevation: 0.7, azimuth: 0.2 } satisfies View }}>
+    <group scale={s} userData={{ view: { elevation: 0.7, azimuth: 0.2 } satisfies View, unitsPerCm: s, roomPose: true }}>
       <group rotation={[FLAT, 0, 0.06]}>
-        <mesh geometry={body.front}>
-          <PrintCloth map={front} bump={weave} />
-        </mesh>
-        <mesh geometry={body.back}>
-          <PlainCloth color={fabric} bump={weave} />
-        </mesh>
-        <mesh geometry={seam.geometry}>
-          <PlainCloth color={tone(fabric, "#000000", 0.05)} />
-        </mesh>
+        <FlipGroup roll lift={form.t * (1 - form.backScale)} hop={short * 0.38}>
+          <mesh geometry={body.front}>
+            <PrintCloth map={front} bump={weave} />
+          </mesh>
+          <mesh geometry={body.back}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
+          <mesh geometry={seam.geometry}>
+            <PlainCloth color={tone(fabric, "#000000", 0.05)} />
+          </mesh>
+        </FlipGroup>
       </group>
     </group>
   );
@@ -921,10 +1060,15 @@ function Bone({ position, yaw }: { position: [number, number, number]; yaw: numb
   );
 }
 
+/** Volume da almofada interna da cama pet (cm): frente cheia, verso baixo (fica dentro da base). */
+const PET_PUFF = 4.4;
+const PET_BACK_PUFF = 0.9;
+
 /**
  * Cama pet redonda ou retangular, vista de cima: base acolchoada com costura, almofada interna inflada
  * com a arte (UV na proporção da almofada), rolo de borda em matelassê mais baixo na frente e um
- * ossinho de pelúcia no chão. O tecido liso usa a cor da peça (grafite quando branca).
+ * ossinho de pelúcia no chão. O tecido liso usa a cor da peça (grafite quando branca). A almofada
+ * interna é dupla face: com arte no verso, "Ver verso" a desvira dentro da cama.
  */
 export function PetBedModel({ spec, art, label }: ModelProps) {
   const round = spec.shape === "round";
@@ -940,6 +1084,9 @@ export function PetBedModel({ spec, art, label }: ModelProps) {
   const cw = Math.max(W - 2 * inset, 10);
   const ch = Math.max(H - 2 * inset, 10);
   const texture = useArtTexture(cw / ch, "front", art, label);
+  // Verso da almofada interna: a arte do verso (proporção do editor 2D) ou tecido liso.
+  const backArt = useBackArt(art);
+  const backTexture = useArtTexture(artAspect(spec), backArt ? "front" : "blank", backArt ?? art, label);
   const bolsterWeave = useTile("weave", 1, 1);
   const baseWeave = useTile("weave", W / 4, H / 4);
   const cushionWeave = useTile("weave", cw / 3, ch / 3);
@@ -955,16 +1102,17 @@ export function PetBedModel({ spec, art, label }: ModelProps) {
         true,
         8,
       ),
-      cushion: inflatedSide(cushionPolygon, 4.4, Math.min(cw, ch) * 0.3, 0.12, 1.7, 1),
+      cushion: inflatedSide(cushionPolygon, PET_PUFF, Math.min(cw, ch) * 0.3, 0.12, 1.7, 1),
+      cushionBack: inflatedSide(cushionPolygon, PET_BACK_PUFF, Math.min(cw, ch) * 0.3, 0.06, 2.9, -1),
       bolster: bolsterGeometry(kind, W, H, corner, rw, BED_BASE * 0.8, D),
     };
   }, [kind, W, H, corner, cw, ch, inset, rw, D]);
-  const list = useMemo(() => [parts.baseTop, parts.baseBottom, parts.seam.geometry, parts.cushion, parts.bolster], [parts]);
+  const list = useMemo(() => [parts.baseTop, parts.baseBottom, parts.seam.geometry, parts.cushion, parts.cushionBack, parts.bolster], [parts]);
   useGeometriesCleanup(list);
   const fabric = spec.accentColor ?? (isWhite(spec.baseColor) ? "#3d3e44" : spec.baseColor);
   // Câmera alta o bastante para o rolo da frente (mais baixo) não esconder a base da arte.
   return (
-    <group scale={s} userData={{ view: { elevation: 0.72, azimuth: 0.25 } satisfies View }}>
+    <group scale={s} userData={{ view: { elevation: 0.72, azimuth: 0.25 } satisfies View, unitsPerCm: s, roomPose: true }}>
       <group rotation-x={FLAT}>
         <group position-z={BED_BASE / 2}>
           <mesh geometry={parts.baseTop}>
@@ -977,9 +1125,15 @@ export function PetBedModel({ spec, art, label }: ModelProps) {
             <PlainCloth color={tone(fabric, "#000000", 0.12)} sheen={0.8} />
           </mesh>
         </group>
-        <mesh geometry={parts.cushion} position-z={BED_BASE * 0.85}>
-          <PrintCloth map={texture} bump={cushionWeave} />
-        </mesh>
+        <group position-z={BED_BASE * 0.85}>
+          {/* Desvira pulando por cima do rolo; virada, a frente cheia fica embaixo e a almofada sobe. */}
+          <FlipGroup roll lift={PET_PUFF - PET_BACK_PUFF} hop={Math.min(cw, ch) * 0.55}>
+            <mesh geometry={parts.cushion}>
+              <PrintCloth map={texture} bump={cushionWeave} />
+            </mesh>
+            <mesh geometry={parts.cushionBack}>{backArt ? <PrintCloth map={backTexture} bump={cushionWeave} /> : <PlainCloth color={fabric} bump={cushionWeave} />}</mesh>
+          </FlipGroup>
+        </group>
         <mesh geometry={parts.bolster}>
           <PlainCloth color={fabric} bump={bolsterWeave} sheen={0.8} />
         </mesh>

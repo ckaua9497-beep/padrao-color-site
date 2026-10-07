@@ -6,6 +6,8 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
+import { THERMAL_SHARE, artArea, artAspect } from "@/lib/mockup-kinds";
+import { THERMAL_WINDOW } from "../art";
 import { bandGeometry, makeShape, metalColor, useArtTexture, type MaskPath, type ModelProps } from "./shared";
 import { lathe, radiusOnProfile, smoothProfile, type Pt } from "./vessel";
 
@@ -324,10 +326,15 @@ function printAspect(spec: MockupSpec) {
   return Math.max(spec.widthCm, 0.5) / Math.max(spec.heightCm, 0.5);
 }
 
-/** Arte do cliente com fundo transparente quando é imagem enviada (o corpo aparece em volta). */
+/**
+ * Arte do cliente com fundo transparente quando é imagem enviada (o corpo aparece em volta). Na garrafa
+ * térmica, a textura tem a proporção da faixa de 60% (a mesma do editor 2D) e o template se apoia na
+ * parte da faixa que fica de frente.
+ */
 function useDecalArt(spec: MockupSpec, art: Art, label: string, mask: MaskPath = decalPath) {
-  const decal = useMemo(() => ({ ...art, background: art.src ? "rgba(0,0,0,0)" : art.background }), [art]);
-  return useArtTexture(printAspect(spec), "front", decal, label, mask);
+  const thermal = spec.thermal;
+  const decal = useMemo(() => ({ ...art, background: art.src ? "rgba(0,0,0,0)" : art.background, ...(thermal ? { frontWindow: THERMAL_WINDOW } : {}) }), [art, thermal]);
+  return useArtTexture(thermal ? artAspect(spec) : printAspect(spec), "front", decal, label, mask);
 }
 
 /**
@@ -339,6 +346,19 @@ function fitBand(spec: MockupSpec, minRadius: number, maxHeight: number, arc = M
   const h = Math.max(spec.heightCm, 0.5) * U;
   const scale = Math.min(1, (arc * minRadius) / w, Math.max(maxHeight, 0.05) / h);
   return { w: w * scale, h: h * scale };
+}
+
+/**
+ * Garrafa térmica: a área personalizável cobre 60% da volta (≈216°), centrada na frente — só frente e
+ * laterais. `radius` é o raio da parede (o mesmo de thermalWall em lib/mockup-kinds.ts), então largura
+ * e altura saem na proporção do editor 2D; a altura respeita a parede útil.
+ */
+function thermalBand(spec: MockupSpec, radius: number, maxHeight: number) {
+  const area = artArea(spec);
+  const w = THERMAL_SHARE * Math.PI * 2 * radius;
+  const h = w * (area.heightCm / Math.max(0.5, area.widthCm));
+  const k = Math.min(1, Math.max(maxHeight, 0.05) / h);
+  return { w: w * k, h: h * k };
 }
 
 function ArtBand({ geometry, map, y, look, overlay = false }: { geometry: THREE.BufferGeometry; map: THREE.Texture; y: number; look: Look; overlay?: boolean }) {
@@ -954,7 +974,8 @@ function ThermalBottle({ spec, art, label, style }: ModelProps & { style: Therma
   const map = useDecalArt(spec, art, label);
   const zone0 = (style === "cola" ? 4.4 : 1.0) * U;
   const zone1 = style === "cola" ? 18.2 * U : H - dims.shoulder * U - 0.9 * U;
-  const fit = fitBand(spec, style === "cola" ? 3.3 * U : r, zone1 - zone0);
+  const wall = style === "cola" ? 3.3 * U : r;
+  const fit = spec.thermal ? thermalBand(spec, wall, zone1 - zone0) : fitBand(spec, wall, zone1 - zone0);
   const center = (zone0 + zone1) / 2;
   const band = useMemo(() => {
     if (style === "cola") {
@@ -1115,7 +1136,7 @@ function SportsBottle({ spec, art, label, cap }: ModelProps & { cap: SportCap })
   const map = useDecalArt(spec, art, label);
   const zone0 = 1.0 * U;
   const zone1 = H - 6.5 * U;
-  const fit = fitBand(spec, r, zone1 - zone0);
+  const fit = spec.thermal ? thermalBand(spec, r, zone1 - zone0) : fitBand(spec, r, zone1 - zone0);
   const center = (zone0 + zone1) / 2;
   const band = useMemo(
     () => bandGeometry({ radiusTop: SPORTS_CM.r * U + LIFT, radiusBottom: SPORTS_CM.r * U + LIFT, height: fit.h, width: fit.w, segments: 128, rows: 4 }),
@@ -1252,7 +1273,7 @@ function ThermoCupBottle({ spec, art, label }: ModelProps) {
   const map = useDecalArt(spec, art, label);
   const zone0 = 0.9 * U;
   const zone1 = cupY - 0.9 * U;
-  const fit = fitBand(spec, r, zone1 - zone0);
+  const fit = spec.thermal ? thermalBand(spec, r, zone1 - zone0) : fitBand(spec, r, zone1 - zone0);
   const center = (zone0 + zone1) / 2;
   const band = useMemo(
     () => bandGeometry({ radiusTop: THERMO_CM.r * U + LIFT, radiusBottom: THERMO_CM.r * U + LIFT, height: fit.h, width: fit.w, segments: 128, rows: 4 }),
@@ -1308,7 +1329,7 @@ function KidsBottle({ spec, art, label }: ModelProps) {
   const map = useDecalArt(spec, art, label);
   const zone0 = 1.5 * U;
   const zone1 = H - 2.4 * U;
-  const fit = fitBand(spec, r, zone1 - zone0);
+  const fit = spec.thermal ? thermalBand(spec, r, zone1 - zone0) : fitBand(spec, r, zone1 - zone0);
   const center = (zone0 + zone1) / 2;
   const band = useMemo(
     () => bandGeometry({ radiusTop: KIDS_CM.r * U + LIFT, radiusBottom: KIDS_CM.r * U + LIFT, height: fit.h, width: fit.w, segments: 128, rows: 4 }),

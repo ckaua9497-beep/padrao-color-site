@@ -7,7 +7,7 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
-import { KIND_INFO, artAspect } from "@/lib/mockup-kinds";
+import { KIND_INFO, artAspect, flipflopSize } from "@/lib/mockup-kinds";
 import { fontFamily } from "../art";
 import { useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
@@ -667,11 +667,12 @@ function Flipflop({ polygon, w, h, mirror, texture, bump, sole, tread, strap }: 
  * Chinelo: par em 3/4 visto de cima. Sola de borracha em duas camadas extrudadas com bisel (vinco entre elas),
  * palmilha sublimada como superfície inflada com relevo anatômico e a arte recortada pelo contorno do pé
  * (máscara no canvas). O pé esquerdo é o contorno espelhado com UV próprio, então a arte não espelha.
- * Tiras em Y como tubos elípticos com pino entre os dedos.
+ * Tiras em Y como tubos elípticos com pino entre os dedos. Com uma região escolhida (art.region: dedos,
+ * meio ou calcanhar), o paintArt pinta a arte só nessa faixa da palmilha e o resto fica na cor da peça.
  */
 export function FlipflopModel({ spec, art, label }: ModelProps) {
-  const w = clamp(Math.min(spec.widthCm, spec.heightCm), 6, 14);
-  const h = clamp(Math.max(spec.widthCm, spec.heightCm), 16, 32);
+  // Mesma medida da área do editor 2D (artArea): largura 6–14 cm, comprimento 16–32 cm.
+  const { widthCm: w, heightCm: h } = flipflopSize(spec);
   const right = useMemo(() => footPolygon(w, h, false), [w, h]);
   const left = useMemo(() => footPolygon(w, h, true), [w, h]);
   const rightMask = useMemo(() => polygonMask(right, w, h), [right, w, h]);

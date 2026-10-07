@@ -7,6 +7,7 @@ import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
 import { fontFamily } from "../art";
+import { useSceneMode } from "../viewer-hooks";
 import { AcrylicMaterials, Dimensions, PrintMaterial, fitFlat, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
 
 type V3 = [number, number, number];
@@ -27,6 +28,16 @@ const KEY = { tabR: 0.55, holeR: 0.2, jump: { r: 0.42, wire: 0.06 }, link: { rx:
 const STAND = { postR: 0.32, armR: 0.2, postZ: -2.4, tipZ: 0.95, baseZ: -0.9, gap: 0.7, base: { w: 7.2, h: 0.9, d: 5.4 } };
 /** Folga entre as barras do chassi e a lateral da tela (cena). */
 const CANVAS_GAP = 0.003;
+const FLAT_POSE: V3 = [0, 0, 0];
+
+/**
+ * Pose da peça: no estúdio, o 3/4 de vitrine; no ambiente, reta (na parede ou no tampo; o ambiente
+ * gira a peça se precisar). `unitsPerCm` diz ao ambiente a escala real do modelo.
+ */
+function usePose(studio: V3): V3 {
+  const { room } = useSceneMode();
+  return room ? FLAT_POSE : studio;
+}
 
 /* ------------------------------------------------------------------ geometria */
 
@@ -552,8 +563,9 @@ function WallPanel({ spec, art, label, showDims }: ModelProps) {
   const [lw, lh] = sizeLabels(spec);
   const cleatH = Math.max(3 * scale, 0.05);
   const cleatD = Math.max(1.2 * scale, 0.02);
+  const pose = usePose([-0.05, 0.32, 0]);
   return (
-    <group rotation={[-0.05, 0.32, 0]}>
+    <group rotation={pose} userData={{ unitsPerCm: scale }}>
       <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
       {thick ? (
         // XPS: sarrafo de alumínio escondido atrás, a placa "flutua" na parede.
@@ -597,12 +609,15 @@ function MosaicPanel({ spec, art, label, showDims }: ModelProps) {
   const wallD = 0.06;
   const spacer = Math.max(0.3 * scale, 0.008);
   const [lw, lh] = sizeLabels(spec);
+  const { room } = useSceneMode();
   return (
-    <group rotation={[0, 0.28, 0]}>
-      {/* Parede pintada: dá contexto às frestas entre as placas. */}
-      <SoftBox size={[w + margin * 2, h + margin * 2, wallD]} radius={0.01} bevel={0.006} position={[0, 0, -d / 2 - spacer - wallD / 2]}>
-        <meshStandardMaterial color="#e6e2da" roughness={0.96} />
-      </SoftBox>
+    <group rotation={room ? FLAT_POSE : [0, 0.28, 0]} userData={{ unitsPerCm: scale }}>
+      {/* Parede pintada: dá contexto às frestas entre as placas (no ambiente, a parede é a da sala). */}
+      {!room && (
+        <SoftBox size={[w + margin * 2, h + margin * 2, wallD]} radius={0.01} bevel={0.006} position={[0, 0, -d / 2 - spacer - wallD / 2]}>
+          <meshStandardMaterial color="#e6e2da" roughness={0.96} />
+        </SoftBox>
+      )}
       <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
       {showDims && <Dimensions w={w} h={h} z={d / 2 + 0.01} labelW={lw} labelH={lh} />}
     </group>
@@ -633,8 +648,9 @@ function EaselPanel({ spec, art, label, showDims }: ModelProps) {
   }, [w, strutL, d]);
   useGeometryCleanup(strut);
   const [lw, lh] = sizeLabels(spec);
+  const pose = usePose([0, 0.42, 0]);
   return (
-    <group rotation={[0, 0.42, 0]}>
+    <group rotation={pose} userData={{ unitsPerCm: scale }}>
       <group rotation-x={-lean}>
         <group position-y={h / 2}>
           <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
@@ -666,8 +682,9 @@ function BlockPanel({ spec, art, label, showDims }: ModelProps) {
   const wood = useMemo(() => createWoodTexture(OAK, 11, 0.12 / scale, 0.08 / scale), [scale]);
   useDisposable(wood);
   const [lw, lh] = sizeLabels(spec);
+  const pose = usePose([0, 0.38, 0]);
   return (
-    <group rotation={[0, 0.38, 0]}>
+    <group rotation={pose} userData={{ unitsPerCm: scale }}>
       <mesh geometry={base} position-y={baseH / 2}>
         <meshStandardMaterial map={wood} roughness={0.62} />
       </mesh>
@@ -894,8 +911,9 @@ function AcrylicWall({ spec, art, label, showDims }: ModelProps) {
   const front = useArtTexture(artAspect(spec), "front", art, label);
   const size = standoffSize(scale, w, h);
   const [lw, lh] = sizeLabels(spec);
+  const pose = usePose([-0.05, 0.34, 0]);
   return (
-    <group rotation={[-0.05, 0.34, 0]}>
+    <group rotation={pose} userData={{ unitsPerCm: scale }}>
       <AcrylicSheet plate={plate} d={d} map={front} spec={spec} />
       <StandoffSet points={corners(w, h, size.inset)} front={d / 2} back={-d / 2} size={size} />
       {showDims && <Dimensions w={w} h={h} z={d / 2 + size.capH} labelW={lw} labelH={lh} />}
@@ -918,8 +936,9 @@ function AcrylicDesk({ spec, art, label, showDims }: ModelProps) {
   useGeometryCleanup(foot);
   const front = useArtTexture(artAspect(spec), "front", art, label);
   const [lw, lh] = sizeLabels(spec);
+  const pose = usePose([0, 0.4, 0]);
   return (
-    <group rotation={[0, 0.4, 0]}>
+    <group rotation={pose} userData={{ unitsPerCm: scale }}>
       {/* Pé em L, colado na base da chapa e estendido para trás. */}
       <mesh geometry={foot} position={[0, d / 2, d / 2 - footD / 2]} renderOrder={1}>
         <AcrylicMaterials />
@@ -984,8 +1003,9 @@ function AcrylicCalendar({ spec, art, label, showDims }: ModelProps) {
   }, [pw, bh, ringZ, ring.pitch, ring.r]);
   const [lw, lh] = sizeLabels(spec);
   const metal = metalColor(spec.metal);
+  const pose = usePose([0, 0.36, 0]);
   return (
-    <group rotation-y={0.36}>
+    <group rotation={pose} userData={{ unitsPerCm: U }}>
       <group scale={U}>
         <mesh geometry={base} position={[0, block.h / 2, 0]} renderOrder={2}>
           <AcrylicMaterials />
@@ -1301,8 +1321,9 @@ export function CanvasModel({ spec, art, label, showDims }: ModelProps) {
   }, [w, h, depth, barW, lip, scale]);
   const [lw, lh] = sizeLabels(spec);
   const sawW = Math.min(4 * scale, w * 0.2);
+  const pose = usePose([-0.04, 0.38, 0]);
   return (
-    <group rotation={[-0.04, 0.38, 0]}>
+    <group rotation={pose} userData={{ unitsPerCm: scale }}>
       {/* Relevo contido: a trama aparece na luz rasante sem granular a arte. */}
       <mesh geometry={shell.front}>
         <meshStandardMaterial map={front} bumpMap={weave} bumpScale={0.55} roughness={0.88} />

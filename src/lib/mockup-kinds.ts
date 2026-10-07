@@ -171,10 +171,65 @@ export const KIND_INFO: Record<MockupKind, KindInfo> = {
   cylinder: k("Capa de cilindro", [40, 60, 40], false),
 };
 
+/** O que artArea/artAspect leem da spec (kind, thermal e variant são opcionais: medidas soltas também servem). */
+export type ArtAreaSpec = { widthCm: number; heightCm: number; kind?: MockupKind; thermal?: boolean; variant?: string | null };
+
+/** Garrafa térmica (spec.thermal): a área personalizável cobre 60% da volta, centrada na frente (frente e laterais). */
+export const THERMAL_SHARE = 0.6;
+
+/**
+ * Parede onde a faixa de arte da garrafa térmica assenta, por subtipo: raio e altura útil em cm.
+ * São as medidas dos modelos 3D (models/bottles.tsx): o editor 2D e o 3D usam a mesma proporção.
+ */
+const THERMAL_WALLS = {
+  classic: { radiusCm: 3.5, heightCm: 16.5 },
+  cola: { radiusCm: 3.3, heightCm: 13.8 },
+  kid: { radiusCm: 3.3, heightCm: 10.9 },
+  thermoCup: { radiusCm: 3.6, heightCm: 15.9 },
+  sports: { radiusCm: 3.65, heightCm: 14 },
+  plastic: { radiusCm: 3.5, heightCm: 9.6 },
+} as const;
+
+export function thermalWall(variant: string | null | undefined): { radiusCm: number; heightCm: number } {
+  const v = variant ?? "";
+  if (v === "cola") return THERMAL_WALLS.cola;
+  if (v === "bunny" || v === "dog") return THERMAL_WALLS.kid;
+  if (v === "thermo-cup") return THERMAL_WALLS.thermoCup;
+  if (v === "kids") return THERMAL_WALLS.plastic;
+  if (v.startsWith("sports")) return THERMAL_WALLS.sports;
+  return THERMAL_WALLS.classic;
+}
+
+/** Chinelo: palmilha na medida da spec, com os limites do modelo 3D (largura 6–14 cm, comprimento 16–32 cm). */
+export function flipflopSize(spec: { widthCm: number; heightCm: number }): { widthCm: number; heightCm: number } {
+  const small = Math.min(spec.widthCm, spec.heightCm);
+  const large = Math.max(spec.widthCm, spec.heightCm);
+  return {
+    widthCm: Math.min(14, Math.max(6, Number.isFinite(small) ? small : 10)),
+    heightCm: Math.min(32, Math.max(16, Number.isFinite(large) ? large : 26)),
+  };
+}
+
+/**
+ * Medida da área de arte em cm: na garrafa térmica, a faixa de 60% da volta (altura da spec limitada à
+ * parede); no chinelo, a palmilha; nos demais, a medida da spec (área de arte ou a peça inteira).
+ */
+export function artArea(spec: ArtAreaSpec): { widthCm: number; heightCm: number } {
+  if (spec.thermal) {
+    const wall = thermalWall(spec.variant);
+    const height = spec.heightCm > 0 ? Math.min(spec.heightCm, wall.heightCm) : wall.heightCm;
+    return { widthCm: THERMAL_SHARE * 2 * Math.PI * wall.radiusCm, heightCm: height };
+  }
+  if (spec.kind === "flipflop") return flipflopSize(spec);
+  return { widthCm: spec.widthCm, heightCm: spec.heightCm };
+}
+
 /**
  * Proporção (largura ÷ altura) do canvas de arte. A medida da spec já é a área de arte nos
  * tipos com sizeIsArtArea (caneca 20 × 8,5 cm, camiseta no formato DTF…) e a peça inteira nos demais.
+ * Garrafa térmica: 60% da circunferência ÷ altura da faixa. Chinelo: a palmilha do modelo.
  */
-export function artAspect(spec: { widthCm: number; heightCm: number }): number {
-  return spec.widthCm / spec.heightCm;
+export function artAspect(spec: ArtAreaSpec): number {
+  const area = artArea(spec);
+  return area.widthCm / area.heightCm;
 }

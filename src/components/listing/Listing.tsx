@@ -9,7 +9,14 @@ import { useMediaQuery } from "@/components/ui/useMediaQuery";
 import type { ProductSummary } from "@/lib/catalog";
 import { spectrumAt } from "@/lib/format";
 
-type SidebarCategory = { slug: string; name: string; count: number };
+/** Navegação lateral da listagem: categorias (catálogo) ou tipos de negócio. */
+export type ListingNav = {
+  title: string;
+  all: { href: string; label: string };
+  items: { href: string; label: string; count: number }[];
+  /** href do item atual; ausente = "todos". */
+  active?: string;
+};
 
 const SORTS = {
   padrao: "Ordenação padrão",
@@ -29,7 +36,7 @@ type FiltersState = "auto" | "open" | "closed";
 
 const PAGE = 24;
 
-export default function Listing({ products, categories, activeSlug }: { products: ProductSummary[]; categories: SidebarCategory[]; activeSlug?: string }) {
+export default function Listing({ products, nav }: { products: ProductSummary[]; nav: ListingNav }) {
   const [filters, setFilters] = useState<FiltersState>("auto");
   const [sort, setSort] = useState<SortKey>("padrao");
   const [limit, setLimit] = useState(PAGE);
@@ -93,28 +100,28 @@ export default function Listing({ products, categories, activeSlug }: { products
 
       <div className={cx("grid gap-8", sidebarOnDesktop && "lg:grid-cols-[230px_1fr]")}>
         <aside id="filtros" aria-label="Filtros" className={cx("animate-fade-up", filters === "closed" && "hidden", filters === "auto" && "hidden lg:block")}>
-          <p className="mb-4 text-caption font-semibold uppercase tracking-widest text-muted">Categorias</p>
+          <p className="mb-4 text-caption font-semibold uppercase tracking-widest text-muted">{nav.title}</p>
           <ul className="space-y-1">
             <li>
               <Link
-                href="/produtos"
-                aria-current={!activeSlug ? "page" : undefined}
-                className={cx("block rounded-thumb px-3 py-1.5 text-[15px] transition-colors", !activeSlug ? "bg-ink font-semibold text-white" : "hover:bg-mist")}
+                href={nav.all.href}
+                aria-current={!nav.active ? "page" : undefined}
+                className={cx("block rounded-thumb px-3 py-1.5 text-[15px] transition-colors", !nav.active ? "bg-ink font-semibold text-white" : "hover:bg-mist")}
               >
-                Todos os produtos
+                {nav.all.label}
               </Link>
             </li>
-            {categories.map((c) => {
-              const active = activeSlug === c.slug;
+            {nav.items.map((item) => {
+              const active = nav.active === item.href;
               return (
-                <li key={c.slug}>
+                <li key={item.href}>
                   <Link
-                    href={`/categoria/${c.slug}`}
+                    href={item.href}
                     aria-current={active ? "page" : undefined}
-                    className={cx("flex items-center justify-between rounded-thumb px-3 py-1.5 text-[15px] transition-colors", active ? "bg-ink font-semibold text-white" : "hover:bg-mist")}
+                    className={cx("flex items-center justify-between gap-3 rounded-thumb px-3 py-1.5 text-[15px] transition-colors", active ? "bg-ink font-semibold text-white" : "hover:bg-mist")}
                   >
-                    {c.name}
-                    <span className={cx("text-micro", active ? "text-white/75" : "text-muted")}>{c.count}</span>
+                    {item.label}
+                    <span className={cx("text-micro", active ? "text-white/75" : "text-muted")}>{item.count}</span>
                   </Link>
                 </li>
               );

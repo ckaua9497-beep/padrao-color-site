@@ -35,32 +35,77 @@ npm run dev -- -p 3100 # http://localhost:3100
 | `npm start`     | Serve o build de produção.                                                                         |
 | `npm run lint`  | ESLint (`eslint-config-next` + regras do React Compiler). Deve terminar com 0 erros e 0 avisos.    |
 | `npm test`      | Testes com `node --test` em `src/**/*.test.ts` (regras de mockup e contraste dos tokens).           |
+| `npm run sync:catalog` | Baixa catálogo e vitrine da API Padrão Color para `src/data/` (ver "Catálogo, vitrine e ambiente"). |
 
 ## Dados reais × demonstração
 
-- **Catálogo real.** Produtos, categorias, opções, variações de preço, prazos e fotos vêm de `src/data/catalog.json`, gerado a
-  partir do catálogo exportado do site atual da Padrão Color. As fotos são servidas por `img.padraocolor.com.br` (liberado em
-  `next.config.ts`). `public/search-index.json` é o índice leve da busca.
+- **Catálogo real.** Produtos, categorias, opções, variações de preço, prazos, fotos e a vitrine vêm da API Padrão Color,
+  sincronizados em `src/data/` (ver "Catálogo, vitrine e ambiente"). As fotos são servidas por `img.padraocolor.com.br`
+  (liberado em `next.config.ts`).
 - **Checkout de demonstração.** Carrinho (guardado no `localStorage` do navegador), CEP e finalização funcionam de ponta a ponta,
   mas **nenhum pagamento é processado** e nenhum pedido chega à gráfica: o checkout mostra "Pedido de demonstração registrado".
 - O desconto de 5% no PIX (`PIX_DISCOUNT` em `src/lib/pricing.ts`) é aplicado em todos os preços exibidos.
 
-### Regenerar o catálogo
+## Catálogo, vitrine e ambiente
 
-O script `scripts/build-catalog.mjs` lê o JSON exportado (chave `padrao`) e reescreve `src/data/catalog.json` e
-`public/search-index.json`. O caminho de origem vem da variável de ambiente `PADRAO_CATALOGO`; sem ela, o script usa
-`C:/Users/USER/Desktop/padraocollor/data/catalogo.json`.
+O catálogo e a vitrine vêm da **API Padrão Color** (documentação em `../alteraçoes/DocumentacaoPadraoColor.pdf`). As páginas não
+chamam a API: `npm run sync:catalog` grava os dados em `src/data/` e o build gera as páginas a partir deles.
+
+### Variáveis de ambiente (`.env.local`)
+
+Copie `.env.example` para `.env.local` e preencha. Só o servidor do Next lê estas variáveis; o token nunca chega ao navegador.
+
+| Variável                | Para quê                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `PADRAO_API_URL`        | Base da API (`https://lab.padraocolor.com/site`; o host lab só responde em HTTPS).                           |
+| `PADRAO_API_TOKEN`      | Bearer Token da integração: sincronização do catálogo, cadastro e pedidos de quem ainda não tem token próprio. |
+| `PADRAO_SESSION_SECRET` | Segredo (64+ caracteres aleatórios) que assina o cookie de sessão do cliente logado.                        |
+| `PADRAO_ORDERS_ENABLED` | `true` envia o pedido de verdade (`POST /gerarpedido`); qualquer outro valor deixa o checkout em simulação (padrão). |
+| `PADRAO_SITE_ORIGINS`   | Opcional. Origens extras aceitas nos POST, separadas por vírgula (proxy que troca o Host).                  |
+
+Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas no próprio `.env.example`.
+
+### Sincronizar o catálogo
 
 ```bash
-# PowerShell
-$env:PADRAO_CATALOGO = "C:/caminho/para/catalogo.json"; node scripts/build-catalog.mjs
-
-# bash
-PADRAO_CATALOGO=/caminho/para/catalogo.json node scripts/build-catalog.mjs
+npm run sync:catalog   # ~60 s, só faz GET na API (usa PADRAO_API_URL e PADRAO_API_TOKEN do .env.local)
+npm test               # tipos de mockup, preços (m², expresso, grade) e tokens
 ```
 
-Depois de regenerar, rode `npm test`: o teste de contagem por tipo de mockup (`src/lib/mockup.test.ts`) acusa produtos novos que
-caíram em outro tipo ou no fallback, e o teste de overrides acusa slugs que sumiram.
+`scripts/sync-catalog.mjs` lê `GET /categorias`, `/grupos`, `/produtos?id_grupo=…` (sem filtro essa rota estoura o gateway),
+`/configuracoes`, `/tiposnegocio` e `/acabamentos`, e grava:
+
+| Arquivo                        | Conteúdo                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/data/catalog.json`        | Categorias (banner, banner de celular e SEO) e produtos. Produto = grupo da API (uma página, slug igual ao do site oficial); variação = produto da API (ID que vai no pedido, preço e prazo econômico/expresso, quantidade). Traz resumo, descrição, blocos de informação, gabarito, tags, SEO, "veja também", grade de tamanhos, tabela de medidas, medida livre (m²), criação de arte, anexos e quantidade mínima/máxima. O produto "Tags" é derivado do grupo 180 (tag de presente). |
+| `src/data/storefront.json`     | A vitrine do padraocolor.com.br: banners (desktop e celular, com a medida real das artes), botões das linhas 1 e 2, categorias em destaque, "Nossos Destaques", mais vendidos, menu oficial, texto e faixa do topo. Links do site oficial viram rotas locais (`/produto/…`, `/categoria/…`).                                                                       |
+| `src/data/business-types.json` | "Para o seu negócio": tipos de negócio com banner, SEO e grupos (páginas `/negocios/[slug]`).                                                                                                                                                                                                                                                                    |
+| `src/data/finishes.json`       | Acabamentos (`GET /acabamentos`).                                                                                                                                                                                                                                                                                                                                |
+
+Depois de sincronizar, rode `npm test`: o teste de contagem por tipo de mockup (`src/lib/mockup.test.ts`) acusa produtos novos que
+caíram em outro tipo, e o teste de overrides acusa slugs que sumiram.
+
+### Rotas de dados
+
+- **`/produtos/indice.json`** — índice leve da busca do topo, gerado do catálogo no build (substitui o antigo
+  `public/search-index.json`).
+- **`/api/gabarito/[id]`** — download do gabarito de um produto (`id` do catálogo, ex. `35` ou `tags`, ou o slug). Premissa: o
+  "PG Gabarito" do checklist não tem contrato e nenhum endpoint do PDF baixa gabarito; o arquivo vem do campo `gabarito` de
+  `GET /grupos`, a mesma URL usada em padraocolor.com.br/gabaritos. A rota só busca em `https://img.padraocolor.com.br/padraocolor/…`,
+  repassa o arquivo em streaming com `Content-Disposition: attachment; filename="gabarito-<slug>.<ext>"` e o tipo certo (zip, rar,
+  pdf) e responde 404 quando o produto não tem gabarito. A página `/gabaritos` lista todos, com busca e filtro por categoria.
+
+### Preço por m², prazo e grade de tamanhos
+
+- **Medida livre (m²).** Produtos com `customSize` (36 na API: banners, lonas, adesivos, rótulos, papéis, tecidos, placas e o
+  LED neon de logotipo) pedem largura × altura em cm. Preço da peça = preço da variação (por m²) × área cobrada, respeitando a
+  área mínima e os limites da API (em metros); a quantidade multiplica. Quando o produto também vende formatos fixos (Faixa
+  "2,00x0,60m", PS "Até 15x21cm"), o m² só vale na opção "Personalize a sua Medida"/"Personalizado". A API não calcula m²: o
+  valor vai no `precoTotal` do pedido e a medida em `widthCm`/`heightCm` do item do carrinho. O mockup 3D usa a medida digitada.
+- **Econômico × expresso.** Cada variação traz preço e prazo dos dois; a página oferece a escolha quando o expresso muda o
+  preço ou o prazo (`express: true` no item do carrinho).
+- **Grade de vestuário.** Camisas com `sizes` pedem a quantidade por tamanho; o total respeita `minQty`/`maxQty` (lotes "de 11 a
+  100", "a partir de 101"…) e vai ao carrinho com `quantity` = total de peças e a divisão em `options.Tamanhos` ("P×2, M×3").
 
 ## Estrutura
 
@@ -78,8 +123,8 @@ src/
     mockup/          visualizador 3D, pintura da arte e modelos
     design-system/   peças da página /design-system e o inspetor da galeria de mockups
   lib/               catálogo, preços, formatação, registro e regras de mockup (TS puro, testável com node --test)
-  data/catalog.json  catálogo gerado
-scripts/build-catalog.mjs
+  data/              catálogo, vitrine, tipos de negócio e acabamentos (gerados por npm run sync:catalog)
+scripts/sync-catalog.mjs
 ```
 
 ## Mockups 3D

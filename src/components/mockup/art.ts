@@ -39,7 +39,11 @@ export type ArtSettings = {
   mannequin?: MannequinSettings | null;
 };
 
-/** Posição de um elemento em fração da área de impressão (x/y = centro, 0..1; scale 1 = encaixe máximo). */
+/**
+ * Posição de um elemento em fração da área de impressão: x/y = centro (0..1); scale 1 = encaixe máximo
+ * (cabe inteiro sem girar, sem distorcer); rotation em graus, sentido horário. O paintArt sempre limita
+ * à área (clampPlacement): o elemento nunca passa da borda.
+ */
 export type LayerPlacement = { x: number; y: number; scale: number; rotation: number };
 
 export type ArtLayout = { text?: LayerPlacement | null; image?: LayerPlacement | null };
@@ -56,7 +60,8 @@ export type MannequinSettings = {
 
 export const DEFAULT_ART: ArtSettings = {
   src: null,
-  fit: "cover",
+  // Imagem inteira dentro da área (sem cortar nem passar do limite); "cover" fica só para artes antigas.
+  fit: "contain",
   rotation: 0,
   zoom: 1,
   offsetX: 0,
@@ -69,13 +74,164 @@ export const DEFAULT_ART: ArtSettings = {
   subtext: "",
 };
 
-/** Contexto de render que o visualizador acrescenta à arte (tipo da peça e cores do LED). */
 /**
- * `surface`: cor da peça por baixo da estampa (tecido escuro pede texto claro).
+ * Contexto de render que o visualizador e os modelos acrescentam à arte.
+ * `kind`: tipo da peça (escolhe o template). `ledColors`: cores do LED já resolvidas (neon).
+ * `surface`: cor da peça por baixo da estampa (tecido escuro pede texto claro; no chinelo, a cor fora da região).
  * `opaque`: estampa que cobre o painel inteiro (sublimação de ponta a ponta) — o modelo de vestuário
  * pinta o fundo em vez de deixá-lo transparente para o tecido aparecer.
+ * `frontWindow`: fração da largura que fica de frente para a câmera (template e legenda automáticos);
+ * substitui a janela padrão do tipo (garrafa térmica: a faixa de 60% já é frente e laterais).
+ * `sample`: false = sem texto de exemplo quando o cliente não escreveu nada (verso).
  */
-export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[]; surface?: string; opaque?: boolean };
+export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[]; surface?: string; opaque?: boolean; frontWindow?: number; sample?: boolean };
+
+/** A arte tem algo do cliente (texto, subtexto ou imagem)? Verso vazio = sem impressão no verso. */
+export function hasArtContent(art: ArtSettings | null | undefined): boolean {
+  return Boolean(art && (art.src || art.text.trim() || (art.subtext ?? "").trim()));
+}
+
+/** Verso novo: mesmo estilo, fonte e cores da frente, sem texto nem imagem. */
+export function blankBack(front: ArtSettings): ArtSettings {
+  return { ...DEFAULT_ART, style: front.style, font: front.font, textColor: front.textColor, background: front.background };
+}
+
+// ---------------------------------------------------------------------------
+// Neon, chinelo e garrafa térmica
+
+/** Cores de LED do neon (os mesmos tons que lib/mockup.ts lê nas opções do produto). */
+export const LED_COLORS = [
+  { value: "#eaf6ff", label: "Branco frio" },
+  { value: "#ffd9a0", label: "Branco quente" },
+  { value: "#ff2a3d", label: "Vermelho" },
+  { value: "#ff7a1a", label: "Laranja" },
+  { value: "#ffb21a", label: "Âmbar" },
+  { value: "#ffe14a", label: "Amarelo" },
+  { value: "#39ff7a", label: "Verde" },
+  { value: "#5fe3ff", label: "Azul gelo" },
+  { value: "#2f6bff", label: "Azul" },
+  { value: "#ff4fd8", label: "Rosa" },
+  { value: "#a64dff", label: "Roxo" },
+] as const;
+
+/** Até três cores de LED: uma por linha do texto (a seguinte acende o subtexto e os extras do estilo). */
+export const LED_MAX = 3;
+
+/** Nome da cor de LED (a cor padrão dos produtos sem opção também tem nome). */
+export function ledColorName(value: string): string {
+  const key = value.trim().toLowerCase();
+  if (key === "#38e1ff") return "Azul gelo";
+  return LED_COLORS.find((c) => c.value === key)?.label ?? value;
+}
+
+export type FlipflopRegion = "inteira" | "dedos" | "meio" | "calcanhar";
+
+/** Chinelo: regiões da palmilha, medidas do calcanhar (0) até a ponta dos dedos (1). */
+export const FLIPFLOP_REGIONS: readonly { value: FlipflopRegion; label: string; from: number; to: number }[] = [
+  { value: "inteira", label: "Peça inteira", from: 0, to: 1 },
+  { value: "dedos", label: "Dedos", from: 0.66, to: 1 },
+  { value: "meio", label: "Meio", from: 0.33, to: 0.67 },
+  { value: "calcanhar", label: "Calcanhar", from: 0, to: 0.34 },
+];
+
+export function flipflopRegion(region: string | null | undefined) {
+  return FLIPFLOP_REGIONS.find((r) => r.value === region) ?? FLIPFLOP_REGIONS[0];
+}
+
+/** Proporção da área de arte da região escolhida (a palmilha inteira tem `aspect`). */
+export function regionAspect(aspect: number, region: string | null | undefined): number {
+  const r = flipflopRegion(region);
+  return aspect / Math.max(0.05, r.to - r.from);
+}
+
+/**
+ * Garrafa térmica: a faixa cobre 60% da volta (≈216°); destes, ~60% (≈130°) ficam de frente para a
+ * câmera — é onde o template e a legenda automática se apoiam. O cliente pode levar o texto até as laterais.
+ */
+export const THERMAL_WINDOW = 0.6;
+
+// ---------------------------------------------------------------------------
+// Posição livre (editor 2D)
+
+/** Elemento posicionado pelo cliente: em scale 1 cabe inteiro na área (encaixe máximo), sem girar. */
+export type LayerInfo = {
+  /** Posição efetiva: a do cliente (já limitada à área) ou a equivalente do layout automático. */
+  placement: LayerPlacement;
+  /** Tamanho em scale 1, sem giro, em fração da largura e da altura da área. */
+  base: { w: number; h: number };
+  /** true quando o cliente posicionou o elemento (art.layout). */
+  free: boolean;
+};
+
+/** O que o paintArt desenhou: caixa do texto e da imagem, para o editor 2D pôr as alças. */
+export type PaintInfo = { text: LayerInfo | null; image: LayerInfo | null };
+
+/** Menor escala aceita (fração do encaixe máximo). */
+export const MIN_LAYER_SCALE = 0.06;
+
+const DEG = Math.PI / 180;
+
+/** Giro em graus, normalizado em (-180, 180]. */
+export function normalizeRotation(deg: number): number {
+  const r = (((Number.isFinite(deg) ? deg : 0) % 360) + 360) % 360;
+  return r > 180 ? r - 360 : r;
+}
+
+/** Tamanho que cabe inteiro (contain) para um conteúdo de proporção `content` numa área de proporção `area`. */
+export function containBase(content: number, area: number): { w: number; h: number } {
+  const c = Number.isFinite(content) && content > 0 ? content : 1;
+  const a = Number.isFinite(area) && area > 0 ? area : 1;
+  return c >= a ? { w: 1, h: a / c } : { w: c / a, h: 1 };
+}
+
+/** Caixa (largura e altura, em fração da área) do elemento girado. `aspect` = largura ÷ altura da área. */
+export function layerExtent(base: { w: number; h: number }, scale: number, rotation: number, aspect: number): { w: number; h: number } {
+  const t = rotation * DEG;
+  const c = Math.abs(Math.cos(t));
+  const s = Math.abs(Math.sin(t));
+  // Em unidades físicas com a altura da área = 1.
+  const pw = base.w * aspect;
+  const ph = base.h;
+  return { w: ((pw * c + ph * s) * scale) / aspect, h: (pw * s + ph * c) * scale };
+}
+
+/** Maior escala em que o elemento girado ainda cabe inteiro na área. */
+export function maxLayerScale(base: { w: number; h: number }, rotation: number, aspect: number): number {
+  const e = layerExtent(base, 1, rotation, aspect);
+  return Math.min(1 / Math.max(e.w, 1e-6), 1 / Math.max(e.h, 1e-6));
+}
+
+/** Mantém o elemento inteiro dentro da área: limita a escala (no giro atual) e depois o centro. */
+export function clampPlacement(p: LayerPlacement, base: { w: number; h: number }, aspect: number): LayerPlacement {
+  const rotation = normalizeRotation(p.rotation);
+  const max = maxLayerScale(base, rotation, aspect);
+  const wanted = Number.isFinite(p.scale) ? p.scale : 1;
+  const scale = Math.min(max, Math.max(Math.min(MIN_LAYER_SCALE, max), wanted));
+  const e = layerExtent(base, scale, rotation, aspect);
+  const fit = (v: number, half: number) => (half >= 0.5 ? 0.5 : Math.min(1 - half, Math.max(half, Number.isFinite(v) ? v : 0.5)));
+  return { x: fit(p.x, e.w / 2), y: fit(p.y, e.h / 2), scale, rotation };
+}
+
+/** Grava a posição livre de um elemento na arte. */
+export function withPlacement(art: ArtSettings, layer: "text" | "image", placement: LayerPlacement | null): ArtSettings {
+  const layout: ArtLayout = { ...(art.layout ?? {}), [layer]: placement };
+  return { ...art, layout: layout.text || layout.image ? layout : null };
+}
+
+// Medida original das imagens enviadas (antes da redução para o 3D), para o cálculo de resolução.
+const SOURCE_SIZES = new Map<string, { w: number; h: number }>();
+
+/** Pixels do arquivo original de uma imagem enviada por fileToDataUrl; null se não houver registro. */
+export function sourceSizeOf(src: string | null | undefined): { w: number; h: number } | null {
+  return src ? (SOURCE_SIZES.get(src) ?? null) : null;
+}
+
+/** Qualidade de impressão pela resolução efetiva (pontos por polegada na medida colocada). */
+export function dpiQuality(dpi: number): "baixa" | "ok" | "ótima" {
+  if (dpi >= 300) return "ótima";
+  if (dpi >= 150) return "ok";
+  return "baixa";
+}
 
 export type ArtFamily = "card" | "wrap" | "apparel" | "sign" | "badge" | "neon" | "home";
 
@@ -471,7 +627,24 @@ function fitWidth(ctx: CanvasRenderingContext2D, fit: Fit): number {
 
 type Align = "left" | "center" | "right";
 
-function drawFit(ctx: CanvasRenderingContext2D, fit: Fit, x: number, cy: number, align: Align, paint: Paint) {
+/** Caixa do texto desenhado (com contorno, volume e sombra) somada à caixa do bloco. */
+function growTextBox(ctx: CanvasRenderingContext2D, layer: LayerControl, fit: Fit, ax: number, cy: number, align: Align, paint: Paint) {
+  const size = fit.size;
+  const step = size * fit.lh;
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  for (const line of fit.lines) {
+    const lw = ctx.measureText(line).width;
+    const left = align === "center" ? ax - lw / 2 : align === "right" ? ax - lw : ax;
+    x0 = Math.min(x0, left);
+    x1 = Math.max(x1, left + lw);
+  }
+  const half = ((fit.lines.length - 1) * step) / 2 + size * 0.62;
+  const extra = size * ((paint.stroke ? (paint.strokeW ?? 0.14) / 2 : 0) + (paint.extrude ? (paint.depth ?? 0.07) : 0) + (paint.drop ? (paint.dropOffset ?? 0.07) : 0) + (paint.shadow ? (paint.shadowBlur ?? 0.1) * 0.5 : 0));
+  growBox(layer, x0 - extra, cy - half - extra, x1 - x0 + extra * 2, half * 2 + extra * 2);
+}
+
+function drawFit(ctx: CanvasRenderingContext2D, fit: Fit, x: number, cy: number, align: Align, paint: Paint, layer: LayerControl | null = null) {
   if (!fit.lines.length) return;
   ctx.save();
   setType(ctx, fit.type, fit.size);
@@ -481,6 +654,7 @@ function drawFit(ctx: CanvasRenderingContext2D, fit: Fit, x: number, cy: number,
   // O espaçamento entra depois da última letra: compensa para centralizar de verdade.
   const track = trackingPx(fit.type, fit.size);
   const ax = x + (align === "center" ? track / 2 : align === "right" ? track : 0);
+  if (layer?.marked) growTextBox(ctx, layer, fit, ax, cy, align, paint);
   const step = fit.size * fit.lh;
   const size = fit.size;
   fit.lines.forEach((line, i) => {
@@ -521,7 +695,7 @@ function drawFit(ctx: CanvasRenderingContext2D, fit: Fit, x: number, cy: number,
 }
 
 /** Texto em arco (selos): `bottom` lê da esquerda para a direita por baixo, com as letras em pé. */
-function arcText(ctx: CanvasRenderingContext2D, raw: string, cx: number, cy: number, r: number, maxSize: number, maxSpan: number, type: Type, color: string, bottom: boolean) {
+function arcText(ctx: CanvasRenderingContext2D, raw: string, cx: number, cy: number, r: number, maxSize: number, maxSpan: number, type: Type, color: string, bottom: boolean, layer: LayerControl | null = null) {
   const text = type.caps && !isScriptFont(type.font) ? raw.toLocaleUpperCase("pt-BR") : raw;
   const chars = [...text.trim()];
   if (!chars.length || r <= 0) return;
@@ -548,6 +722,7 @@ function arcText(ctx: CanvasRenderingContext2D, raw: string, cx: number, cy: num
   chars.forEach((char, i) => {
     const half = (widths[i] - trackingPx(type, size)) / 2 / r;
     const theta = bottom ? angle - half : angle + half;
+    if (layer?.marked) growBox(layer, cx + r * Math.cos(theta) - size * 0.6, cy + r * Math.sin(theta) - size * 0.6, size * 1.2, size * 1.2);
     ctx.save();
     ctx.translate(cx + r * Math.cos(theta), cy + r * Math.sin(theta));
     ctx.rotate(bottom ? theta - Math.PI / 2 : theta + Math.PI / 2);
@@ -583,7 +758,127 @@ type Scene = {
   accent2: string;
   transparent: boolean;
   rng: () => number;
+  /** Separação entre o quadro do estilo e o bloco de texto (posição livre); null = desenho direto. */
+  layer: LayerControl | null;
 };
+
+/*
+ * Bloco de texto móvel. Cada estilo desenha o quadro (fundo, padrões, molduras) e, a partir de uma marca,
+ * o bloco: o texto e o que acompanha o texto (placa, selo, fita, divisor, estrelas). A marca é o primeiro
+ * stack()/inline() ou um begin(s, caixa) explícito antes de uma placa/selo.
+ * - "auto": desenha tudo e mede o bloco (caixa em coordenadas da área).
+ * - "frame": desenha só o que vem antes da marca (o quadro fica parado).
+ * - "block": desenha só o que vem depois da marca, com o mapeamento da caixa automática para a posição do
+ *   cliente aplicado sobre a transformação em uso (texto continua vetorial, sem perder nitidez).
+ */
+type LayerControl = {
+  phase: "auto" | "frame" | "block";
+  /** Contexto real (o da cena pode ser o proxy). */
+  ctx: CanvasRenderingContext2D;
+  /** Transformação no início da área (região do chinelo) e a sua inversa. */
+  base: DOMMatrix;
+  inverse: DOMMatrix;
+  marked: boolean;
+  /** Profundidade de save() (proxy) e a do momento da marca. */
+  depth: number;
+  markDepth: number;
+  /** Mapeamento do bloco, em coordenadas do canvas (fase "block"). */
+  mapping: DOMMatrix | null;
+  /** Caixa do bloco em coordenadas da área (fases "auto" e "frame"). */
+  box: { x0: number; y0: number; x1: number; y1: number } | null;
+  /** O bloco tem placa/selo (begin com caixa): a caixa já cobre os ornamentos, sem folga extra. */
+  container: boolean;
+};
+
+function layerControl(ctx: CanvasRenderingContext2D, phase: LayerControl["phase"]): LayerControl {
+  const base = ctx.getTransform();
+  return { phase, ctx, base, inverse: base.inverse(), marked: false, depth: 0, markDepth: 0, mapping: null, box: null, container: false };
+}
+
+/** Soma à caixa do bloco um retângulo no referencial em uso (convertido para coordenadas da área). */
+function growBox(layer: LayerControl, x: number, y: number, w: number, h: number) {
+  if (layer.phase === "block" || !(w > 0) || !(h > 0)) return;
+  const m = layer.inverse.multiply(layer.ctx.getTransform());
+  for (const [px, py] of [
+    [x, y],
+    [x + w, y],
+    [x, y + h],
+    [x + w, y + h],
+  ]) {
+    const p = m.transformPoint(new DOMPoint(px, py));
+    const box = layer.box;
+    if (!box) layer.box = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+    else {
+      box.x0 = Math.min(box.x0, p.x);
+      box.y0 = Math.min(box.y0, p.y);
+      box.x1 = Math.max(box.x1, p.x);
+      box.y1 = Math.max(box.y1, p.y);
+    }
+  }
+}
+
+function applyMapping(layer: LayerControl) {
+  if (layer.mapping) layer.ctx.setTransform(layer.mapping.multiply(layer.ctx.getTransform()));
+}
+
+/**
+ * Começo do bloco de texto. Sem caixa: marca no primeiro texto. Com caixa: placa/selo que acompanha o
+ * texto (entra na caixa do bloco e se move com ele).
+ */
+function begin(s: Scene, rect?: Box) {
+  const layer = s.layer;
+  if (!layer) return;
+  if (!layer.marked) {
+    layer.marked = true;
+    layer.markDepth = layer.depth;
+    if (layer.phase === "block") applyMapping(layer);
+  }
+  if (rect) {
+    layer.container = true;
+    growBox(layer, rect.x, rect.y, rect.w, rect.h);
+  }
+}
+
+const DRAW_CALLS = new Set<PropertyKey>(["fill", "stroke", "fillRect", "strokeRect", "fillText", "strokeText", "drawImage", "putImageData", "clearRect"]);
+const noop = () => undefined;
+
+/** Contexto que cala os desenhos fora da fase (quadro ou bloco) e reaplica o mapeamento após restore(). */
+function layerContext(layer: LayerControl): CanvasRenderingContext2D {
+  const ctx = layer.ctx;
+  if (layer.phase === "auto") return ctx;
+  const bound = new Map<PropertyKey, unknown>();
+  return new Proxy(ctx, {
+    get(target, key) {
+      if (key === "save") {
+        return () => {
+          layer.depth += 1;
+          target.save();
+        };
+      }
+      if (key === "restore") {
+        return () => {
+          target.restore();
+          layer.depth = Math.max(0, layer.depth - 1);
+          // Voltou a um estado salvo antes da marca: o mapeamento do bloco precisa valer de novo.
+          if (layer.phase === "block" && layer.marked && layer.depth < layer.markDepth) {
+            layer.markDepth = layer.depth;
+            applyMapping(layer);
+          }
+        };
+      }
+      if (DRAW_CALLS.has(key) && (layer.phase === "frame" ? layer.marked : !layer.marked)) return noop;
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== "function") return value;
+      let fn = bound.get(key);
+      if (!fn) {
+        fn = (value as (...args: unknown[]) => unknown).bind(target);
+        bound.set(key, fn);
+      }
+      return fn;
+    },
+    set: (target, key, value) => Reflect.set(target, key, value, target),
+  });
+}
 
 function shapeOf(aspect: number): Shape {
   if (aspect >= 3) return "strip";
@@ -604,7 +899,9 @@ const ACCENTS: Record<ArtStyle, { primary: readonly string[]; secondary: readonl
   elegante: { primary: [C.gold, C.paleGold, C.amber], secondary: [C.ink, "#ffffff"] },
 };
 
-function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, opts: { transparent: boolean; sample: boolean; surface?: string }): Scene {
+type SceneOpts = { transparent: boolean; sample: boolean; surface?: string; layer?: LayerControl | null };
+
+function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, opts: SceneOpts): Scene {
   const family = artFamily(art.kind);
   const style = styleOf(art.style);
   let text = art.text.trim();
@@ -627,8 +924,9 @@ function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
   const accents = ACCENTS[style];
   const accent = pick(accents.primary, [bg], 1.7);
   const accent2 = pick(accents.secondary, [bg, ink, accent], 1.3);
+  const layer = opts.layer ?? null;
   return {
-    ctx,
+    ctx: layer ? layerContext(layer) : ctx,
     w,
     h,
     unit: Math.min(w, h),
@@ -644,6 +942,7 @@ function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
     accent2,
     transparent: opts.transparent,
     rng: seeded(`${label}|${style}|${family}`),
+    layer,
   };
 }
 
@@ -677,6 +976,8 @@ type Placed = { top: number; bottom: number; mainBottom: number; mainW: number; 
 function stack(s: Scene, o: StackOpts): Placed {
   const { ctx } = s;
   const { box } = o;
+  begin(s);
+  const layer = s.layer;
   const align = o.align ?? "center";
   const subText = o.noSub ? "" : s.sub;
   const dividerH = o.divider ? (o.dividerH ?? 0) : 0;
@@ -695,10 +996,15 @@ function stack(s: Scene, o: StackOpts): Placed {
   const top = o.valign === "top" ? box.y : o.valign === "bottom" ? box.y + box.h - total : box.y + (box.h - total) / 2;
   const anchor = align === "left" ? box.x : align === "right" ? box.x + box.w : box.x + box.w / 2;
   const mainW = fitWidth(ctx, mainF);
-  drawFit(ctx, mainF, anchor, top + mainH / 2, align, o.mainPaint);
+  drawFit(ctx, mainF, anchor, top + mainH / 2, align, o.mainPaint, layer);
   let y = top + mainH;
   if (dividerH && o.divider) {
     y += gap;
+    if (layer?.marked) {
+      // Divisores (filete, losangos) podem ser mais largos que um nome curto.
+      const dw = Math.max(mainW, s.unit * 0.26);
+      growBox(layer, align === "left" ? anchor : align === "right" ? anchor - dw : anchor - dw / 2, y - dividerH, dw, dividerH * 3);
+    }
     o.divider(anchor, y + dividerH / 2, mainW);
     y += dividerH;
   }
@@ -709,10 +1015,12 @@ function stack(s: Scene, o: StackOpts): Placed {
       const pad = subF.size * 0.85;
       const sw = fitWidth(ctx, subF) + pad * 2;
       const sx = align === "left" ? anchor : align === "right" ? anchor - sw : anchor - sw / 2;
+      // A placa (fita, pílula) entra inteira na caixa do bloco, com as pontas da fita.
+      if (layer?.marked) growBox(layer, sx - subH * 0.7, y, sw + subH * 1.4, subH * 1.25);
       o.subPlate(sx, y, sw, subH, mainW);
-      drawFit(ctx, subF, align === "left" ? anchor + pad : align === "right" ? anchor - pad : anchor, cy, align, o.subPaint);
+      drawFit(ctx, subF, align === "left" ? anchor + pad : align === "right" ? anchor - pad : anchor, cy, align, o.subPaint, layer);
     } else {
-      drawFit(ctx, subF, anchor, cy, align, o.subPaint);
+      drawFit(ctx, subF, anchor, cy, align, o.subPaint, layer);
     }
     y += subH;
   }
@@ -738,6 +1046,8 @@ type InlineOpts = {
 function inline(s: Scene, o: InlineOpts): { left: number; right: number; cy: number; size: number } {
   const { ctx } = s;
   const { box } = o;
+  begin(s);
+  const layer = s.layer;
   const hasSub = Boolean(s.sub);
   const mainMax = Math.min(o.mainMax ?? box.h * 0.7, box.h * 0.8);
   // Divide a largura pela proporção natural dos dois textos (subtexto longo não vira miniatura).
@@ -760,17 +1070,18 @@ function inline(s: Scene, o: InlineOpts): { left: number; right: number; cy: num
   const total = mainW + (subW ? gap + sepW + (sepW ? gap : 0) + subW : 0);
   const spread = o.align === "spread" && subW > 0;
   const x0 = o.align === "left" || spread ? box.x : box.x + (box.w - total) / 2;
-  drawFit(ctx, mainF, x0, cy, "left", o.mainPaint);
+  drawFit(ctx, mainF, x0, cy, "left", o.mainPaint, layer);
   let x = x0 + mainW;
   if (subW) {
     const subX = spread ? box.x + box.w - subW : x + gap + sepW + (sepW ? gap : 0);
     if (o.sep) o.sep.draw(x + gap, subX - (sepW ? gap : 0), cy, mainF.size);
     if (o.subPlate) {
       const ph = blockHeight(subF) + subF.size * 0.95;
+      if (layer?.marked) growBox(layer, subX, cy - ph / 2, subW, ph);
       o.subPlate(subX, cy - ph / 2, subW, ph);
-      drawFit(ctx, subF, subX + pad, cy, "left", o.subPaint);
+      drawFit(ctx, subF, subX + pad, cy, "left", o.subPaint, layer);
     } else {
-      drawFit(ctx, subF, subX, cy, "left", o.subPaint);
+      drawFit(ctx, subF, subX, cy, "left", o.subPaint, layer);
     }
     x = subX + subW;
   }
@@ -1026,6 +1337,8 @@ function paintClassico(s: Scene) {
     const cx = w / 2;
     const cy = h / 2;
     const r = unit * (family === "badge" ? 0.42 : 0.46);
+    // Na estampa o selo inteiro acompanha o texto; no adesivo/chaveiro o aro é a própria peça.
+    if (family === "apparel") begin(s, { x: cx - r * 1.02, y: cy - r * 1.02, w: r * 2.04, h: r * 2.04 });
     ctx.strokeStyle = s.ink;
     ctx.lineWidth = unit * 0.022;
     circle(ctx, cx, cy, r);
@@ -1040,7 +1353,7 @@ function paintClassico(s: Scene) {
       const a = -Math.PI / 2 + k * 0.32;
       star(ctx, cx + r * 0.9 * Math.cos(a), cy + r * 0.9 * Math.sin(a), r * (k ? 0.04 : 0.055), s.accent);
     }
-    if (s.sub) arcText(ctx, s.sub, cx, cy, r * 0.9, r * 0.11, Math.PI * 0.82, sub, s.ink, true);
+    if (s.sub) arcText(ctx, s.sub, cx, cy, r * 0.9, r * 0.11, Math.PI * 0.82, sub, s.ink, true, s.layer);
     else for (const k of [-1, 1]) star(ctx, cx + r * 0.9 * Math.cos(Math.PI / 2 + k * 0.2), cy + r * 0.9 * Math.sin(Math.PI / 2 + k * 0.2), r * 0.04, s.ink);
     return;
   }
@@ -1056,6 +1369,7 @@ function paintClassico(s: Scene) {
       ctx.fill();
     }
     const plate = plateBox(s);
+    begin(s, plate);
     ctx.fillStyle = s.bg;
     ctx.strokeStyle = s.ink;
     ctx.lineWidth = unit * 0.006;
@@ -1222,7 +1536,7 @@ function paintModerno(s: Scene) {
     stack(s, { box: { x: w * 0.14, y: h * 0.24, w: w * 0.72, h: split - h * 0.3 }, main, sub, mainMax: unit * 0.28, maxLines: lines, mainPaint, subPaint, noSub: true });
     if (s.sub) {
       const f = fitText(ctx, s.sub, sub, w * 0.66, (h - split) * 0.4, unit * 0.07, 1);
-      drawFit(ctx, f, w / 2, split + (h - split) * 0.42, "center", { fill: readableInk(a1) });
+      drawFit(ctx, f, w / 2, split + (h - split) * 0.42, "center", { fill: readableInk(a1) }, s.layer);
     }
     return;
   }
@@ -1251,6 +1565,7 @@ function paintModerno(s: Scene) {
       }
     }
     const plate = plateBox(s);
+    begin(s, plate);
     ctx.fillStyle = s.bg;
     ctx.fillRect(plate.x, plate.y, plate.w, plate.h);
     ctx.fillStyle = a1;
@@ -1343,6 +1658,7 @@ function paintRetro(s: Scene) {
     const cx = w / 2;
     const r = unit * 0.34;
     const cy = h * 0.4;
+    begin(s, { x: cx - r, y: cy - r, w: r * 2, h: r * 2 });
     ctx.save();
     circle(ctx, cx, cy, r);
     ctx.clip();
@@ -1398,6 +1714,7 @@ function paintRetro(s: Scene) {
       ctx.stroke();
     }
     const box = plateBox(s);
+    begin(s, box);
     ctx.fillStyle = s.bg;
     ctx.strokeStyle = s.ink;
     ctx.lineWidth = unit * 0.008;
@@ -1494,6 +1811,7 @@ function paintMinimal(s: Scene) {
     }
     ctx.stroke();
     const box = plateBox(s);
+    begin(s, box);
     ctx.fillStyle = s.bg;
     ctx.fillRect(box.x, box.y, box.w, box.h);
     const placed = stack(s, { box: inset(box, box.w * 0.1, box.h * 0.16), main, sub, mainMax: unit * 0.18, maxLines: Math.max(2, lines), mainPaint, subPaint, divider: hairline, dividerH: hair, gap: 0.45 });
@@ -1612,6 +1930,7 @@ function paintVibrante(s: Scene) {
     const cx = w / 2;
     const cy = h * 0.46;
     const r = unit * 0.36;
+    begin(s, { x: cx - r * 1.06, y: cy - r * 0.88, w: r * 2.1, h: r * 1.82 });
     [
       [C.magenta, -0.5, -0.2],
       [C.sun, 0.48, -0.32],
@@ -1694,6 +2013,8 @@ function paintElegante(s: Scene) {
       ctx.stroke();
     }
     const leaf = r * 0.16;
+    // A coroa de louros acompanha o texto; no adesivo, o aro duplo de cima fica como moldura.
+    begin(s, { x: cx - r - leaf, y: cy - r - leaf, w: (r + leaf) * 2, h: (r + leaf) * 2 });
     laurel(ctx, cx, cy, r, Math.PI * 0.6, Math.PI * 1.32, leaf, gold);
     laurel(ctx, cx, cy, r, Math.PI * 0.4, -Math.PI * 0.32, leaf, gold);
     diamond(ctx, cx, cy - r, r * 0.07, gold);
@@ -1716,6 +2037,7 @@ function paintElegante(s: Scene) {
     }
     ctx.stroke();
     const box = plateBox(s);
+    begin(s, box);
     ctx.fillStyle = s.bg;
     ctx.fillRect(box.x, box.y, box.w, box.h);
     doubleFrame(ctx, inset(box, unit * 0.02), unit * 0.018, lw, gold);
@@ -1733,6 +2055,7 @@ function paintElegante(s: Scene) {
     const placed = stack(s, { box: { x: w * 0.2, y: h * 0.16, w: w * 0.6, h: h * 0.68 }, main, sub, mainMax: unit * 0.32, maxLines: 2, mainPaint, subPaint, divider, dividerH: lw * 4 });
     const y = placed.top + placed.size * 0.5;
     const len = Math.min(w * 0.16, unit * 0.36);
+    if (s.layer?.marked) growBox(s.layer, placed.left - placed.size * 0.25 - len, y - len * 0.3, placed.right - placed.left + placed.size * 0.5 + len * 2, len * 0.6);
     flourish(ctx, placed.left - placed.size * 0.25, y, len, -1, gold, lw);
     flourish(ctx, placed.right + placed.size * 0.25, y, len, 1, gold, lw);
     return;
@@ -1769,72 +2092,125 @@ const PAINTERS: Record<ArtStyle, (s: Scene) => void> = {
 };
 
 /**
- * Caneca, copo e garrafa: a faixa dá quase a volta toda, mas só ~120° ficam de frente para a câmera.
- * O desenho vai nessa janela central (fração da largura da faixa); o resto fica com o fundo.
+ * Caneca, copo e garrafa: a faixa dá quase a volta toda, mas só ~130° ficam de frente para a câmera.
+ * O template e a legenda automática vão nessa janela central (fração da largura da faixa); o resto fica
+ * com o fundo. O texto posicionado pelo cliente pode ir para qualquer ponto da faixa.
  */
 const FRONT_WINDOW: Partial<Record<MockupKind, number>> = { mug: 0.38, tumbler: 0.38, bottle: 0.38 };
 
-/** Pinta só na janela frontal das peças cilíndricas; nas demais, na área toda. */
-function inFrontWindow(ctx: CanvasRenderingContext2D, w: number, h: number, kind: MockupKind | undefined, paint: (w: number) => void) {
-  const share = kind ? FRONT_WINDOW[kind] : undefined;
-  if (!share) {
-    paint(w);
-    return;
-  }
-  const ww = Math.round(w * share);
-  ctx.save();
-  ctx.translate(Math.round((w - ww) / 2), 0);
-  ctx.beginPath();
-  ctx.rect(0, 0, ww, h);
-  ctx.clip();
-  paint(ww);
-  ctx.restore();
+/** Fração da largura usada pelo template e pela legenda automática (1 = a área toda). */
+function windowShare(art: ArtRender): number {
+  const share = art.frontWindow ?? (art.kind ? FRONT_WINDOW[art.kind] : undefined);
+  return share && share > 0 && share < 1 ? share : 1;
 }
 
-/** Arte de exemplo de cada família no estilo escolhido, já com o texto do cliente. */
-function drawTemplate(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string) {
+type Painter = (s: Scene) => void;
+
+/**
+ * Desenha um template (ou a legenda sobre a imagem) com o bloco de texto. Sem posição livre: desenha
+ * como sempre e mede o bloco, que vira a posição automática do editor 2D. Com posição livre: desenha o
+ * quadro parado e depois o bloco levado até a posição do cliente, sempre inteiro dentro da área.
+ */
+function drawBlock(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, painter: Painter, opts: Omit<SceneOpts, "layer">, placement: LayerPlacement | null): LayerInfo | null {
+  const ww = Math.round(w * windowShare(art));
+  const ox = Math.round((w - ww) / 2);
+  const run = (layer: LayerControl, clip: boolean) => {
+    ctx.save();
+    ctx.translate(ox, 0);
+    if (clip && ww < w) {
+      ctx.beginPath();
+      ctx.rect(0, 0, ww, h);
+      ctx.clip();
+    }
+    painter(makeScene(ctx, ww, h, art, label, { ...opts, layer }));
+    ctx.restore();
+  };
+  // Caixa e mapeamento no referencial da área (antes da janela frontal).
+  const first = layerControl(ctx, placement ? "frame" : "auto");
+  run(first, true);
+  const box = first.box;
+  if (!box) return null;
+  // Folga para o que acompanha o texto e não entra na medida (estrelas, contorno, brilho); placa e
+  // selo já cobrem o próprio desenho.
+  const pad = first.container ? 1 : Math.min(box.x1 - box.x0, box.y1 - box.y0) * 0.05 + 1;
+  const bw = box.x1 - box.x0 + pad * 2;
+  const bh = box.y1 - box.y0 + pad * 2;
+  if (!(bw > 1) || !(bh > 1)) return null;
+  const cx = (box.x0 + box.x1) / 2;
+  const cy = (box.y0 + box.y1) / 2;
+  // Escala em que o bloco cabe inteiro na área (scale 1 do cliente).
+  const fit = Math.min(w / bw, h / bh);
+  const base = { w: (bw * fit) / w, h: (bh * fit) / h };
+  if (!placement) return { placement: { x: cx / w, y: cy / h, scale: 1 / fit, rotation: 0 }, base, free: false };
+  const p = clampPlacement(placement, base, w / h);
+  const local = new DOMMatrix()
+    .translate(p.x * w, p.y * h)
+    .rotate(p.rotation)
+    .scale(fit * p.scale)
+    .translate(-cx, -cy);
+  const second = layerControl(ctx, "block");
+  second.mapping = second.base.multiply(local).multiply(second.inverse);
+  run(second, false);
+  return { placement: p, base, free: true };
+}
+
+/** Template do estilo (sem imagem), já com o texto do cliente. */
+function paintTemplate(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, placement: LayerPlacement | null): LayerInfo | null {
   const family = artFamily(art.kind);
   // Estampa de tecido: fundo transparente (o tecido aparece).
   const transparent = family === "apparel" && !art.opaque;
   const surface = transparent ? art.surface : undefined;
+  const sample = art.sample !== false;
   if (!transparent) {
-    ctx.fillStyle = makeScene(ctx, w, h, art, label, { transparent, sample: true }).bg;
+    ctx.fillStyle = makeScene(ctx, w, h, art, label, { transparent, sample }).bg;
     ctx.fillRect(0, 0, w, h);
   }
-  inFrontWindow(ctx, w, h, art.kind, (width) => {
-    const scene = makeScene(ctx, width, h, art, label, { transparent, sample: true, surface });
-    ctx.save();
-    PAINTERS[styleOf(art.style)](scene);
-    ctx.restore();
-  });
+  return drawBlock(ctx, w, h, art, label, PAINTERS[styleOf(art.style)], { transparent, sample, surface }, placement);
 }
 
-function drawImage(ctx: CanvasRenderingContext2D, w: number, h: number, image: HTMLImageElement, art: ArtSettings) {
-  ctx.fillStyle = art.background;
-  ctx.fillRect(0, 0, w, h);
+/**
+ * Imagem enviada: na posição do cliente (inteira dentro da área, sem distorcer) ou no encaixe automático
+ * (fit, zoom, deslocamento e giro de 90°). Devolve a caixa para o editor 2D.
+ */
+function paintImage(ctx: CanvasRenderingContext2D, w: number, h: number, image: HTMLImageElement, art: ArtSettings, placement: LayerPlacement | null): LayerInfo {
+  const iw = Math.max(1, image.naturalWidth);
+  const ih = Math.max(1, image.naturalHeight);
+  const aspect = w / h;
+  const base = containBase(iw / ih, aspect);
+  if (placement) {
+    const p = clampPlacement(placement, base, aspect);
+    const dw = base.w * w * p.scale;
+    const dh = base.h * h * p.scale;
+    ctx.save();
+    ctx.translate(p.x * w, p.y * h);
+    ctx.rotate(p.rotation * DEG);
+    ctx.drawImage(image, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
+    return { placement: p, base, free: true };
+  }
   const rotated = art.rotation === 90 || art.rotation === 270;
-  const iw = Math.max(1, rotated ? image.naturalHeight : image.naturalWidth);
-  const ih = Math.max(1, rotated ? image.naturalWidth : image.naturalHeight);
-  const base = art.fit === "cover" ? Math.max(w / iw, h / ih) : Math.min(w / iw, h / ih);
-  const scale = base * art.zoom;
+  const rw = rotated ? ih : iw;
+  const rh = rotated ? iw : ih;
+  const fitScale = art.fit === "cover" ? Math.max(w / rw, h / rh) : Math.min(w / rw, h / rh);
+  const scale = fitScale * (Number.isFinite(art.zoom) && art.zoom > 0 ? art.zoom : 1);
+  const dw = iw * scale;
+  const dh = ih * scale;
   ctx.save();
   ctx.translate(w / 2 + art.offsetX * w, h / 2 + art.offsetY * h);
-  ctx.rotate((art.rotation * Math.PI) / 180);
-  const dw = image.naturalWidth * scale;
-  const dh = image.naturalHeight * scale;
+  ctx.rotate(art.rotation * DEG);
   ctx.drawImage(image, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
+  return { placement: { x: 0.5 + art.offsetX, y: 0.5 + art.offsetY, scale: dw / (base.w * w), rotation: normalizeRotation(art.rotation) }, base, free: false };
 }
 
-/** Texto do cliente por cima da imagem enviada, no tratamento do estilo escolhido. */
-function drawCaption(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string) {
-  const s = makeScene(ctx, w, h, art, label, { transparent: true, sample: false });
+/** Texto do cliente por cima da imagem enviada, no tratamento do estilo escolhido (automático: embaixo). */
+function paintCaption(s: Scene, style: ArtStyle) {
+  const { ctx, w, h } = s;
   if (!s.text && !s.sub) return;
   if (!s.text) s.text = s.sub;
   if (s.text === s.sub) s.sub = "";
   const strip = s.shape === "strip";
   const box: Box = strip ? { x: w * 0.52, y: h * 0.12, w: w * 0.44, h: h * 0.76 } : { x: w * 0.07, y: h * 0.68, w: w * 0.86, h: h * 0.26 };
-  const style = styleOf(art.style);
   const main: Type = { font: s.font, caps: style === "retro", lineHeight: 1.02 };
   const sub: Type = style === "elegante" ? { font: "playfair", italic: true } : { font: "figtree", weight: 700, caps: true, tracking: 0.14 };
   const soft: Paint = { fill: s.ink, shadow: "rgba(0,0,0,0.38)", shadowBlur: 0.14 };
@@ -1842,8 +2218,10 @@ function drawCaption(ctx: CanvasRenderingContext2D, w: number, h: number, art: A
   ctx.save();
   switch (style) {
     case "moderno": {
+      const plate = { x: box.x - s.unit * 0.03, y: box.y, w: box.w + s.unit * 0.06, h: box.h };
+      begin(s, plate);
       ctx.fillStyle = rgba(s.accent, 0.94);
-      ctx.fillRect(box.x - s.unit * 0.03, box.y, box.w + s.unit * 0.06, box.h);
+      ctx.fillRect(plate.x, plate.y, plate.w, plate.h);
       const ink = readableInk(s.accent);
       stack(s, { ...base, box: inset(box, s.unit * 0.02), align: "left", mainPaint: { fill: ink }, subPaint: { fill: rgba(ink, 0.8) } });
       break;
@@ -1866,6 +2244,22 @@ function drawCaption(ctx: CanvasRenderingContext2D, w: number, h: number, art: A
       stack(s, { ...base, mainPaint: soft, subPaint: soft });
   }
   ctx.restore();
+}
+
+/** Área de arte inteira (ou a região do chinelo): imagem e legenda, ou o template; cada um na sua posição. */
+function paintArea(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, image: HTMLImageElement | null, label: string, info: PaintInfo) {
+  const layout = art.layout ?? null;
+  if (image) {
+    ctx.fillStyle = art.background;
+    ctx.fillRect(0, 0, w, h);
+    info.image = paintImage(ctx, w, h, image, art, layout?.image ?? null);
+    if (art.text.trim() || (art.subtext ?? "").trim()) {
+      const style = styleOf(art.style);
+      info.text = drawBlock(ctx, w, h, art, label, (s) => paintCaption(s, style), { transparent: true, sample: false }, layout?.text ?? null);
+    }
+    return;
+  }
+  info.text = paintTemplate(ctx, w, h, art, label, layout?.text ?? null);
 }
 
 // ---------------------------------------------------------------------------
@@ -1909,22 +2303,33 @@ function neonStroke(ctx: CanvasRenderingContext2D, draw: () => void, color: stri
   draw();
 }
 
-function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HTMLImageElement | null, art: ArtRender) {
+function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HTMLImageElement | null, art: ArtRender, info: PaintInfo) {
   ctx.clearRect(0, 0, w, h);
   const unit = Math.min(w, h);
   const colors = art.ledColors?.length ? art.ledColors : ["#ff4fd8", "#38e1ff"];
   const look = NEON_LOOK[styleOf(art.style)];
+  const layout = art.layout ?? null;
+  const aspect = w / h;
   if (image) {
-    const scale = Math.min((w * 0.86) / Math.max(1, image.naturalWidth), (h * 0.8) / Math.max(1, image.naturalHeight));
-    const dw = image.naturalWidth * scale;
-    const dh = image.naturalHeight * scale;
+    const iw = Math.max(1, image.naturalWidth);
+    const ih = Math.max(1, image.naturalHeight);
+    const base = containBase(iw / ih, aspect);
+    // Automático: centralizada, com folga para o brilho.
+    const auto: LayerPlacement = { x: 0.5, y: 0.5, scale: (Math.min((w * 0.86) / iw, (h * 0.8) / ih) * iw) / (base.w * w), rotation: 0 };
+    const p = layout?.image ? clampPlacement(layout.image, base, aspect) : auto;
+    info.image = { placement: p, base, free: Boolean(layout?.image) };
+    const dw = base.w * w * p.scale;
+    const dh = base.h * h * p.scale;
+    ctx.save();
+    ctx.translate(p.x * w, p.y * h);
+    ctx.rotate(p.rotation * DEG);
     ctx.shadowColor = colors[0];
     ctx.shadowBlur = unit * 0.06 * look.glow;
-    for (let i = 0; i < 3; i += 1) ctx.drawImage(image, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    for (let i = 0; i < 3; i += 1) ctx.drawImage(image, -dw / 2, -dh / 2, dw, dh);
     ctx.shadowBlur = 0;
     ctx.globalCompositeOperation = "lighter";
-    ctx.drawImage(image, (w - dw) / 2, (h - dh) / 2, dw, dh);
-    ctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(image, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
     return;
   }
   const typed = art.text.trim();
@@ -1944,15 +2349,50 @@ function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HT
   const top = (h - total) / 2;
   const step = mainF.size * mainF.lh;
   const size = mainF.size;
+  const below = top + mainH + gap * 0.5;
+
+  // Caixa do letreiro (tubos, moldura e extras do estilo, com folga para o tubo e o brilho).
+  setType(ctx, subF.type, Math.max(1, subF.size));
+  const subW = subH ? widest(ctx, subF.lines) - trackingPx(subF.type, subF.size) : 0;
+  setType(ctx, type, size);
+  const track = trackingPx(type, size);
+  const mainW = widest(ctx, mainF.lines) - track;
+  const fw = Math.min(w * 0.94, mainW + size * 0.9);
+  const fh = Math.min(h * 0.94, total + size * 0.7);
+  let halfW = Math.max(mainW, subW) / 2;
+  let y0 = top;
+  let y1 = top + total;
+  if (look.extra === "frame") {
+    halfW = Math.max(halfW, fw / 2);
+    y0 = Math.min(y0, h / 2 - fh / 2);
+    y1 = Math.max(y1, h / 2 + fh / 2);
+  } else if (look.extra && !subH) y1 = Math.max(y1, below + size * 0.45);
+  const pad = size * look.tube + unit * 0.02;
+  const bw = halfW * 2 + pad * 2 + (look.extra === "double" ? size * 0.06 : 0);
+  const bh = y1 - y0 + pad * 2;
+  const cx = w / 2;
+  const cy = (y0 + y1) / 2;
+  const fit = Math.min(w / bw, h / bh);
+  const base = { w: (bw * fit) / w, h: (bh * fit) / h };
+  let placement: LayerPlacement = { x: cx / w, y: cy / h, scale: 1 / fit, rotation: 0 };
 
   ctx.save();
+  if (layout?.text) {
+    // Posição do cliente: o letreiro inteiro é levado até lá (os tubos continuam vetoriais).
+    placement = clampPlacement(layout.text, base, aspect);
+    const m = new DOMMatrix()
+      .translate(placement.x * w, placement.y * h)
+      .rotate(placement.rotation)
+      .scale(fit * placement.scale)
+      .translate(-cx, -cy);
+    ctx.setTransform(ctx.getTransform().multiply(m));
+  }
+  info.text = { placement, base, free: Boolean(layout?.text) };
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   setType(ctx, type, size);
-  const track = trackingPx(type, size);
-  const mainW = widest(ctx, mainF.lines) - track;
   let wordIndex = 0;
   mainF.lines.forEach((line, i) => {
     const y = top + mainH / 2 + (i - (mainF.lines.length - 1) / 2) * step;
@@ -1982,11 +2422,9 @@ function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HT
     }
   });
 
-  const accent = colors[1 % colors.length];
-  const below = top + mainH + gap * 0.5;
+  // Uma cor por linha; a seguinte acende o subtexto e os extras do estilo (moldura, sublinhado).
+  const accent = colors[mainF.lines.length % colors.length];
   if (look.extra === "frame") {
-    const fw = Math.min(w * 0.94, mainW + size * 0.9);
-    const fh = Math.min(h * 0.94, total + size * 0.7);
     neonStroke(
       ctx,
       () => {
@@ -2055,30 +2493,48 @@ function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HT
   ctx.restore();
 }
 
-export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string) {
+/**
+ * Pinta a arte no canvas da peça e devolve onde ficaram o texto e a imagem (o editor 2D põe as alças ali).
+ * No chinelo com região escolhida, a arte vai só na faixa da região (dedos, meio ou calcanhar) e o resto
+ * da palmilha fica na cor da peça; a posição livre (art.layout) é relativa à região.
+ */
+export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string): PaintInfo {
+  const info: PaintInfo = { text: null, image: null };
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) return info;
   const { width: w, height: h } = canvas;
-  if (!w || !h) return;
+  if (!w || !h) return info;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.filter = "none";
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
   if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
   ctx.clearRect(0, 0, w, h);
   if (variant === "neon") {
-    drawNeon(ctx, w, h, image, art);
-    return;
+    drawNeon(ctx, w, h, image, art, info);
+    return info;
   }
   if (variant === "blank") {
     ctx.fillStyle = "#fafafa";
     ctx.fillRect(0, 0, w, h);
-    return;
+    return info;
   }
-  if (image) {
-    drawImage(ctx, w, h, image, art);
-    if (art.text.trim() || (art.subtext ?? "").trim()) inFrontWindow(ctx, w, h, art.kind, (width) => drawCaption(ctx, width, h, art, label));
+  const region = art.kind === "flipflop" ? flipflopRegion(art.region) : null;
+  if (region && region.value !== "inteira") {
+    // O topo do canvas é a ponta dos dedos (mesmo UV da palmilha).
+    const top = Math.round((1 - region.to) * h);
+    const height = Math.max(1, Math.round((1 - region.from) * h) - top);
+    ctx.fillStyle = art.surface && /^#[0-9a-f]{3,8}$/i.test(art.surface) ? art.surface : "#fafaf8";
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.translate(0, top);
+    ctx.beginPath();
+    ctx.rect(0, 0, w, height);
+    ctx.clip();
+    paintArea(ctx, w, height, art, image, label, info);
+    ctx.restore();
   } else {
-    drawTemplate(ctx, w, h, art, label);
+    paintArea(ctx, w, h, art, image, label, info);
   }
   if (variant === "gray") {
     const data = ctx.getImageData(0, 0, w, h);
@@ -2088,6 +2544,7 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
     }
     ctx.putImageData(data, 0, 0);
   }
+  return info;
 }
 
 /** Fontes que um estilo usa além da escolhida pelo cliente (subtexto e letra do neon). */
@@ -2181,7 +2638,11 @@ export async function fileToDataUrl(file: File, maxSide = 2048): Promise<string>
     canvas.width = Math.round(image.naturalWidth * scale);
     canvas.height = Math.round(image.naturalHeight * scale);
     canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL(file.type === "image/png" ? "image/png" : "image/jpeg", 0.9);
+    const dataUrl = canvas.toDataURL(file.type === "image/png" ? "image/png" : "image/jpeg", 0.9);
+    // O 3D usa a cópia reduzida; a resolução de impressão é a do arquivo original.
+    SOURCE_SIZES.set(dataUrl, { w: image.naturalWidth, h: image.naturalHeight });
+    if (SOURCE_SIZES.size > 8) SOURCE_SIZES.delete(SOURCE_SIZES.keys().next().value as string);
+    return dataUrl;
   } finally {
     URL.revokeObjectURL(url);
   }

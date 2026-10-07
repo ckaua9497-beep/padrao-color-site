@@ -28,7 +28,8 @@ function styleFont(style: ArtStyle) {
 
 export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
   const [active, setActive] = useState(demos[0]?.slug ?? "");
-  const [art, setArt] = useState<ArtSettings>(DEFAULT_ART);
+  // Vitrine da home como antes: camiseta sem o manequim (ele aparece no web to print da página do produto).
+  const [art, setArt] = useState<ArtSettings>({ ...DEFAULT_ART, mannequin: null });
   const [fileName, setFileName] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);

@@ -7,6 +7,7 @@ import { Line } from "@react-three/drei";
 import * as THREE from "three";
 import { KIND_INFO } from "@/lib/mockup-kinds";
 import { fontFamily, heartPath, roundPath } from "../art";
+import { useSceneMode } from "../viewer-hooks";
 import {
   DimLabel,
   Dimensions,
@@ -363,63 +364,89 @@ function SideTable({ s, shade }: { s: number; shade: THREE.Texture }) {
   );
 }
 
+/** Papel em faixas com as emendas: o mesmo no estúdio e no ambiente (centro do papel na origem). */
+function PaperSheet({ geometry, tile, linen, wCm, H, s }: { geometry: THREE.BufferGeometry; tile: THREE.Texture; linen: THREE.Texture; wCm: number; H: number; s: number }) {
+  const strips = Math.max(1, Math.ceil(wCm / TILE_CM - 1e-6));
+  const seams = Array.from({ length: strips - 1 }, (_, i) => ((i + 1) * TILE_CM - wCm / 2) * s);
+  return (
+    <>
+      <mesh geometry={geometry} position-z={0.0006}>
+        <meshStandardMaterial map={tile} roughness={0.9} bumpMap={linen} bumpScale={0.35} />
+      </mesh>
+      {seams.map((x) => (
+        <group key={x} position={[x, 0, 0.0012]}>
+          <mesh>
+            <planeGeometry args={[0.18 * s, H]} />
+            <meshBasicMaterial color="#000000" transparent opacity={0.16} depthWrite={false} toneMapped={false} />
+          </mesh>
+          <mesh position-x={0.22 * s}>
+            <planeGeometry args={[0.16 * s, H]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.22} depthWrite={false} toneMapped={false} />
+          </mesh>
+        </group>
+      ))}
+    </>
+  );
+}
+
 /**
- * Papel de parede: trecho de parede (largura × pé-direito do pedido) forrado com a arte em módulos de
- * 50 cm, faixas com emenda vertical sutil e encaixe meia-queda, papel fosco com relevo de trama. Sanca e
- * rodapé brancos, um pedaço de assoalho de carvalho e uma mesinha lateral neutra dão a escala.
+ * Papel de parede: o papel cobre exatamente largura × altura do pedido, em módulos de 50 cm da arte
+ * (escala real da bobina), faixas com emenda vertical sutil e encaixe meia-queda, papel fosco com
+ * relevo de trama. No estúdio, o trecho de parede é um pouco mais largo que o papel (o resto fica
+ * pintado) para mostrar quanto ele cobre, com sanca, rodapé, assoalho e uma mesinha para a escala.
+ * No ambiente, só o papel: a parede, o rodapé e os móveis são os da sala.
  */
 export function WallpaperModel({ spec, art, label, showDims }: ModelProps) {
+  const { room } = useSceneMode();
   const wCm = Math.max(spec.widthCm, 10);
   const hCm = Math.max(spec.heightCm, 10);
-  const s = 2.8 / Math.max(wCm, hCm);
+  const marginCm = room ? 0 : THREE.MathUtils.clamp(wCm * 0.18, 25, 70);
+  const wallCm = wCm + marginCm * 2;
+  const s = 2.8 / Math.max(wallCm, hCm);
   const W = wCm * s;
+  const WW = wallCm * s;
   const H = hCm * s;
   const tile = useArtTexture(1, "front", art, label);
   const paper = useMemo(() => wallpaperGeometry(wCm, hCm, s), [wCm, hCm, s]);
   useGeometryCleanup(paper);
   const molding = useMemo(() => {
-    const base = moldingGeometry(BASEBOARD_CM.map(([x, y]) => [x * s, y * s]), W);
-    const crown = moldingGeometry(crownProfileCm().map(([x, y]) => [x * s, y * s]), W);
+    const base = moldingGeometry(BASEBOARD_CM.map(([x, y]) => [x * s, y * s]), WW);
+    const crown = moldingGeometry(crownProfileCm().map(([x, y]) => [x * s, y * s]), WW);
     return { base, crown, list: [base, crown] };
-  }, [s, W]);
+  }, [s, WW]);
   useGeometryListCleanup(molding.list);
   const textures = useMemo(() => {
     const linen = linenTexture();
-    const wood = woodTexture(wCm, FLOOR_CM + WALL_CM);
+    const wood = woodTexture(wallCm, FLOOR_CM + WALL_CM);
     const linear = linearShade();
     const radial = radialShade();
     return { linen, wood, linear, radial, list: [linen, wood, linear, radial] };
-  }, [wCm]);
+  }, [wallCm]);
   useEffect(() => () => textures.list.forEach((t) => t.dispose()), [textures]);
 
-  const strips = Math.max(1, Math.ceil(wCm / TILE_CM - 1e-6));
-  const seams = Array.from({ length: strips - 1 }, (_, i) => ((i + 1) * TILE_CM - wCm / 2) * s);
   const [lw, lh] = sizeLabels(spec);
   const floorD = (FLOOR_CM + WALL_CM) * s;
-  const tableX = Math.max(-W / 2 + 24 * s, -W * 0.3);
+  const tableX = Math.max(-WW / 2 + 24 * s, -WW * 0.3);
+
+  if (room) {
+    // Origem no pé do papel, no meio: o ambiente apoia no chão e cola na parede.
+    return (
+      <group userData={{ unitsPerCm: s, roomPose: true }}>
+        <group position-y={H / 2}>
+          <PaperSheet geometry={paper} tile={tile} linen={textures.linen} wCm={wCm} H={H} s={s} />
+        </group>
+      </group>
+    );
+  }
 
   return (
-    <group>
+    <group userData={{ unitsPerCm: s, roomPose: true }}>
       <group position-y={H / 2}>
-        <RoundedBlock w={W} h={H} d={WALL_CM * s} radius={0.8 * s} color="#e7e3dc" roughness={0.92} position={[0, 0, (-WALL_CM * s) / 2]} />
-        <mesh geometry={paper} position-z={0.0006}>
-          <meshStandardMaterial map={tile} roughness={0.9} bumpMap={textures.linen} bumpScale={0.35} />
-        </mesh>
-        {seams.map((x) => (
-          <group key={x} position={[x, 0, 0.0012]}>
-            <mesh>
-              <planeGeometry args={[0.18 * s, H]} />
-              <meshBasicMaterial color="#000000" transparent opacity={0.16} depthWrite={false} toneMapped={false} />
-            </mesh>
-            <mesh position-x={0.22 * s}>
-              <planeGeometry args={[0.16 * s, H]} />
-              <meshBasicMaterial color="#ffffff" transparent opacity={0.22} depthWrite={false} toneMapped={false} />
-            </mesh>
-          </group>
-        ))}
+        <RoundedBlock w={WW} h={H} d={WALL_CM * s} radius={0.8 * s} color="#e7e3dc" roughness={0.92} position={[0, 0, (-WALL_CM * s) / 2]} />
+        <PaperSheet geometry={paper} tile={tile} linen={textures.linen} wCm={wCm} H={H} s={s} />
         {/* Sombra macia logo abaixo da sanca. */}
         <mesh position={[0, H / 2 - 8.7 * s - 4 * s, 0.0016]}>
-          <planeGeometry args={[W, 8 * s]} />
+          <planeGeometry args={[WW, 8 * s]} />
           <ShadeMaterial map={textures.linear} opacity={0.12} />
         </mesh>
         <mesh geometry={molding.crown} position-y={H / 2}>
@@ -433,7 +460,7 @@ export function WallpaperModel({ spec, art, label, showDims }: ModelProps) {
 
       {/* Assoalho: o topo fica em y = 0, a parede apoia nele. */}
       <mesh position={[0, (-FLOOR_T_CM * s) / 2, floorD / 2 - WALL_CM * s]}>
-        <boxGeometry args={[W, FLOOR_T_CM * s, floorD]} />
+        <boxGeometry args={[WW, FLOOR_T_CM * s, floorD]} />
         <meshStandardMaterial attach="material-0" color="#8f6845" roughness={0.7} />
         <meshStandardMaterial attach="material-1" color="#8f6845" roughness={0.7} />
         <meshStandardMaterial attach="material-2" map={textures.wood} roughness={0.5} />
@@ -443,7 +470,7 @@ export function WallpaperModel({ spec, art, label, showDims }: ModelProps) {
       </mesh>
       {/* Oclusão no encontro do rodapé com o piso. */}
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.0008, 1.6 * s + 5 * s]}>
-        <planeGeometry args={[W, 10 * s]} />
+        <planeGeometry args={[WW, 10 * s]} />
         <ShadeMaterial map={textures.linear} opacity={0.3} />
       </mesh>
       <group position={[tableX, 0, 26 * s]}>

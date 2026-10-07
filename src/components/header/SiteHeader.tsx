@@ -19,7 +19,7 @@ import { STORE } from "@/lib/store";
 import { AccountLink } from "@/components/account/AccountLink";
 
 export type MenuCategory = { slug: string; name: string; count: number; image: string; minLeadDays: number | null };
-export type MenuGroup = { label: string; blurb: string; categories: MenuCategory[]; benefits: MenuBenefit[] };
+export type MenuGroup = { label: string; blurb: string; categories: MenuCategory[]; benefits: MenuBenefit[]; more?: { href: string; label: string } };
 
 type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number };
 
@@ -39,7 +39,7 @@ const normalize = (v: string) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
-const navItem = "flex items-center gap-1 whitespace-nowrap rounded-full px-3.5 py-2 text-[15px] font-bold transition-colors duration-200 2xl:text-nav";
+const navItem = "flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-2 text-[14px] font-bold transition-colors duration-200 min-[1440px]:px-3.5 min-[1440px]:text-[15px] 2xl:text-nav";
 
 export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[]; announcements: string[] }) {
   const pathname = usePathname();
@@ -92,7 +92,7 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
   return (
     <>
       {/* Texto pequeno sobre coral: preto passa AA (6,2:1); branco não passaria. */}
-      <div className="bg-coral text-ink">
+      <div className="relative overflow-hidden bg-coral text-ink">
         <Marquee
           className="h-9 items-center text-[13px] font-semibold"
           itemClassName="gap-6 pr-6"
@@ -103,6 +103,29 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
             </>
           ))}
         />
+        {/* Abas do checklist (festa, kits, fachada) no desktop: à direita da faixa, sem mexer na linha do menu. */}
+        <div className="pointer-events-none absolute inset-0 hidden xl:block">
+          <div className="container-site flex h-full items-center justify-end">
+            <nav
+              aria-label="Festas e fachadas"
+              className="pointer-events-auto relative flex h-full items-center gap-1.5 bg-coral pl-3 shadow-[-20px_0_14px_-6px_var(--color-coral)] after:absolute after:inset-y-0 after:left-full after:w-screen after:bg-coral"
+            >
+              {EXTRA_TABS.map((tab) => {
+                const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+                return (
+                  <Link
+                    key={tab.href}
+                    href={tab.href}
+                    aria-current={pathname === tab.href ? "page" : undefined}
+                    className={cx("rounded-full px-3 text-[13px] font-bold leading-6 transition-colors", active ? "bg-ink text-white" : "bg-white/90 hover:bg-white")}
+                  >
+                    {tab.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+        </div>
       </div>
 
       <header
@@ -133,27 +156,28 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
                 </button>
               </div>
             ))}
-            <Link href="/#mockup-3d" onMouseEnter={leave} className={cx(navItem, "hover:bg-mist")}>
+            <Link href="/#mockup-3d" onMouseEnter={leave} title="Mockup 3D" className={cx(navItem, "hover:bg-mist")}>
               <IconCube aria-hidden className="size-4 text-coral-700" />
-              Mockup 3D
+              <span className="max-[1439px]:sr-only">Mockup 3D</span>
             </Link>
             <Link href="/produtos" onMouseEnter={leave} aria-current={pathname === "/produtos" ? "page" : undefined} className={cx(navItem, pathname === "/produtos" ? "bg-ink text-white" : "hover:bg-mist")}>
               Todos os produtos
             </Link>
-            {EXTRA_TABS.map((tab) => (
-              <Link key={tab.href} href={tab.href} onMouseEnter={leave} aria-current={pathname === tab.href ? "page" : undefined} className={cx(navItem, "hidden 2xl:flex", pathname === tab.href ? "bg-ink text-white" : "hover:bg-mist")}>
-                {tab.label}
-              </Link>
-            ))}
           </nav>
 
           <div className="ml-auto flex items-center gap-1 xl:ml-0">
             <IconButton label="Buscar produtos" variant="ghost" aria-expanded={searchOpen} aria-controls="busca" onClick={() => setSearchOpen((v) => !v)} className="hover:bg-mist">
               <IconSearch className="size-5.5" />
             </IconButton>
-            <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className="hidden items-center gap-2 rounded-full px-3 py-2 text-[15px] font-bold transition-colors hover:bg-mist xl:flex">
+            <a
+              href={STORE.whatsapp}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Ajuda pelo WhatsApp"
+              title="Ajuda pelo WhatsApp"
+              className="hidden size-11 place-items-center rounded-full transition-colors hover:bg-mist xl:grid"
+            >
               <IconHeadset aria-hidden className="size-5" />
-              Ajuda
             </a>
             <AccountLink />
             <IconButton label={`Abrir carrinho, ${count} ${count === 1 ? "item" : "itens"}`} variant="ghost" onClick={() => openCart(true)} className="relative hover:bg-mist">
@@ -218,6 +242,13 @@ function MegaPanel({ id, group, index, open, onEnter }: { id: string; group: Men
               </Link>
             </li>
           ))}
+          {group.more && (
+            <li className="col-span-2 pt-2">
+              <Link href={group.more.href} className="inline-flex items-center gap-2 rounded-control p-2.5 text-[15px] font-bold transition-colors hover:bg-mist">
+                {group.more.label} <IconArrow aria-hidden className="size-4" />
+              </Link>
+            </li>
+          )}
         </ul>
         <ul className="grid w-[230px] shrink-0 content-start gap-4 border-l border-line py-2 pl-6" aria-label={`Vantagens de ${group.label}`}>
           {group.benefits.map((benefit) => {
@@ -257,7 +288,7 @@ function SearchPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
 
   useEffect(() => {
     if (!open || index) return;
-    fetch("/search-index.json")
+    fetch("/produtos/indice.json")
       .then((r) => r.json())
       .then(setIndex)
       .catch(() => setIndex([]));
@@ -353,6 +384,13 @@ function MobileMenu({ open, onClose, menu }: { open: boolean; onClose: () => voi
                     </Link>
                   </li>
                 ))}
+                {group.more && (
+                  <li>
+                    <Link href={group.more.href} className="block py-2 text-[15px] font-semibold text-white hover:underline">
+                      {group.more.label}
+                    </Link>
+                  </li>
+                )}
               </ul>
             </AccordionItem>
           ))}

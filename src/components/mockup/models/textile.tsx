@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { Decal } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import { dressFor, figureOf, type Figure } from "@/components/product/art-editor/mannequin";
+import { DEFAULT_ART, hasArtContent, type ArtRender } from "../art";
 import { useApparelArt, useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
-import { backVariant, useArtTexture, type MaskPath, type ModelProps } from "./shared";
+import { useArtTexture, type MaskPath, type ModelProps } from "./shared";
+import { useSceneMode } from "../viewer-hooks";
 
 /*
  * Têxteis procedurais: camiseta (e variações), boné, avental e bandana.
@@ -569,13 +573,28 @@ type ShirtParts = {
   placket: THREE.BufferGeometry | null;
   buttons: Vec3[];
   snaps: Vec3[];
+  /** Largura (meia) do corpo da peça e linha do ombro, para o manequim caber por dentro. */
+  widthAt: (y: number) => number;
+  /** x do contorno (costura lateral, depois a cava) em cada altura. */
+  outlineAt: (y: number) => number;
+  topLine: (ax: number) => number;
+  /** Eixo de cada manga (centro da cava → centro da boca) e os raios livres por dentro. */
+  sleeveAxes: { from: THREE.Vector3; to: THREE.Vector3; root: number; cuff: number }[];
   list: THREE.BufferGeometry[];
 };
 
-function buildShirt(cut: ShirtCut): ShirtParts {
+/** Corpo do manequim em coordenadas da camisa: meia largura e meia profundidade em cada altura. */
+type BodyFit = { width: (y: number) => number; depth: (y: number) => number };
+
+/** Folga mínima entre o corpo do manequim e o tecido (cm). */
+const BODY_EASE = 1.2;
+
+const NO_GEOMETRY: THREE.BufferGeometry[] = [];
+
+function buildShirt(cut: ShirtCut, fit: BodyFit | null = null): ShirtParts {
   const L = cut.length;
   const legTop = cut.crotch ? 9 : 0;
-  const sideAt = smoothCurve(
+  const baseSide = smoothCurve(
     cut.crotch
       ? [
           [legTop, cut.chest * 0.98],
@@ -588,15 +607,19 @@ function buildShirt(cut: ShirtCut): ShirtParts {
           [cut.armpit, cut.chest],
         ],
   );
-  const flare = (cut.sleeve === "none" ? 2.5 : 4) * (cut.chest / 26);
-  const widthAt = (y: number) => (y <= cut.armpit ? sideAt(Math.max(y, legTop)) : cut.chest + flare * smoothstep(cut.armpit, cut.armpit + 8, y));
-  const D = smoothCurve([
+  // Vestida no manequim: a peça nunca fica menor que o corpo (camisa justa estica junto com ele).
+  const sideAt = fit ? (y: number) => Math.max(baseSide(y), fit.width(y) + BODY_EASE) : baseSide;
+  const chest = sideAt(cut.armpit);
+  const flare = (cut.sleeve === "none" ? 2.5 : 4) * (chest / 26);
+  const widthAt = (y: number) => (y <= cut.armpit ? sideAt(Math.max(y, legTop)) : chest + flare * smoothstep(cut.armpit, cut.armpit + 8, y));
+  const baseD = smoothCurve([
     [0, cut.depth * 0.93],
     [cut.armpit * 0.45, cut.depth * 0.88],
     [cut.armpit, cut.depth],
     [L - cut.neckFront, cut.depth * 0.84],
     [L, cut.depth * 0.56],
   ]);
+  const D = fit ? (y: number) => Math.max(baseD(y), fit.depth(y) + BODY_EASE) : baseD;
   const kTop = 0.085 * L;
   const topLine = (ax: number) => (ax <= cut.neckW ? L + 0.6 * (1 - (ax / cut.neckW) ** 2) : L - (cut.slope * (ax - cut.neckW)) / Math.max(1, cut.shoulder - cut.neckW));
   const depth = (x: number, y: number) => {
@@ -620,7 +643,7 @@ function buildShirt(cut: ShirtCut): ShirtParts {
     pushQuad(leg, [cut.crotch, 0], [cut.crotch + 1.2, legTop * 0.72], [sideAt(legTop), legTop], 16);
     leg.slice(1).forEach(([x, y]) => pushPoint(lower, x, y));
   } else {
-    pushLine(lower, [0, 0], [cut.hem, 0], 14);
+    pushLine(lower, [0, 0], [sideAt(0), 0], 14);
   }
   const side: Pt[] = [[sideAt(legTop), legTop]];
   for (let k = 1; k <= 18; k += 1) {
@@ -758,6 +781,7 @@ function buildShirt(cut: ShirtCut): ShirtParts {
 
   // Cavas e mangas (lado direito e espelhado).
   const sleeves: THREE.BufferGeometry[] = [];
+  const sleeveAxes: ShirtParts["sleeveAxes"] = [];
   for (const sgn of [1, -1]) {
     const armPts = arm.map(([x, y]): Pt => [sgn * x, y]);
     const armRing = ring(armPts, armPts.slice(1, -1).reverse());
@@ -786,6 +810,7 @@ function buildShirt(cut: ShirtCut): ShirtParts {
     const cuffB = cut.cuff * (long ? 0.9 : 0.78);
     const thetas = armRing.map((p) => Math.atan2((p.z - c0.z) / (zs || 1), (p.y - c0.y) / (ys || 1)));
     const cuffPts = thetas.map((t) => c1.clone().addScaledVector(e1, Math.cos(t) * cuffA).addScaledVector(ez, Math.sin(t) * cuffB));
+    sleeveAxes.push({ from: c0.clone(), to: c1.clone(), root: Math.min(ys, zs), cuff: Math.min(cuffA, cuffB) });
     const rows = long ? 30 : 12;
     const rings: THREE.Vector3[][] = [];
     for (let j = 0; j <= rows; j += 1) {
@@ -890,7 +915,39 @@ function buildShirt(cut: ShirtCut): ShirtParts {
   const stitches = mergeSimple(stitchList);
   geometries.push(front, back, ...sleeves, ...trims.map((t) => t.geometry), seams, stitches);
   if (placket) geometries.push(placket);
-  return { cut, depth, front, back, frontPolygon, backPolygon, sleeves, trims, seams, stitches, neckLength, raglan, side, placket, buttons, snaps, list: geometries };
+  // Contorno acima da axila: a curva da cava (y cresce de A até S).
+  const outlineAt = (y: number) => {
+    if (y <= cut.armpit) return sideAt(Math.max(y, legTop));
+    for (let k = 1; k < arm.length; k += 1) {
+      const [x0, y0] = arm[k - 1];
+      const [x1, y1] = arm[k];
+      if (y <= y1) return lerp(x0, x1, clamp((y - y0) / Math.max(1e-6, y1 - y0), 0, 1));
+    }
+    return S[0];
+  };
+  return {
+    cut,
+    depth,
+    front,
+    back,
+    frontPolygon,
+    backPolygon,
+    sleeves,
+    trims,
+    seams,
+    stitches,
+    neckLength,
+    raglan,
+    side,
+    placket,
+    buttons,
+    snaps,
+    widthAt,
+    outlineAt,
+    topLine,
+    sleeveAxes,
+    list: geometries,
+  };
 }
 
 /**
@@ -974,8 +1031,8 @@ function ClothMaterial({ cloth, color, map }: { cloth: Cloth; color: string; map
   return <meshPhysicalMaterial color={map ? "#ffffff" : color} map={map ?? null} roughness={0.56} sheen={0.7} sheenRoughness={0.42} sheenColor="#ffffff" specularIntensity={0.55} />;
 }
 
-/** Etiqueta de tamanho costurada no avesso da gola, vista pelo decote. */
-function NeckLabel({ position }: { position: Vec3 }) {
+/** Etiqueta de tamanho costurada no avesso da gola, vista pelo decote (o tamanho do manequim). */
+function NeckLabel({ position, size = "M" }: { position: Vec3; size?: string }) {
   const texture = useMemo(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 128;
@@ -985,14 +1042,15 @@ function NeckLabel({ position }: { position: Vec3 }) {
       ctx.fillStyle = "#f6f4ef";
       ctx.fillRect(0, 0, 128, 64);
       ctx.fillStyle = "#2a2a2a";
-      ctx.font = "700 30px sans-serif";
+      const text = size.trim().toUpperCase().replace(/\s*ANOS?$/, "A").slice(0, 4) || "M";
+      ctx.font = `700 ${text.length > 2 ? 22 : 30}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("M", 64, 30);
+      ctx.fillText(text, 64, 30);
       ctx.fillRect(28, 50, 72, 3);
     }
     return canvasTexture(canvas);
-  }, []);
+  }, [size]);
   useEffect(() => () => texture.dispose(), [texture]);
   return (
     <mesh position={position}>
@@ -1092,10 +1150,131 @@ function FoldedPants({ color, accent, position }: { color: string; accent: strin
   );
 }
 
+/** Modelagem no tamanho da Tabela de Medidas: largura (meio tórax, peça deitada) e comprimento do ombro à barra. */
+function sizedCut(cut: ShirtCut, widthCm: number, lengthCm: number): ShirtCut {
+  const kw = clamp(widthCm / 2 / cut.chest, 0.4, 2);
+  const kl = clamp(lengthCm / cut.length, 0.4, 2);
+  // Gola cresce menos que o corpo da peça entre os tamanhos.
+  const kn = Math.sqrt(kw);
+  return {
+    ...cut,
+    length: cut.length * kl,
+    chest: cut.chest * kw,
+    hem: cut.hem * kw,
+    neckW: cut.neckW * kn,
+    neckFront: cut.neckFront * kl,
+    neckBack: cut.neckBack * kl,
+    shoulder: cut.shoulder * kw,
+    slope: cut.slope * kl,
+    armpit: cut.armpit * kl,
+    strap: cut.strap * kw,
+    depth: cut.depth * kw,
+    crotch: cut.crotch * kw,
+    sleeveLen: cut.sleeveLen * kl,
+    cuff: cut.cuff * kw,
+  };
+}
+
+type FigureParts = {
+  torso: THREE.BufferGeometry;
+  neck: THREE.BufferGeometry;
+  head: { position: Vec3; scale: Vec3 };
+  arms: { position: Vec3; quaternion: THREE.Quaternion; length: number; r0: number; r1: number }[];
+  list: THREE.BufferGeometry[];
+};
+
+/** Distância mínima (cm) entre o manequim e o tecido. */
+const FIGURE_MARGIN = 0.7;
+
 /**
- * Camiseta em manequim invisível. Frente e costas são painéis "vestidos" (grade do inflate.ts com a
- * altura vinda de um tronco elíptico) que se encontram nas costuras laterais e de ombro e ficam
- * abertos no decote, cavas e barra, com forro escuro visto pelas aberturas. Mangas são lofts que
+ * Manequim estilizado por dentro da camisa (coordenadas da peça: y = 0 na barra). Tronco em seções
+ * elípticas com a largura e a profundidade do corpo escolhido, recortado pelo volume da peça onde ela
+ * existe (abaixo da linha do ombro, dentro do contorno e da profundidade do tecido): nunca atravessa o
+ * pano. Pescoço elíptico dentro da gola, cabeça oval e braços seguindo o eixo das mangas, mais finos
+ * que a boca da manga.
+ */
+function buildFigure(cut: ShirtCut, parts: ShirtParts, figure: Figure, lift: number): FigureParts {
+  const L = cut.length;
+  const H = figure.heightCm;
+  // Fim do tronco (quadril/coxa): um pouco abaixo da barra, sem passar do meio da coxa.
+  const yBottom = Math.max(0.36 * H, Math.min(figure.crotch - 0.03 * H, lift - 5)) - lift;
+  const yTop = L - 0.4;
+  const rows = 48;
+  const cols = 56;
+  const rings: THREE.Vector3[][] = [];
+  for (let j = 0; j <= rows; j += 1) {
+    const yb = lerp(yBottom, yTop, j / rows);
+    const section = figure.section(yb + lift);
+    const ring: THREE.Vector3[] = [];
+    for (let i = 0; i < cols; i += 1) {
+      // Começa nas costas (t = π): a emenda da malha fica atrás.
+      const t = Math.PI + (i / cols) * Math.PI * 2;
+      let x = section.a * Math.sin(t);
+      let y = yb;
+      let z = section.b * Math.cos(t);
+      if (y > -0.5) {
+        y = Math.min(y, parts.topLine(Math.abs(x)) - 1.1);
+        // Perto do ombro o tecido curva rápido (a malha fica aquém da curva): mais folga ali.
+        const margin = FIGURE_MARGIN + 0.8 * smoothstep(L - 12, L, y);
+        const maxX = Math.max(0.5, parts.outlineAt(y) - margin);
+        if (Math.abs(x) > maxX) x = Math.sign(x) * maxX;
+        const maxZ = Math.max(0.15, parts.depth(x, y) - margin);
+        if (Math.abs(z) > maxZ) z = Math.sign(z) * maxZ;
+      }
+      ring.push(new THREE.Vector3(x, y, z));
+    }
+    rings.push(ring);
+  }
+  const torso = withCaps(ringsGeometry(rings, true), rings[0], rings[rings.length - 1]);
+  weldSeam(torso, rows, cols);
+
+  // Pescoço: dentro da gola (largura do decote e fundo das costas), do ombro até dentro da cabeça.
+  const hps = figure.hps - lift;
+  const backZ = Math.abs(parts.depth(0, L - cut.neckBack - 0.2));
+  const na = Math.min(figure.neck.a, cut.neckW * 0.62);
+  const nb = Math.min(figure.neck.b, Math.max(2, backZ * 0.85));
+  const neckRings: THREE.Vector3[][] = [];
+  for (let j = 0; j <= 6; j += 1) {
+    const y = lerp(L - 5, hps + figure.neck.length + 2, j / 6);
+    neckRings.push(Array.from({ length: 28 }, (_, i) => new THREE.Vector3(na * Math.sin(Math.PI + (i / 28) * Math.PI * 2), y, nb * Math.cos(Math.PI + (i / 28) * Math.PI * 2))));
+  }
+  const neck = withCaps(ringsGeometry(neckRings, true), neckRings[0], neckRings[neckRings.length - 1]);
+  weldSeam(neck, 6, 28);
+
+  const head = {
+    position: [0, hps + figure.neck.length + figure.head.h * 0.36, figure.head.d * 0.07] as Vec3,
+    scale: [figure.head.w / 2, figure.head.h / 2, figure.head.d / 2] as Vec3,
+  };
+
+  // Braços: do ombro (dentro do tronco) ao longo da manga, saindo um pouco pela boca; cortados retos.
+  // Manga comprida cai a ~70° e estreita perto da cava: ali só o antebraço (o que aparece no punho).
+  const long = cut.sleeve === "long";
+  const up = new THREE.Vector3(0, 1, 0);
+  const arms = parts.sleeveAxes.map((axis) => {
+    const dir = axis.to.clone().sub(axis.from).normalize();
+    const start = long ? axis.from.clone().lerp(axis.to, 0.65) : axis.from.clone().addScaledVector(dir, -4);
+    const end = axis.to.clone().addScaledVector(dir, long ? 2.5 : 6);
+    const r1 = Math.min(long ? figure.arm.end * 0.62 : figure.arm.end, axis.cuff * 0.72, figure.arm.root);
+    const r0 = long ? r1 : Math.min(figure.arm.root, axis.root * 0.55);
+    return {
+      position: start.clone().add(end).multiplyScalar(0.5).toArray() as Vec3,
+      quaternion: new THREE.Quaternion().setFromUnitVectors(up, dir),
+      length: start.distanceTo(end),
+      r0,
+      r1,
+    };
+  });
+  return { torso, neck, head, arms, list: [torso, neck] };
+}
+
+/**
+ * Camiseta vestida num manequim proporcional ao tamanho (art.mannequin: tamanho da Tabela de Medidas e
+ * corpo mais magro / intermediário / mais cheio; sem manequim = manequim invisível). A peça segue a
+ * largura e o comprimento do tamanho e nunca fica menor que o corpo (justa estica com ele); o manequim
+ * (tronco, pescoço, cabeça e braços) é recortado pelo volume da peça. Frente e costas são painéis
+ * "vestidos" (grade do inflate.ts com a altura vinda de um tronco elíptico) que se encontram nas
+ * costuras laterais e de ombro e ficam abertos no decote, cavas e barra, com forro escuro visto pelas
+ * aberturas. A estampa das costas vem de art.back (vazio = costas sem impressão). Mangas são lofts que
  * saem exatamente do anel da cava; gola canelada, polo (pé + caída, carcela e botões), V ou viés
  * varridos ao longo do decote; pespontos duplos na barra e na manga. Variantes: body com entreperna
  * e colchetes, pijama de manga longa com debrum e calça dobrada, colete furadinho, camisa de futebol
@@ -1105,16 +1284,45 @@ function FoldedPants({ color, accent, position }: { color: string; accent: strin
 export function TshirtModel({ spec, art, label }: ModelProps) {
   const printArt = useApparelArt(art);
   const { collar, variant, sleeveless, longSleeve } = spec;
-  const cut = useMemo(() => shirtCut({ collar, variant, sleeveless, longSleeve }), [collar, variant, sleeveless, longSleeve]);
-  const parts = useMemo(() => buildShirt(cut), [cut]);
+  // Manequim: undefined = padrão (M, intermediário); null = escondido. Body de bebê e pijama ficam sem.
+  const mannequin = art.mannequin;
+  const dressed = mannequin !== null && variant !== "body" && variant !== "pajama";
+  const mSize = mannequin?.size ?? "M";
+  const mBody = mannequin?.body ?? "medio";
+  const mWidth = mannequin?.widthCm ?? null;
+  const mLength = mannequin?.lengthCm ?? null;
+  const dress = useMemo(() => (dressed ? dressFor(mSize, mBody, mWidth, mLength) : null), [dressed, mSize, mBody, mWidth, mLength]);
+  const cut = useMemo(() => {
+    const base = shirtCut({ collar, variant, sleeveless, longSleeve });
+    // Vestida: largura e comprimento do tamanho escolhido (Tabela de Medidas), em cm reais.
+    return dress ? sizedCut(base, dress.widthCm, dress.lengthCm) : base;
+  }, [collar, variant, sleeveless, longSleeve, dress]);
+  const figure = useMemo(() => (dress ? figureOf(dress.body) : null), [dress]);
+  // O ponto alto do ombro do manequim fica logo abaixo da linha do ombro da peça.
+  const lift = figure ? figure.hps - (cut.length - 1.2) : 0;
+  const parts = useMemo(() => {
+    if (!figure) return buildShirt(cut);
+    const fit: BodyFit = { width: (y) => (y <= cut.armpit ? figure.section(y + lift).a : 0), depth: (y) => figure.section(y + lift).b };
+    return buildShirt(cut, fit);
+  }, [cut, figure, lift]);
   useGeometriesCleanup(parts.list);
+  const body = useMemo(() => (figure ? buildFigure(cut, parts, figure, lift) : null), [cut, parts, figure, lift]);
+  useGeometriesCleanup(body?.list ?? NO_GEOMETRY);
 
   const rawW = measure(spec.widthCm, 21);
   const aspect = clamp(rawW / measure(spec.heightCm, 28), 0.2, 5);
   // Altura derivada do aspecto já limitado: o Decal tem sempre a proporção da textura.
   const rawH = rawW / aspect;
   const texture = useArtTexture(aspect, "front", printArt, label);
-  const backTexture = useArtTexture(aspect, backVariant(spec), printArt, label);
+  // Verso: arte própria (logo nas costas); vazio = sem impressão nas costas.
+  const backArt = art.back ?? null;
+  const hasBack = hasArtContent(backArt);
+  const backRender = useMemo<ArtRender>(
+    () => ({ ...(backArt ?? DEFAULT_ART), back: null, ledColors: undefined, kind: art.kind, surface: art.surface, opaque: art.opaque, sample: false }),
+    [backArt, art.kind, art.surface, art.opaque],
+  );
+  const backPrint = useApparelArt(backRender);
+  const backTexture = useArtTexture(aspect, "front", backPrint, label);
 
   const base = spec.baseColor;
   const accent = spec.accentColor ?? contrast(base);
@@ -1160,11 +1368,15 @@ export function TshirtModel({ spec, art, label }: ModelProps) {
     if (role === "cuff") return cut.raglan || spec.variant === "pajama" ? accent : shade(base, 0.97);
     return base;
   };
-  const geometryKey = `${variant}-${collar}-${sleeveless}-${longSleeve}`;
+  // O Decal projeta na malha na montagem: muda a malha (corte, tamanho, corpo), remonta o Decal.
+  const geometryKey = `${variant}-${collar}-${sleeveless}-${longSleeve}-${dress ? `${mSize}-${mBody}-${dress.widthCm}-${dress.lengthCm}` : "solta"}`;
   const labelY = L - cut.neckBack - 2;
+  const skin = luminance(base) > 0.45 ? "#9d978f" : "#e4e0d9";
+  const skinMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: skin, roughness: 0.62 }), [skin]);
+  useEffect(() => () => skinMaterial.dispose(), [skinMaterial]);
 
   return (
-    <group rotation-y={0.14} scale={SHIRT_UNIT}>
+    <TurnGroup base={0.14} scale={SHIRT_UNIT}>
       <mesh geometry={parts.front}>
         <ClothMaterial cloth={cut.cloth} color={base} map={maps?.front} />
         <Decal key={geometryKey} position={[printX, printY, printZ]} rotation={[0, 0, 0]} scale={[printW, printH, 16]} depthTest>
@@ -1176,7 +1388,7 @@ export function TshirtModel({ spec, art, label }: ModelProps) {
       </mesh>
       <mesh geometry={parts.back}>
         <ClothMaterial cloth={cut.cloth} color={base} map={maps?.back} />
-        {spec.back !== "blank" && (
+        {hasBack && (
           <Decal key={geometryKey} position={[0, backY, backZ]} rotation={[0, Math.PI, 0]} scale={[printW, printH, 16]} depthTest>
             <meshPhysicalMaterial map={backTexture} transparent alphaTest={0.02} roughness={sublimated ? 0.58 : 0.72} polygonOffset polygonOffsetFactor={-10} depthTest />
           </Decal>
@@ -1240,8 +1452,73 @@ export function TshirtModel({ spec, art, label }: ModelProps) {
           <meshStandardMaterial color="#d8d9dc" metalness={1} roughness={0.28} />
         </mesh>
       ))}
-      <NeckLabel position={[0, labelY, -parts.depth(0, labelY) + 0.25]} />
+      <NeckLabel position={[0, labelY, -parts.depth(0, labelY) + 0.25]} size={dress ? mSize : "M"} />
       {spec.variant === "pajama" && <FoldedPants color={base} accent={accent} position={[0, -1.6, cut.depth + 17]} />}
+      {body && (
+        <group>
+          <mesh geometry={body.torso} material={skinMaterial} />
+          <mesh geometry={body.neck} material={skinMaterial} />
+          <mesh position={body.head.position} scale={body.head.scale} material={skinMaterial}>
+            <sphereGeometry args={[1, 40, 28]} />
+          </mesh>
+          {body.arms.map((arm, i) => (
+            <mesh key={i} position={arm.position} quaternion={arm.quaternion} material={skinMaterial}>
+              <cylinderGeometry args={[arm.r1, arm.r0, arm.length, 24]} />
+            </mesh>
+          ))}
+        </group>
+      )}
+    </TurnGroup>
+  );
+}
+
+/** Duração do giro da camiseta para as costas ("Ver verso" ou o passo "Verso" da arte). */
+const TURN_SECONDS = 0.7;
+
+/**
+ * Grupo da camiseta que gira 180° no eixo vertical quando o viewer pede o verso (useSceneMode().back):
+ * um giro curto com easing; sem animação com reduced motion. `base` é a leve rotação de 3/4 da vitrine.
+ */
+function TurnGroup({ base, scale, children }: { base: number; scale: number; children: ReactNode }) {
+  const { back, motion } = useSceneMode();
+  const ref = useRef<THREE.Group>(null);
+  const invalidate = useThree((state) => state.invalidate);
+  const anim = useRef({ angle: base, from: base, to: base, t: 1, mounted: false });
+  const target = base + (back ? Math.PI : 0);
+
+  useLayoutEffect(() => {
+    const group = ref.current;
+    if (!group) return;
+    const state = anim.current;
+    if (!state.mounted || !motion) {
+      state.mounted = true;
+      state.angle = state.to = target;
+      state.t = 1;
+      group.rotation.y = target;
+      invalidate();
+      return;
+    }
+    if (Math.abs(state.to - target) < 1e-6) return;
+    state.from = state.angle;
+    state.to = target;
+    state.t = 0;
+    invalidate();
+  }, [target, motion, invalidate]);
+
+  useFrame((_, delta) => {
+    const group = ref.current;
+    const state = anim.current;
+    if (!group || state.t >= 1) return;
+    state.t = Math.min(1, state.t + Math.min(delta, 0.05) / TURN_SECONDS);
+    const k = state.t < 0.5 ? 2 * state.t * state.t : 1 - (-2 * state.t + 2) ** 2 / 2;
+    state.angle = state.from + (state.to - state.from) * k;
+    group.rotation.y = state.angle;
+    invalidate();
+  });
+
+  return (
+    <group ref={ref} scale={scale}>
+      {children}
     </group>
   );
 }

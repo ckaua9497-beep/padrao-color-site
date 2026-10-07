@@ -76,6 +76,11 @@ export default function SiteFooter() {
                 Blog da Padrão
               </a>
             </li>
+            <li>
+              <Link href="/gabaritos" className={LINK}>
+                Gabaritos
+              </Link>
+            </li>
           </ul>
           <p className="mt-8 text-caption text-white/60">
             {STORE.address}

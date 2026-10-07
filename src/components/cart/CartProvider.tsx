@@ -1,6 +1,9 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { currentCustomer, customerVariations, useCustomer, useGroupPrices } from "@/lib/customer";
+import { quantityLabel } from "@/lib/format";
+import { bundleTitle, isLineError, priceLine, type OrderItemInput } from "@/lib/orders";
 
 export type CartItem = {
   key: string;
@@ -29,17 +32,50 @@ export type CartItem = {
   express?: boolean;
   /** Kit ou festa que adicionou o item (Monte Seu Kit / Crie Sua Festa). */
   bundle?: { id: string; name: string } | null;
+  /** Tabela do preço salvo (carimbada ao adicionar): item de revenda é recalculado se a conta mudar. */
+  priceTier?: "balcao" | "revenda";
 };
+
+/** Item com o preço do cliente de agora (balcão ou revenda), que pode diferir do salvo ao adicionar. */
+export type CartLine = {
+  item: CartItem;
+  /** Preço de um lote (setQty unidades; no m², uma peça). */
+  unitPrice: number;
+  total: number;
+  /** Preço da tabela de revenda (com o desconto da categoria, quando houver). */
+  reseller: boolean;
+  /** Buscando o preço do cliente: mostra o preço salvo até chegar. */
+  pending: boolean;
+};
+
+/** Itens do mesmo kit/festa ficam juntos; item avulso é um grupo sem título. */
+export type CartGroup = { id: string; bundle: { id: string; name: string } | null; title: string | null; lines: CartLine[]; total: number };
+
+/** Faixa de quantidade do item no carrinho; `locked` = grade de tamanhos (muda na página do produto). */
+export type QuantityRange = { min: number; max: number; locked: boolean };
 
 type CartContextValue = {
   items: CartItem[];
+  /** Itens com o preço do cliente logado. */
+  lines: CartLine[];
+  /** Linhas agrupadas por kit/festa, na ordem do carrinho. */
+  groups: CartGroup[];
   count: number;
+  /** Soma das linhas no preço do cliente. */
   subtotal: number;
+  /** Revendedor logado: o carrinho está na tabela de revenda. */
+  reseller: boolean;
+  /** Algum preço ainda carregando. */
+  pricing: boolean;
   open: boolean;
   setOpen: (open: boolean) => void;
   add: (item: Omit<CartItem, "key">) => void;
   remove: (key: string) => void;
+  /** Remove todos os itens de um kit/festa. */
+  removeBundle: (bundleId: string) => void;
   setQuantity: (key: string, quantity: number) => void;
+  /** Mínimo/máximo da quantidade do item (limites do produto no catálogo). */
+  rangeOf: (item: CartItem) => QuantityRange;
   clear: () => void;
 };
 
@@ -89,29 +125,171 @@ function subscribe(listener: () => void) {
   };
 }
 
+// ---------------------------------------------------------------------------------- limites de quantidade
+
+type QtyLimits = { minQty: number; maxQty: number };
+
+const NO_LIMITS: ReadonlyMap<number, QtyLimits> = new Map();
+let limits: ReadonlyMap<number, QtyLimits> = NO_LIMITS;
+const limitsPending = new Set<number>();
+const limitListeners = new Set<() => void>();
+
+/** Busca (uma vez, em lote) os limites dos produtos do carrinho: GET /api/precos/limites. */
+function loadLimits(groupIds: number[]) {
+  const missing = groupIds.filter((id) => !limits.has(id) && !limitsPending.has(id));
+  if (!missing.length) return;
+  missing.forEach((id) => limitsPending.add(id));
+  fetch(`/api/precos/limites?grupos=${missing.join(",")}`, { headers: { Accept: "application/json" } })
+    .then((response) => (response.ok ? response.json() : null))
+    .catch(() => null)
+    .then((data: { limits?: Record<string, QtyLimits> } | null) => {
+      const next = new Map(limits);
+      for (const id of missing) {
+        const found = data?.limits?.[id];
+        // Sem resposta: sem limite no carrinho (o servidor confere de novo no checkout).
+        next.set(id, found && typeof found.minQty === "number" && typeof found.maxQty === "number" ? found : { minQty: 1, maxQty: 0 });
+      }
+      limits = next;
+      limitListeners.forEach((listener) => listener());
+    })
+    .finally(() => missing.forEach((id) => limitsPending.delete(id)));
+}
+
+function subscribeLimits(listener: () => void) {
+  limitListeners.add(listener);
+  return () => {
+    limitListeners.delete(listener);
+  };
+}
+
+/**
+ * Faixa da quantidade, igual à da página de produto: grade de tamanhos fica travada; produto por unidade
+ * respeita o mínimo e o máximo do catálogo (até 999); lote de tabela e peça de m² vão de 1 a 99.
+ */
+export function quantityRange(item: CartItem, productLimits?: QtyLimits): QuantityRange {
+  if (item.options?.Tamanhos) return { min: item.quantity, max: item.quantity, locked: true };
+  const perUnit = !item.widthCm && (item.setQty || 1) <= 1;
+  if (!perUnit) return { min: 1, max: 99, locked: false };
+  const min = Math.max(1, productLimits?.minQty ?? 1);
+  return { min, max: Math.max(min, Math.min(productLimits?.maxQty || 999, 999)), locked: false };
+}
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/** Item do carrinho no formato do pedido (sem miniaturas); `unitPrice` = o preço que o cliente está vendo. */
+export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderItemInput {
+  return {
+    key: item.key,
+    slug: item.slug,
+    name: item.name,
+    groupId: item.groupId,
+    variationId: item.variationId,
+    quantity: item.quantity,
+    ...(item.widthCm ? { widthCm: item.widthCm } : {}),
+    ...(item.heightCm ? { heightCm: item.heightCm } : {}),
+    express: Boolean(item.express),
+    options: item.options,
+    artName: item.artName,
+    bundle: item.bundle ?? null,
+    unitPrice,
+  };
+}
+
+/** Agrupa as linhas por kit/festa (na ordem em que aparecem); avulsos ficam sozinhos. */
+export function groupLines(lines: CartLine[]): CartGroup[] {
+  const groups: CartGroup[] = [];
+  const byBundle = new Map<string, CartGroup>();
+  for (const line of lines) {
+    const bundle = line.item.bundle;
+    if (!bundle) {
+      groups.push({ id: line.item.key, bundle: null, title: null, lines: [line], total: line.total });
+      continue;
+    }
+    let group = byBundle.get(bundle.id);
+    if (!group) {
+      group = { id: `kit:${bundle.id}`, bundle, title: bundleTitle(bundle, line.item.options), lines: [], total: 0 };
+      byBundle.set(bundle.id, group);
+      groups.push(group);
+    }
+    group.lines.push(line);
+    group.total = round2(group.total + line.total);
+  }
+  return groups;
+}
+
 export function CartProvider({ children }: { children: ReactNode }) {
   const items = useSyncExternalStore(subscribe, read, () => EMPTY);
   const [open, setOpen] = useState(false);
+  const customer = useCustomer();
+  const resellerCustomer = customer.status === "reseller";
+  const known = customer.status !== "loading";
+  const productLimits = useSyncExternalStore(subscribeLimits, () => limits, () => NO_LIMITS);
+
+  // Limites de quantidade de todos os produtos do carrinho, numa chamada só.
+  const allGroups = [...new Set(items.map((item) => item.groupId).filter((id): id is number => Boolean(id)))].sort((a, b) => a - b).join(",");
+  useEffect(() => {
+    if (allGroups) loadLimits(allGroups.split(",").map(Number));
+  }, [allGroups]);
+
+  // Revendedor: todo item com grupo vai para a tabela dele. Conta comum: só o que foi salvo com preço de revenda.
+  const needsPrice = useCallback((item: CartItem) => known && Boolean(item.groupId) && (resellerCustomer || item.priceTier === "revenda"), [known, resellerCustomer]);
+  const groupIds = useMemo(() => items.filter(needsPrice).map((item) => item.groupId as number), [items, needsPrice]);
+  const priceOf = useGroupPrices(groupIds);
 
   const add = useCallback((item: Omit<CartItem, "key">) => {
-    write([...read(), { ...item, key: crypto.randomUUID() }]);
+    const priceTier = item.priceTier ?? (currentCustomer().status === "reseller" ? "revenda" : "balcao");
+    write([...read(), { ...item, priceTier, key: crypto.randomUUID() }]);
     setOpen(true);
   }, []);
 
   const remove = useCallback((key: string) => write(read().filter((item) => item.key !== key)), []);
 
+  const removeBundle = useCallback((bundleId: string) => write(read().filter((item) => item.bundle?.id !== bundleId)), []);
+
+  const rangeOf = useCallback((item: CartItem) => quantityRange(item, item.groupId ? productLimits.get(item.groupId) : undefined), [productLimits]);
+
   const setQuantity = useCallback(
-    (key: string, quantity: number) => write(read().map((item) => (item.key === key ? { ...item, quantity: Math.max(1, Math.min(99, quantity)) } : item))),
+    (key: string, quantity: number) =>
+      write(
+        read().map((item) => {
+          if (item.key !== key) return item;
+          const range = quantityRange(item, item.groupId ? limits.get(item.groupId) : undefined);
+          return range.locked ? item : { ...item, quantity: Math.max(range.min, Math.min(range.max, Math.round(quantity))) };
+        }),
+      ),
     [],
   );
 
   const clear = useCallback(() => write([]), []);
 
+  const { category, priceTable } = customer;
+  const lines = useMemo<CartLine[]>(
+    () =>
+      items.map((item) => {
+        const saved: CartLine = { item, unitPrice: item.unitPrice, total: round2(item.unitPrice * item.quantity), reseller: false, pending: false };
+        if (!needsPrice(item)) return saved;
+        const entry = priceOf(item.groupId as number);
+        if (!entry) return { ...saved, pending: true };
+        if (entry.status === "error") return saved;
+        const priced = priceLine(toOrderItem(item), {
+          groupId: entry.data.groupId,
+          variations: customerVariations({ category, priceTable }, entry.data),
+          customSize: entry.data.customSize,
+          reseller: entry.data.reseller,
+        });
+        if (isLineError(priced)) return saved;
+        return { item, unitPrice: priced.unitPrice, total: priced.total, reseller: priced.reseller, pending: false };
+      }),
+    [items, needsPrice, priceOf, category, priceTable],
+  );
+
   const value = useMemo(() => {
-    const count = items.reduce((sum, item) => sum + item.quantity, 0);
-    const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-    return { items, count, subtotal, open, setOpen, add, remove, setQuantity, clear };
-  }, [items, open, add, remove, setQuantity, clear]);
+    // Itens distintos: a quantidade pode ser lote, peça ou unidade (150 camisas não são 150 itens).
+    const count = items.length;
+    const subtotal = round2(lines.reduce((sum, line) => sum + line.total, 0));
+    const pricing = lines.some((line) => line.pending);
+    return { items, lines, groups: groupLines(lines), count, subtotal, reseller: resellerCustomer, pricing, open, setOpen, add, remove, removeBundle, setQuantity, rangeOf, clear };
+  }, [items, lines, resellerCustomer, open, add, remove, removeBundle, setQuantity, rangeOf, clear]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }
@@ -120,4 +298,29 @@ export function useCart() {
   const ctx = useContext(CartContext);
   if (!ctx) throw new Error("useCart precisa estar dentro de CartProvider");
   return ctx;
+}
+
+/** Unidade do preço de um lote: "por 1.000 un.", "por unidade" ou "por peça" (m² e grade de tamanhos). */
+export function unitLabel(item: CartItem): string {
+  return item.widthCm || item.options?.Tamanhos ? "por peça" : quantityLabel(item.setQty);
+}
+
+/** Quantidade por extenso: "2 × 1.000 un.", "150 peças" (grade ou m²) ou "500 unidades". */
+export function quantityText(item: CartItem): string {
+  const n = item.quantity.toLocaleString("pt-BR");
+  if (item.options?.Tamanhos || item.widthCm) return `${n} ${item.quantity === 1 ? "peça" : "peças"}`;
+  if ((item.setQty || 1) <= 1) return `${n} ${item.quantity === 1 ? "unidade" : "unidades"}`;
+  return `${n} × ${item.setQty.toLocaleString("pt-BR")} un.`;
+}
+
+/** Detalhes do item para o carrinho, o resumo e o checkout: medida (m²), prazo expresso e kit. */
+export function itemFacts(item: CartItem): { size: string | null; express: boolean; bundle: string | null } {
+  const cm = (value: number) => value.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+  const area = item.widthCm && item.heightCm ? (item.widthCm * item.heightCm) / 10_000 : 0;
+  return {
+    // A página de produto já grava "Medida" nas opções; aqui só para itens sem ela.
+    size: area && !item.options?.Medida ? `${cm(item.widthCm as number)} × ${cm(item.heightCm as number)} cm (${area.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²)` : null,
+    express: Boolean(item.express),
+    bundle: item.bundle ? bundleTitle(item.bundle, item.options) : null,
+  };
 }

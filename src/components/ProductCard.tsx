@@ -31,7 +31,7 @@ export default function ProductCard({ product, tone = "var(--color-mist)", prior
       </div>
       <div className="flex flex-1 flex-col items-center px-4 pb-5 pt-4 text-center">
         <h3 className="line-clamp-2 min-h-[2.4em] text-card-title">{product.name}</h3>
-        <Price className="mt-2 flex flex-col items-center" value={product.price} from unit={quantityLabel(product.priceQty)} />
+        <Price className="mt-2 flex flex-col items-center" value={product.price} from unit={product.perM2 ? "por m²" : quantityLabel(product.priceQty)} />
       </div>
     </Link>
   );

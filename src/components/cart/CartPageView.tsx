@@ -4,16 +4,54 @@ import Link from "next/link";
 import { IconClose } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
-import QtyStepper from "@/components/ui/QtyStepper";
-import { formatBRL, quantityLabel } from "@/lib/format";
+import { cx } from "@/components/ui/cx";
+import { useCustomer } from "@/lib/customer";
+import { formatBRL } from "@/lib/format";
 import { pixPrice } from "@/lib/pricing";
+import { BundleHeader, ItemTags, QuantityControl, ResellerNote } from "./CartDrawer";
 import { CartThumb, artLine } from "./CartThumb";
-import { useCart } from "./CartProvider";
+import { unitLabel, useCart, type CartLine } from "./CartProvider";
+
+const ROW = "grid items-center gap-4 rounded-control bg-mist p-4 md:grid-cols-[1fr_120px_130px_120px_44px]";
+
+function LineRow({ line, grouped }: { line: CartLine; grouped: boolean }) {
+  const { remove, setQuantity, rangeOf } = useCart();
+  const { item } = line;
+  return (
+    <div className={ROW}>
+      <div className="flex items-center gap-4">
+        <CartThumb preview={item.preview} image={item.image} name={item.name} options={item.options} />
+        <div className="min-w-0">
+          <Link href={`/produto/${item.slug}`} className="line-clamp-2 text-[15px] font-semibold hover:underline">
+            {item.name}
+          </Link>
+          <p className="mt-1 text-caption text-muted">
+            {Object.entries(item.options)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(" · ")}
+          </p>
+          <p className="mt-1 text-caption font-medium">{artLine(item.artName)}</p>
+          <ItemTags line={line} hideBundle={grouped} className="mt-2" />
+        </div>
+      </div>
+      <div className={cx("text-sm tabular-nums", line.pending && "opacity-60")}>
+        {formatBRL(line.unitPrice)}
+        <span className="block text-[11px] text-muted">{unitLabel(item)}</span>
+      </div>
+      <QuantityControl item={item} range={rangeOf(item)} onChange={(value) => setQuantity(item.key, value)} />
+      <p className={cx("text-[15px] font-bold tabular-nums", line.pending && "opacity-60")}>{formatBRL(line.total)}</p>
+      <IconButton label={`Remover ${item.name}`} variant="ghost" onClick={() => remove(item.key)} className="hover:bg-white">
+        <IconClose className="size-4" />
+      </IconButton>
+    </div>
+  );
+}
 
 export default function CartPageView() {
-  const { items, subtotal, remove, setQuantity } = useCart();
+  const { lines, groups, subtotal, reseller, pricing, removeBundle } = useCart();
+  const customer = useCustomer();
 
-  if (items.length === 0) {
+  if (lines.length === 0) {
     return (
       <div className="rounded-card border border-line-strong bg-white p-12 text-center">
         <p className="text-xl font-semibold">Seu carrinho está vazio.</p>
@@ -35,37 +73,31 @@ export default function CartPageView() {
           <span />
         </div>
         <ul className="space-y-2">
-          {items.map((item) => (
-            <li key={item.key} className="grid items-center gap-4 rounded-control bg-mist p-4 md:grid-cols-[1fr_120px_130px_120px_44px]">
-              <div className="flex items-center gap-4">
-                <CartThumb preview={item.preview} image={item.image} name={item.name} />
-                <div className="min-w-0">
-                  <Link href={`/produto/${item.slug}`} className="line-clamp-2 text-[15px] font-semibold hover:underline">
-                    {item.name}
-                  </Link>
-                  <p className="mt-1 text-caption text-muted">
-                    {Object.entries(item.options)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join(" · ")}
-                  </p>
-                  <p className="mt-1 text-caption font-medium">{artLine(item.artName)}</p>
-                </div>
-              </div>
-              <div className="text-sm tabular-nums">
-                {formatBRL(item.unitPrice)}
-                <span className="block text-[11px] text-muted">{quantityLabel(item.setQty)}</span>
-              </div>
-              <QtyStepper value={item.quantity} onChange={(v) => setQuantity(item.key, v)} label={`Quantidade de ${item.name}`} />
-              <p className="text-[15px] font-bold tabular-nums">{formatBRL(item.unitPrice * item.quantity)}</p>
-              <IconButton label={`Remover ${item.name}`} variant="ghost" onClick={() => remove(item.key)} className="hover:bg-white">
-                <IconClose className="size-4" />
-              </IconButton>
-            </li>
-          ))}
+          {groups.map((group) =>
+            group.bundle ? (
+              <li key={group.id}>
+                <section aria-label={group.title ?? undefined} className="rounded-control border border-line p-2">
+                  <BundleHeader group={group} onRemove={() => removeBundle(group.bundle?.id ?? "")} className="px-2 pb-3 pt-1" />
+                  <ul className="space-y-2">
+                    {group.lines.map((line) => (
+                      <li key={line.item.key}>
+                        <LineRow line={line} grouped />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </li>
+            ) : (
+              <li key={group.id}>
+                <LineRow line={group.lines[0]} grouped={false} />
+              </li>
+            ),
+          )}
         </ul>
       </div>
 
       <aside className="h-fit rounded-card border border-line-strong bg-white p-3">
+        <ResellerNote reseller={reseller} pricing={pricing} className="mb-3" />
         <dl className="overflow-hidden rounded-control text-[15px] tabular-nums">
           <div className="grid grid-cols-[110px_1fr] gap-4 bg-mist px-4 py-4">
             <dt className="text-muted">Subtotal</dt>
@@ -73,7 +105,7 @@ export default function CartPageView() {
           </div>
           <div className="grid grid-cols-[110px_1fr] gap-4 bg-fog px-4 py-4">
             <dt className="text-muted">Entrega</dt>
-            <dd>Calculada na finalização da compra, pelo CEP.</dd>
+            <dd>Entrega no seu endereço ou retirada na loja: o frete é combinado depois do pedido.</dd>
           </div>
           <div className="grid grid-cols-[110px_1fr] gap-4 bg-mist px-4 py-4">
             <dt className="text-muted">Total</dt>
@@ -83,6 +115,15 @@ export default function CartPageView() {
             </dd>
           </div>
         </dl>
+        {customer.status === "anonymous" && (
+          <p className="mt-3 px-1 text-caption text-muted">
+            É revendedor?{" "}
+            <Link href="/conta/entrar?volta=/carrinho" className="font-semibold text-ink underline underline-offset-2">
+              Entre na sua conta
+            </Link>{" "}
+            para ver os preços da sua tabela.
+          </p>
+        )}
         <Button href="/checkout" variant="buy" size="lg" block className="mt-3">
           Continuar
         </Button>

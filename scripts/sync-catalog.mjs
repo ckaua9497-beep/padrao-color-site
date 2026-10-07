@@ -4,8 +4,9 @@
 // Saídas em src/data/:
 //   catalog.json         categorias + produtos (grupos da API) com variações, preços, prazos,
 //                        descrição, informações técnicas, gabarito, tamanhos e medida livre (m²)
-//   storefront.json      a vitrine do padraocolor.com.br (GET /configuracoes): banners, botões,
-//                        categorias em destaque, "Nossos Destaques", mais vendidos e menu
+//   storefront.json      a vitrine do padraocolor.com.br (GET /configuracoes): banners (desktop e celular),
+//                        botões, categorias em destaque, "Nossos Destaques", mais vendidos e menu, com a medida
+//                        real de cada arte (lida dos primeiros bytes da imagem em img.padraocolor.com.br)
 //   business-types.json  "Para o seu negócio" (GET /tiposnegocio)
 //   finishes.json        acabamentos (GET /acabamentos)
 
@@ -107,21 +108,65 @@ function parseMenuGroups(raw) {
   return groups;
 }
 
-/** Links do site oficial viram rotas do site novo; o resto segue externo. */
+/** Links do site oficial viram rotas do site novo; o resto segue externo (http do site oficial vira https). */
 function localHref(url, productSlugs, categoryById) {
   if (!url) return null;
   const product = /padraocolor\.com\.br\/produto\/([^/?#]+)/.exec(url);
   if (product) {
     const id = /^(\d+)/.exec(product[1])?.[1];
     const slug = id ? productSlugs.get(Number(id)) : undefined;
-    return slug ? `/produto/${slug}` : url;
+    if (slug) return `/produto/${slug}`;
   }
   const category = /padraocolor\.com\.br\/categoria\/(\d+)/.exec(url);
   if (category) {
     const slug = categoryById.get(Number(category[1]));
-    return slug ? `/categoria/${slug}` : url;
+    if (slug) return `/categoria/${slug}`;
   }
-  return url;
+  return url.trim().replace(/^http:\/\/(www\.)?padraocolor\.com\.br/i, "https://padraocolor.com.br");
+}
+
+// ------------------------------------------------------------------------------------- imagens
+
+/** Largura × altura de PNG, GIF, WEBP ou JPEG a partir dos primeiros bytes do arquivo. */
+function parseImageSize(buf) {
+  if (buf.length < 30) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (buf.toString("ascii", 0, 3) === "GIF") return { w: buf.readUInt16LE(6), h: buf.readUInt16LE(8) };
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") {
+    const chunk = buf.toString("ascii", 12, 16);
+    if (chunk === "VP8X") return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
+    if (chunk === "VP8 ") return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
+    if (chunk === "VP8L") {
+      const bits = buf.readUInt32LE(21);
+      return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1 };
+    }
+  }
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) {
+        i += 1;
+        continue;
+      }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  return null;
+}
+
+/** Medida real de uma imagem da vitrine (só os primeiros 64 KB). Falha = null: o site usa a medida padrão. */
+async function imageSize(url) {
+  if (!url) return null;
+  try {
+    const res = await fetch(encodeURI(decodeURI(url)), { headers: { Range: "bytes=0-65535" }, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const size = parseImageSize(Buffer.from(await res.arrayBuffer()));
+    return size && size.w > 0 && size.h > 0 ? size : null;
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------------------------- coleta
@@ -244,6 +289,8 @@ if (tagBase) {
       "Tags personalizadas para roupas, presentes, embalagens e lembrancinhas, nos formatos redondo, oval e retangular, com furo para cordão.",
     metaTitle: "Tags Personalizadas | Padrão Color",
     featured: false,
+    // Produto novo no site: aparece com o selo de lançamento nas listagens e no menu.
+    isNew: true,
     related: [180, ...tagBase.related.filter((id) => id !== 180)],
   });
 }
@@ -286,15 +333,26 @@ const productSlugs = new Map(products.filter((p) => typeof p.groupId === "number
 const categoryById = new Map(categories.map((c) => [c.id, c.slug]));
 const byTipo = (tipo) => configuracoes.filter((c) => c.tipo === tipo);
 
+// Banners e botões levam a medida real das artes (width/height exatos no next/image, sem salto de layout).
 const storefront = {
-  banners: byTipo("Banner").map((b) => ({ name: b.nome, desktop: b.imagem_desktop, mobile: b.imagem_mobile || b.imagem_desktop, href: localHref(b.url, productSlugs, categoryById) })),
-  buttons: [...byTipo("Botões - Linha 1").map((b) => ({ ...b, row: 1 })), ...byTipo("Botões - Linha 2").map((b) => ({ ...b, row: 2 }))].map((b) => ({
-    name: b.nome,
-    image: b.imagem,
-    href: localHref(b.url, productSlugs, categoryById),
-    newTab: sim(b.nova_pagina),
-    row: b.row,
-  })),
+  banners: await Promise.all(
+    byTipo("Banner").map(async (b) => {
+      const desktop = b.imagem_desktop;
+      const mobile = b.imagem_mobile || b.imagem_desktop;
+      const [desktopSize, mobileSize] = await Promise.all([imageSize(desktop), mobile === desktop ? null : imageSize(mobile)]);
+      return { name: b.nome, desktop, mobile, href: localHref(b.url, productSlugs, categoryById), desktopSize, mobileSize: mobileSize ?? (mobile === desktop ? desktopSize : null) };
+    }),
+  ),
+  buttons: await Promise.all(
+    [...byTipo("Botões - Linha 1").map((b) => ({ ...b, row: 1 })), ...byTipo("Botões - Linha 2").map((b) => ({ ...b, row: 2 }))].map(async (b) => ({
+      name: b.nome,
+      image: b.imagem,
+      href: localHref(b.url, productSlugs, categoryById),
+      newTab: sim(b.nova_pagina),
+      row: b.row,
+      size: await imageSize(b.imagem),
+    })),
+  ),
   featuredCategories: byTipo("Categorias em Destaque").map((c) => ({ id: Number(c.id), name: c.nome, image: c.imagem, price: num(c.preco), slug: categoryById.get(Number(c.id)) ?? slugify(c.nome) })),
   highlights: highlightIds.filter((id) => productSlugs.has(id)),
   bestSellers: [...new Set(byTipo("Produtos mais Vendidos").map((p) => productGroupById.get(Number(p.id))).filter((id) => productSlugs.has(id)))],
