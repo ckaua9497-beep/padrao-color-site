@@ -7,11 +7,30 @@ import SignupForm from "@/components/painel/SignupForm";
 import { MARGIN_MIN, PLAN_INFO } from "@/lib/multiloja/core";
 import { getPainel } from "@/lib/multiloja/auth";
 import { rootDomain } from "@/lib/multiloja/tenant";
+import { signupOpen } from "@/lib/multiloja/config";
+import Link from "next/link";
+import { STORE } from "@/lib/store";
 
 export const metadata: Metadata = { title: "Criar minha loja" };
 
 export default async function PainelCadastro() {
   if (await getPainel()) redirect("/painel");
+  if (!signupOpen()) {
+    return (
+      <AuthShell title="Cadastro por convite" subtitle="As lojas da multiloja são abertas pela equipe da Padrão Color.">
+        <p className="text-[15px]">
+          Quer ter a sua loja?{" "}
+          <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-4">
+            Fale com a Padrão Color no WhatsApp
+          </a>
+          . Já tem acesso?
+        </p>
+        <Link href="/painel/entrar" className="mt-4 inline-block font-bold underline underline-offset-4">
+          Entrar no painel
+        </Link>
+      </AuthShell>
+    );
+  }
   const root = rootDomain();
   const port = root === "localhost" ? /:(\d+)$/.exec((await headers()).get("host") ?? "")?.[1] : undefined;
   const suffix = `.${root}${port ? `:${port}` : ""}`;

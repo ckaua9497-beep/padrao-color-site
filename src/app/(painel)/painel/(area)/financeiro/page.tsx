@@ -4,11 +4,18 @@ import FinanceiroForms from "@/components/painel/FinanceiroForms";
 import { cx } from "@/components/ui/cx";
 import { formatBRL } from "@/lib/format";
 import { requirePainel } from "@/lib/multiloja/auth";
-import { balanceOf, commissionReleased, formatDateTime } from "@/lib/multiloja/core";
+import { PAYMENT_KINDS, PAYMENT_LABEL, balanceOf, commissionReleased, formatDateTime, type PaymentRates } from "@/lib/multiloja/core";
 import { paymentRates, releaseDays } from "@/lib/multiloja/config";
 import { listComissoes, listPedidos, listSaques } from "@/lib/multiloja/repo-vendas";
 
 export const metadata: Metadata = { title: "Financeiro" };
+
+const feeText = (rates: PaymentRates) =>
+  PAYMENT_KINDS.map((k) => {
+    const r = rates[k];
+    const parts = [r.pct ? `${r.pct.toLocaleString("pt-BR")}%` : "", r.fixed ? formatBRL(r.fixed) : ""].filter(Boolean);
+    return `${PAYMENT_LABEL[k]} ${parts.length ? parts.join(" + ") : "sem taxa"}`;
+  }).join(", ");
 
 const SAQUE_LABEL = { solicitado: "Solicitado", pago: "Pago", recusado: "Recusado" } as const;
 
@@ -32,7 +39,7 @@ export default async function PainelFinanceiro() {
       <div>
         <h1 className="text-title">Financeiro</h1>
         <p className="mt-1 max-w-3xl text-muted">
-          A Padrão Color recebe o pagamento do cliente, desconta o custo dos produtos, o frete e a taxa do pagamento (Pix {rates.pix.toLocaleString("pt-BR")}%, cartão {rates.cartao.toLocaleString("pt-BR")}%), e o restante é a sua comissão.
+          A Padrão Color recebe o pagamento do cliente, desconta o custo dos produtos, o frete e a taxa do pagamento ({feeText(rates)}), e o restante é a sua comissão.
         </p>
       </div>
 

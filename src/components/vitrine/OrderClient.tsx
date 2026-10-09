@@ -151,3 +151,61 @@ export function RenewCharge({ codigo, token, label }: { codigo: string; token: s
     </div>
   );
 }
+
+/** Botão de teste: marca o pedido como pago (só gateway "simulado", só fora de produção). */
+export function SimulatePayment({ codigo, token }: { codigo: string; token: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      loading={busy}
+      onClick={async () => {
+        setBusy(true);
+        await fetch("/api/multiloja/pagamento/simular", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ codigo, token }) }).catch(() => undefined);
+        router.refresh();
+        setBusy(false);
+      }}
+    >
+      Simular pagamento (teste)
+    </Button>
+  );
+}
+
+/** Boleto: linha digitável para copiar, PDF e vencimento (e o Pix do boleto, quando o gateway manda). */
+export function BoletoBox({ line, url, expiresAt, simulated, codigo, token }: { line: string; url?: string; expiresAt?: string; simulated: boolean; codigo: string; token: string }) {
+  const [copied, setCopied] = useState(false);
+  const due = expiresAt ? new Date(`${expiresAt.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR") : null;
+  return (
+    <div className="space-y-3">
+      <p className="text-[15px]">Pague no app do banco (código de barras) ou em lotéricas e agências{due ? ` até ${due}` : ""}.</p>
+      <p className="break-all rounded-control bg-mist p-3 font-mono text-[14px] tracking-wide">{line}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(line.replace(/\D/g, ""));
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 2500);
+            } catch {
+              window.prompt("Copie a linha digitável:", line);
+            }
+          }}
+        >
+          <span aria-live="polite">{copied ? "Linha copiada!" : "Copiar linha digitável"}</span>
+        </Button>
+        {url && (
+          <Button href={url} target="_blank" rel="noreferrer" variant="outline" size="sm">
+            Abrir boleto (PDF)
+          </Button>
+        )}
+        {simulated && <SimulatePayment codigo={codigo} token={token} />}
+      </div>
+      <p className="text-caption text-muted">O banco avisa o pagamento em até 2 dias úteis; esta página atualiza sozinha.</p>
+    </div>
+  );
+}

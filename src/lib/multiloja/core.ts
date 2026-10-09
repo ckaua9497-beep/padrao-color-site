@@ -381,8 +381,13 @@ export function orderCode(random: (n: number) => Uint8Array = (n) => crypto.getR
   return `ML-${[...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("")}`;
 }
 
-export type PaymentKind = "pix" | "cartao";
-export const PAYMENT_LABEL: Record<PaymentKind, string> = { pix: "Pix", cartao: "Cartão de crédito" };
+export const PAYMENT_KINDS = ["pix", "boleto", "cartao"] as const;
+export type PaymentKind = (typeof PAYMENT_KINDS)[number];
+export const PAYMENT_LABEL: Record<PaymentKind, string> = { pix: "Pix", boleto: "Boleto", cartao: "Cartão de crédito" };
+
+export function isPaymentKind(value: unknown): value is PaymentKind {
+  return typeof value === "string" && (PAYMENT_KINDS as readonly string[]).includes(value);
+}
 
 /** Frete da loja: valor fixo, grátis a partir de um subtotal. */
 export function shippingFor(subtotal: number, fixed: number, freeAbove: number | null): number {
@@ -391,11 +396,16 @@ export function shippingFor(subtotal: number, fixed: number, freeAbove: number |
   return roundCents(fixed);
 }
 
-export type PaymentRates = { pix: number; cartao: number };
+/** Taxa de um meio de pagamento: % do valor cobrado + valor fixo por transação (boleto costuma ser só fixo). */
+export type FeeRule = { pct: number; fixed: number };
+export type PaymentRates = Record<PaymentKind, FeeRule>;
 
-/** Taxa do meio de pagamento (% do total cobrado). */
+export const NO_FEES: PaymentRates = { pix: { pct: 0, fixed: 0 }, boleto: { pct: 0, fixed: 0 }, cartao: { pct: 0, fixed: 0 } };
+
+/** Taxa do meio de pagamento sobre o total cobrado. */
 export function paymentFee(total: number, method: PaymentKind, rates: PaymentRates): number {
-  return roundCents((total * rates[method]) / 100);
+  const rule = rates[method];
+  return roundCents((total * rule.pct) / 100 + rule.fixed);
 }
 
 /**

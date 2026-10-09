@@ -1,7 +1,7 @@
 import { addressProblem, MAX_ORDER_ITEMS, parseItem, type DeliveryAddress, type OrderItemInput } from "../orders.ts";
 import { pixPrice } from "../pricing.ts";
 import { isValidDocument, isValidEmail, isValidPhone, onlyDigits } from "../api/validation.ts";
-import { commissionFor, linkSlugError, paymentFee, roundCents, shippingFor, type PaymentKind, type PaymentRates } from "./core.ts";
+import { commissionFor, isPaymentKind, linkSlugError, paymentFee, roundCents, shippingFor, type PaymentKind, type PaymentRates } from "./core.ts";
 
 /*
  * Pedido da multiloja (puro, testado em pedido.test.ts): validação do que o navegador manda no fechamento e
@@ -60,7 +60,7 @@ export function parseCheckout(raw: unknown): ParseResult {
   if (problem) return { ok: false, error: problem, field: "entrega" };
 
   const pagamento = raw.pagamento;
-  if (pagamento !== "pix" && pagamento !== "cartao") return { ok: false, error: "Escolha a forma de pagamento." };
+  if (!isPaymentKind(pagamento)) return { ok: false, error: "Escolha a forma de pagamento." };
   const expectedTotal = Number(raw.expectedTotal);
   if (!Number.isFinite(expectedTotal) || expectedTotal < 0) return { ok: false, error: "Total do pedido inválido." };
   const ref = text(raw.ref, 30);

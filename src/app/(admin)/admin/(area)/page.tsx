@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import StatusBadge from "@/components/painel/StatusBadge";
 import { formatBRL } from "@/lib/format";
-import { formatDateTime, plural, sqlDaysAgo } from "@/lib/multiloja/core";
-import { activeProvider } from "@/lib/multiloja/payments";
+import { dayKeyDaysAgo, formatDateTime, plural, sqlDaysAgo } from "@/lib/multiloja/core";
+import { activeGateway } from "@/lib/multiloja/payments";
+import { channels, kpis } from "@/lib/multiloja/analytics";
+import { funnelRates } from "@/lib/multiloja/eventos";
+import { StatTile, InlineBar, compact } from "@/components/admin/charts";
 import { padraoProduction } from "@/lib/multiloja/config";
 import { listLojasAdmin, listPedidos, listSaques, salesSummary } from "@/lib/multiloja/repo-vendas";
 
@@ -14,7 +17,11 @@ export default async function AdminInicio() {
   const paraProduzir = listPedidos({ status: "pago", limite: 50 });
   const saques = listSaques(null).filter((s) => s.status === "solicitado");
   const lojas = listLojasAdmin();
-  const provider = activeProvider();
+  const gateway = activeGateway();
+  const rede = kpis("todas", dayKeyDaysAgo(29));
+  const taxas = funnelRates(rede);
+  const canais = channels(dayKeyDaysAgo(29)).slice(0, 6);
+  const maxCanal = Math.max(0, ...canais.map((c) => c.valor));
   const production = padraoProduction();
 
   const cards = [
@@ -27,6 +34,38 @@ export default async function AdminInicio() {
   return (
     <div className="space-y-8">
       <h1 className="text-title">Visão geral</h1>
+
+      <section aria-labelledby="rede" className="space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="rede" className="text-xl font-bold">
+            Toda a rede nos últimos 30 dias
+          </h2>
+          <Link href="/admin/analises" className="font-bold underline-offset-4 hover:underline">
+            Abrir análises completas
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Visitantes (site + lojas)" value={compact(rede.visitantes)} hint={`${compact(rede.sessoes)} sessões`} />
+          <StatTile label="Pedidos" value={compact(rede.pedidos)} hint={formatBRL(rede.valorPedidos)} />
+          <StatTile label="Conversão" value={`${taxas.conversaoPedido.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`} hint="sessões que viraram pedido" />
+          <StatTile label="Abandono de carrinho" value={`${taxas.abandonoCarrinho.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`} />
+        </div>
+        {canais.length > 0 && (
+          <ul className="divide-y divide-line rounded-panel bg-white px-5 shadow-card">
+            {canais.map((c) => (
+              <li key={c.lojaId} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 py-3 text-[14px] md:grid-cols-[220px_1fr_auto]">
+                <span className="font-semibold">{c.lojaId === 0 ? c.nome : <Link href={`/admin/lojas/${c.lojaId}`} className="underline-offset-4 hover:underline">{c.nome}</Link>}</span>
+                <span className="order-3 col-span-2 md:order-none md:col-span-1">
+                  <InlineBar value={c.valor} max={maxCanal} />
+                </span>
+                <span className="text-right tabular-nums">
+                  <strong>{formatBRL(c.valor)}</strong> <span className="text-muted">· {plural(c.pedidos, "pedido", "pedidos")} · {plural(c.visitantes, "visitante", "visitantes")}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {cards.map((c) => (
@@ -44,7 +83,11 @@ export default async function AdminInicio() {
         </h2>
         <ul className="mt-2 space-y-1 text-[15px]">
           <li>
-            Pagamento online: <strong>{provider === "efi" ? "Efí (real)" : provider === "simulado" ? "simulado (teste, nada é cobrado)" : "desligado (pedidos pelo WhatsApp)"}</strong>
+            Pagamento online:{" "}
+            <strong>{gateway ? (gateway.name === "simulado" ? "simulação (teste, nada é cobrado)" : gateway.label) : "desligado (pedidos pelo WhatsApp)"}</strong>{" "}
+            <Link href="/admin/pagamentos" className="underline underline-offset-2">
+              trocar
+            </Link>
           </li>
           <li>
             Envio para produção na API Padrão: <strong>{production.enabled && production.customerId ? `ligado (cliente ${production.customerId})` : "simulação (PADRAO_ORDERS_ENABLED / PADRAO_MULTILOJA_CLIENTE_ID)"}</strong>

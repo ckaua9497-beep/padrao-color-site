@@ -44,7 +44,7 @@ export default async function AdminPedidos(props: PageProps<"/admin/pedidos">) {
       {pedidos.length === 0 ? (
         <p className="rounded-panel bg-white p-10 text-center text-muted shadow-card">Nenhum pedido.</p>
       ) : (
-        <div className="overflow-x-auto rounded-panel bg-white shadow-card">
+        <div className="relative overflow-x-auto rounded-panel bg-white shadow-card">
           <table className="w-full min-w-[860px] text-left text-[15px]">
             <thead className="border-b border-line text-caption text-muted">
               <tr>

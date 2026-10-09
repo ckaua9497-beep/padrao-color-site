@@ -120,7 +120,10 @@ test("pedido: código, frete, taxa e comissão", () => {
   assert.equal(shippingFor(100, 0, null), 0);
   assert.equal(shippingFor(100, 19.9, null), 19.9);
   assert.equal(shippingFor(150, 19.9, 150), 0);
-  assert.equal(paymentFee(100, "pix", { pix: 1.19, cartao: 4.99 }), 1.19);
+  const rates = { pix: { pct: 1.19, fixed: 0 }, boleto: { pct: 0, fixed: 3.45 }, cartao: { pct: 4.99, fixed: 0.39 } };
+  assert.equal(paymentFee(100, "pix", rates), 1.19);
+  assert.equal(paymentFee(100, "boleto", rates), 3.45);
+  assert.equal(paymentFee(100, "cartao", rates), 5.38);
   // Venda de 39,42 (base 28,16) no PIX com 5%: 37,45 pago, sem frete, taxa 0,45: comissão 8,84.
   assert.equal(commissionFor({ total: 37.45, baseCost: 28.16, shipping: 0, fee: 0.45 }), 8.84);
   assert.equal(commissionFor({ total: 10, baseCost: 20, shipping: 0, fee: 0 }), 0);

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { IconCheck } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
-import { ArtUpload, PaymentWatcher, PixBox, RenewCharge } from "@/components/vitrine/OrderClient";
+import { ArtUpload, BoletoBox, PaymentWatcher, PixBox, RenewCharge, SimulatePayment } from "@/components/vitrine/OrderClient";
 import { formatCep, formatDocument } from "@/lib/api/validation";
 import { formatBRL } from "@/lib/format";
 import { ORDER_STATUS_LABEL, PAYMENT_LABEL, sqlDate, whatsappLink, type OrderStatus } from "@/lib/multiloja/core";
@@ -82,7 +82,7 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
         {pedido.status === "aguardando_pagamento" && (
           <section className="rounded-card bg-white p-6 shadow-card" aria-labelledby="pagar">
             <h2 id="pagar" className="mb-4 text-xl font-bold">
-              Pague {formatBRL(pedido.total)} {pedido.formaPagamento === "pix" ? "com Pix" : "no cartão"}
+              Pague {formatBRL(pedido.total)} {pedido.formaPagamento === "pix" ? "com Pix" : pedido.formaPagamento === "boleto" ? "no boleto" : "no cartão"}
             </h2>
             {expired ? (
               <div className="space-y-2">
@@ -91,15 +91,28 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
               </div>
             ) : pedido.formaPagamento === "pix" && pedido.pagamento.pixCode ? (
               <PixBox code={pedido.pagamento.pixCode} image={pedido.pagamento.pixImage} expiresAt={pedido.pagamento.expiresAt} simulated={pedido.pagamentoProvedor === "simulado"} codigo={pedido.codigo} token={token} />
-            ) : pedido.formaPagamento === "cartao" && pedido.pagamento.checkoutUrl && pedido.pagamentoProvedor === "efi" ? (
+            ) : pedido.formaPagamento === "boleto" && pedido.pagamento.boletoLine ? (
+              <div className="space-y-6">
+                <BoletoBox line={pedido.pagamento.boletoLine} url={pedido.pagamento.boletoUrl} expiresAt={pedido.pagamento.boletoExpiresAt} simulated={pedido.pagamentoProvedor === "simulado"} codigo={pedido.codigo} token={token} />
+                {pedido.pagamento.pixCode && (
+                  <div className="border-t border-line pt-5">
+                    <p className="mb-3 text-[15px] font-bold">Prefere pagar agora? Este Pix quita o mesmo boleto:</p>
+                    <PixBox code={pedido.pagamento.pixCode} image={pedido.pagamento.pixImage} simulated={false} codigo={pedido.codigo} token={token} />
+                  </div>
+                )}
+              </div>
+            ) : pedido.formaPagamento === "cartao" && pedido.pagamento.checkoutUrl && pedido.pagamentoProvedor !== "simulado" ? (
               <div className="space-y-3">
-                <p className="text-[15px]">O pagamento com cartão é feito na página segura da Efí, parceira de pagamentos da loja.</p>
+                <p className="text-[15px]">O pagamento com cartão é feito na página segura da {pedido.pagamentoProvedor === "cielo" ? "Cielo" : "Efí"}, parceira de pagamentos da loja.</p>
                 <Button href={pedido.pagamento.checkoutUrl} size="md">
                   Pagar com cartão
                 </Button>
               </div>
             ) : pedido.pagamentoProvedor === "simulado" ? (
-              <PixBox code={`CARTAO-DE-TESTE-${pedido.codigo}`} simulated codigo={pedido.codigo} token={token} />
+              <div className="space-y-2">
+                <p className="text-[15px]">Pagamento de teste: nada é cobrado.</p>
+                <SimulatePayment codigo={pedido.codigo} token={token} />
+              </div>
             ) : (
               <div className="space-y-2">
                 <p className="text-[15px]">A cobrança não abriu. Tente gerar de novo ou fale com a loja{contact ? " pelo WhatsApp" : ""}.</p>

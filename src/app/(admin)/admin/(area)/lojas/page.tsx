@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
+import Link from "next/link";
 import AdminStoreRow from "@/components/admin/AdminStoreRow";
+import { NovoLojistaForm, ResetPassword, SignupToggle } from "@/components/admin/LojistaForms";
+import { Panel } from "@/components/painel/fields";
+import { signupOpen } from "@/lib/multiloja/config";
 import { formatBRL } from "@/lib/format";
 import { LOJISTA_TYPE_LABEL, formatDateTime, plural, type LojistaType } from "@/lib/multiloja/core";
 import { listLojasAdmin } from "@/lib/multiloja/repo-vendas";
-import { lojaUrl } from "@/lib/multiloja/tenant";
+import { lojaUrl, rootDomain } from "@/lib/multiloja/tenant";
 
 export const metadata: Metadata = { title: "Lojas" };
 
@@ -12,10 +17,18 @@ export default async function AdminLojas(props: PageProps<"/admin/lojas">) {
   const busca = typeof search.busca === "string" ? search.busca.trim().slice(0, 60) : "";
   const lojas = listLojasAdmin(busca);
   const urls = await Promise.all(lojas.map((l) => lojaUrl({ subdominio: l.subdominio, dominio: null })));
+  const root = rootDomain();
+  const port = root === "localhost" ? /:(\d+)$/.exec((await headers()).get("host") ?? "")?.[1] : undefined;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-title">Lojas ({lojas.length})</h1>
+      <h1 className="text-title">Lojas e lojistas ({lojas.length})</h1>
+      <Panel title="Nova loja" description="Cria o acesso do lojista e a loja. A senha provisória aparece uma vez para você repassar." id="nova-loja">
+        <NovoLojistaForm domainSuffix={`.${root}${port ? `:${port}` : ""}`} />
+        <div className="mt-6 border-t border-line pt-4">
+          <SignupToggle open={signupOpen()} />
+        </div>
+      </Panel>
       <form className="flex gap-3 rounded-panel bg-white p-4 shadow-card">
         <label htmlFor="busca" className="sr-only">
           Buscar loja
@@ -31,7 +44,9 @@ export default async function AdminLojas(props: PageProps<"/admin/lojas">) {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-lg font-bold">
-                  {l.nome} {!l.ativa && <span className="ml-1 rounded-full bg-mist px-2 py-0.5 text-[12px] text-muted">fora do ar</span>}
+                  <Link href={`/admin/lojas/${l.id}`} className="underline-offset-4 hover:underline">
+                    {l.nome}
+                  </Link> {!l.ativa && <span className="ml-1 rounded-full bg-mist px-2 py-0.5 text-[12px] text-muted">fora do ar</span>}
                 </p>
                 <a href={urls[i]} target="_blank" rel="noreferrer" className="text-caption underline underline-offset-2">
                   {urls[i].replace(/^https?:\/\//, "")}
@@ -53,7 +68,8 @@ export default async function AdminLojas(props: PageProps<"/admin/lojas">) {
                 </span>
               </p>
             </div>
-            <div className="mt-3 border-t border-line pt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+              <ResetPassword lojistaId={l.lojistaId} />
               <AdminStoreRow lojaId={l.id} lojistaId={l.lojistaId} plano={l.plano} ativa={l.ativa} bloqueado={l.lojistaStatus === "bloqueado"} dominio={l.dominio} dominioVerificado={l.dominioVerificado} />
             </div>
           </li>

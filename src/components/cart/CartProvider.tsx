@@ -5,6 +5,7 @@ import { currentCustomer, customerVariations, useCustomer, useGroupPrices } from
 import { quantityLabel } from "@/lib/format";
 import { bundleTitle, isLineError, priceLine, type OrderItemInput } from "@/lib/orders";
 import { prunePrintFilesExcept } from "@/components/product/gabarito/print-store";
+import { track } from "@/lib/tracking";
 
 export type CartItem = {
   key: string;
@@ -247,10 +248,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const add = useCallback((item: Omit<CartItem, "key">) => {
     const priceTier = item.priceTier ?? (currentCustomer().status === "reseller" ? "revenda" : "balcao");
     write([...read(), { ...item, priceTier, key: crypto.randomUUID() }]);
+    track("carrinho_add", { p: item.slug, q: item.quantity, val: Math.round(item.unitPrice * item.quantity * 100) / 100 });
     setOpen(true);
   }, []);
 
   const remove = useCallback((key: string) => {
+    const gone = read().find((item) => item.key === key);
+    if (gone) track("carrinho_remove", { p: gone.slug, q: gone.quantity, val: Math.round(gone.unitPrice * gone.quantity * 100) / 100 });
     write(read().filter((item) => item.key !== key));
     prunePrintFilesExcept(printFileIds(read()));
   }, []);

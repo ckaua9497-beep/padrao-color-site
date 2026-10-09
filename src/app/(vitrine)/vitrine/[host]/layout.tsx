@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import CartDrawer from "@/components/cart/CartDrawer";
 import { IconWhatsApp } from "@/components/icons";
 import VitrineFooter from "@/components/vitrine/VitrineFooter";
+import PageTracker from "@/components/PageTracker";
 import RefTracker from "@/components/vitrine/RefTracker";
 import VitrineHeader from "@/components/vitrine/VitrineHeader";
 import { formatPhone, paletteVars, whatsappLink } from "@/lib/multiloja/core";
@@ -76,6 +77,7 @@ export default async function VitrineLayout(props: LayoutProps<"/vitrine/[host]"
       )}
       <CartDrawer />
       <RefTracker />
+      <PageTracker />
     </>
   );
 }

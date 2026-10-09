@@ -2,7 +2,7 @@ import "server-only";
 
 import type { SQLInputValue } from "node:sqlite";
 import { getDb, transaction } from "./db";
-import { isOrderStatus, type OrderStatus, type PaymentKind } from "./core";
+import { isOrderStatus, isPaymentKind, type OrderStatus, type PaymentKind } from "./core";
 import type { DeliveryAddress } from "../orders";
 
 /*
@@ -34,6 +34,10 @@ export type PaymentData = {
   expiresAt?: string;
   /** Página de pagamento do cartão (link do provedor). */
   checkoutUrl?: string;
+  /** Boleto: linha digitável, link do PDF e vencimento (AAAA-MM-DD). */
+  boletoLine?: string;
+  boletoUrl?: string;
+  boletoExpiresAt?: string;
   /** Identificador do Pix recebido (endToEndId), para a devolução. */
   e2eId?: string;
   /** Devolução/reembolso pedido na Efí ao cancelar. */
@@ -63,6 +67,8 @@ export type Pedido = {
   ref: string | null;
   observacoes: string;
   padraoPedido: string | null;
+  /** Rastreamento anônimo: "visitante|sessão" de quem fez o pedido. */
+  sessao: string | null;
   criadoEm: string;
   atualizadoEm: string;
 };
@@ -102,7 +108,7 @@ function toPedido(row: Row): Pedido {
     status: isOrderStatus(status) ? status : "aguardando_pagamento",
     cliente: { nome: str(row.cliente_nome), email: str(row.cliente_email), telefone: str(row.cliente_telefone), documento: str(row.cliente_documento) },
     entrega: parseJson<DeliveryAddress>(row.entrega, { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "" }),
-    formaPagamento: row.forma_pagamento === "cartao" ? "cartao" : "pix",
+    formaPagamento: isPaymentKind(row.forma_pagamento) ? row.forma_pagamento : "pix",
     subtotal: num(row.subtotal),
     desconto: num(row.desconto),
     frete: num(row.frete),
@@ -117,6 +123,7 @@ function toPedido(row: Row): Pedido {
     ref: strOrNull(row.ref),
     observacoes: str(row.observacoes),
     padraoPedido: strOrNull(row.padrao_pedido),
+    sessao: strOrNull(row.sessao),
     criadoEm: str(row.criado_em),
     atualizadoEm: str(row.atualizado_em),
   };
@@ -156,8 +163,8 @@ export function createPedido(pedido: NewPedido, itens: NewPedidoItem[]): number 
     const result = db
       .prepare(
         `INSERT INTO pedidos (loja_id, codigo, token, cliente_nome, cliente_email, cliente_telefone, cliente_documento, entrega, forma_pagamento,
-          subtotal, desconto, frete, total, custo_base, taxa_pagamento, comissao, pagamento_provedor, ref, observacoes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          subtotal, desconto, frete, total, custo_base, taxa_pagamento, comissao, pagamento_provedor, ref, observacoes, sessao)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pedido.lojaId,
@@ -179,6 +186,7 @@ export function createPedido(pedido: NewPedido, itens: NewPedidoItem[]): number 
         pedido.pagamentoProvedor,
         pedido.ref,
         pedido.observacoes,
+        pedido.sessao,
       );
     const pedidoId = Number(result.lastInsertRowid);
     const insert = db.prepare(

@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { track } from "@/lib/tracking";
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
@@ -269,6 +270,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     retainSources(owner, [art.src, art.back?.src]);
   }, [owner, art.src, art.back?.src]);
   useEffect(() => () => retainSources(owner, []), [owner]);
+  // Rastreamento: produto visto (funil e produtos vencedores).
+  useEffect(() => {
+    track("produto_view", { p: product.slug, val: product.price });
+  }, [product.slug, product.price]);
 
   // Quantidade fora da grade: unidades (preço por unidade, com o mínimo da API) ou pacotes ("por 1.000 un.").
   const perUnit = !areaMode && price.qty <= 1;

@@ -1,5 +1,7 @@
 // Chamadas do navegador para as rotas /api/conta e /api/pedidos (mesma origem; o cookie de sessão vai sozinho).
 
+import { trackingHeaders } from "@/lib/tracking";
+
 export type Reply<T> = { ok: true; status: number; data: T } | { ok: false; status: number; error: string; data: Record<string, unknown> };
 
 const OFFLINE = "Sem conexão com a internet. Confira e tente de novo.";
@@ -13,7 +15,9 @@ function fallbackMessage(status: number): string {
 
 async function send<T>(url: string, init: RequestInit): Promise<Reply<T>> {
   try {
-    const response = await fetch(url, { ...init, cache: "no-store", headers: { Accept: "application/json", ...init.headers } });
+    // Pedidos levam a sessão anônima do rastreamento (funil e abandono de carrinho).
+    const tracking = url.startsWith("/api/pedidos") ? trackingHeaders() : {};
+    const response = await fetch(url, { ...init, cache: "no-store", headers: { Accept: "application/json", ...tracking, ...init.headers } });
     const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (response.ok) return { ok: true, status: response.status, data: data as T };
     return { ok: false, status: response.status, error: typeof data.error === "string" ? data.error : fallbackMessage(response.status), data };

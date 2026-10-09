@@ -71,7 +71,7 @@ export default async function PainelVendas(props: PageProps<"/painel/vendas">) {
           {!busca && !status && <p className="mt-2 text-muted">Divulgue o link da loja: os pedidos aparecem aqui assim que forem feitos.</p>}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-panel bg-white shadow-card">
+        <div className="relative overflow-x-auto rounded-panel bg-white shadow-card">
           <table className="w-full min-w-[720px] text-left text-[15px]">
             <thead className="border-b border-line text-caption text-muted">
               <tr>

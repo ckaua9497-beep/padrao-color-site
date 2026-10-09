@@ -7,10 +7,11 @@ import { cx } from "@/components/ui/cx";
 
 const LINKS = [
   { href: "/admin", label: "Visão geral" },
+  { href: "/admin/analises", label: "Análises" },
   { href: "/admin/pedidos", label: "Pedidos" },
   { href: "/admin/lojas", label: "Lojas" },
   { href: "/admin/saques", label: "Saques" },
-  { href: "/admin/pagamentos", label: "Pagamentos (Efí)" },
+  { href: "/admin/pagamentos", label: "Pagamentos" },
 ];
 
 export default function AdminNav({ name, pendingWithdrawals }: { name: string; pendingWithdrawals: number }) {

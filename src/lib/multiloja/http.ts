@@ -2,7 +2,7 @@ import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
 import { clientIp } from "../api/guard";
-import { efiWebhookIps, efiWebhookSecret } from "./config";
+import { cieloConfig, efiWebhookIps, efiWebhookSecret } from "./config";
 import { createRateLimiter } from "../api/rate-limit";
 import { lojaDoHost } from "./tenant";
 import type { Loja } from "./repo";
@@ -52,4 +52,21 @@ export function efiWebhookAllowed(request: Request): boolean {
   const allowed = efiWebhookIps();
   const ip = clientIp(request);
   return !allowed.length || !ip || allowed.includes(ip.replace(/^::ffff:/i, ""));
+}
+
+const sameSecret = (given: string, secret: string) => {
+  const a = Buffer.from(given);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
+
+/**
+ * Aviso da Cielo: o segredo vem no cabeçalho X-Multiloja-Segredo (Post de Notificação da API E-commerce, cabeçalho
+ * personalizado cadastrado no portal) ou em ?hmac= (notificação do Link de Pagamento, que não aceita cabeçalho).
+ */
+export function cieloWebhookAllowed(request: Request): boolean {
+  const secret = cieloConfig()?.webhookSecret;
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const given = request.headers.get("x-multiloja-segredo") ?? new URL(request.url).searchParams.get("hmac") ?? "";
+  return sameSecret(given, secret);
 }

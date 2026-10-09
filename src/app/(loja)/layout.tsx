@@ -2,6 +2,7 @@ import SiteHeader, { type MenuGroup } from "@/components/header/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
 import CartDrawer from "@/components/cart/CartDrawer";
+import PageTracker from "@/components/PageTracker";
 import { CATALOG_STATS, getCategory } from "@/lib/catalog";
 import { MENU_GROUPS } from "@/lib/menu";
 
@@ -40,6 +41,7 @@ export default function LojaLayout({ children }: { children: React.ReactNode }) 
       <SiteFooter />
       <WhatsAppFloat />
       <CartDrawer />
+      <PageTracker />
     </>
   );
 }

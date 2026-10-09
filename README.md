@@ -239,38 +239,62 @@ todas as lojas: a loja é escolhida pelo endereço.
   Domínio próprio: o lojista cadastra em Dados da loja e a loja passa a responder nele quando o DNS aponta para `MULTILOJA_DNS_ALVO`
   (verificado no painel) ou quando a Padrão libera em `/admin/lojas`.
 - **Vitrine** (`src/app/(vitrine)/vitrine/[host]/`): início, produtos com busca/filtro/ordem, produto (o mesmo `ProductExperience` do site,
-  com 3D e gabarito), carrinho, sobre, finalização e página do pedido (`/pedido/<código>?t=<token>`: status, Pix, cartão e envio de arte).
+  com 3D e gabarito), carrinho, sobre, finalização e página do pedido (`/pedido/<código>?t=<token>`: status, Pix, boleto, cartão e envio de arte).
   Links de divulgação: `?ref=<nome>` marca a origem por 30 dias e o pedido leva essa origem; visitas contadas por dia.
 - **Preço e comissão.** Preço base = preço do catálogo × `MULTILOJA_FATOR_BASE` (padrão 1, provisório até a Padrão definir a tabela da
   multiloja); preço da loja = base × (1 + margem), de 20% a 300%. No pedido, o servidor recalcula cada item duas vezes (`priceLine`): no
   preço da loja e no base. Comissão = pago pelo cliente − custo base − frete − taxa do pagamento (`src/lib/multiloja/pedido.ts`, testado).
   Fica "a liberar" até a entrega ou `MULTILOJA_DIAS_LIBERACAO` dias após o pagamento; o lojista pede saque (mínimo R$ 20) para a chave Pix.
-- **Pagamento** (`payments.ts`): `simulado` em desenvolvimento (botão "Simular pagamento" na página do pedido); `efi` com Pix (cobrança
-  imediata, QR e copia e cola; certificado .p12, arquivo ou base64) e cartão por link de pagamento da Efí. Rotas conferidas com a
-  documentação e o SDK oficial da Efí. Webhook do Pix cadastrado pelo `/admin/pagamentos` sem mTLS (`x-skip-mtls-checking`), com
-  segredo na URL (`MULTILOJA_EFI_WEBHOOK_SEGREDO`) e IP da Efí; o aviso nunca vale sozinho: a cobrança é consultada na Efí antes de
-  marcar "pago". Cancelar um pedido pago devolve o Pix / estorna o cartão. Pix vencido: o cliente gera outro na página do pedido.
-  `/admin/pagamentos` mostra o diagnóstico (credenciais, certificado, autenticação nas duas APIs, webhook) e, em homologação, cria um
-  Pix de teste de R$ 1,00 (a Efí confirma sozinha até R$ 10,00).
-  **Simulador:** `node scripts/efi-mock.mjs` (launch "efi-mock", porta 3199) imita a Efí; com `MULTILOJA_EFI_MOCK_URL` num
-  `.env.development.local` dá para testar Pix, webhook, cartão, notificação e devolução sem credenciais (`POST /mock/pagar/<txid>`
-  paga Pix acima de R$ 10).
+- **Pagamento** (`payments.ts` + `gateways/`): Pix, boleto e cartão. O gateway ativo é escolhido em `/admin/pagamentos` com um clique
+  (Efí, Cielo, Simulação ou Desligado) e cobra todos os pedidos novos de todas as lojas; cada pedido guarda o gateway que o cobrou
+  (`pagamento_provedor`), então consulta, aviso, devolução e cancelamento de pedidos antigos continuam no gateway original depois da
+  troca. Na mesma tela: formas oferecidas no checkout, taxa por forma (% + valor fixo, descontada da comissão) e dias de vencimento do
+  boleto. Credenciais salvas lá ficam cifradas no banco (`settings.ts`) e valem no lugar das variáveis `MULTILOJA_EFI_*`/`MULTILOJA_CIELO_*`.
+  Todo aviso de pagamento é conferido no gateway antes de marcar "pago". Cancelar um pedido pago devolve o Pix / estorna o cartão;
+  boleto pago se devolve à parte (o pedido avisa). Pix vencido ou link expirado: o cliente gera outra cobrança na página do pedido.
+  - `simulado`: só fora de produção (botão "Simular pagamento" na página do pedido).
+  - `efi` (`gateways/efi.ts`): Pix pela API Pix (cobrança imediata, certificado .p12); boleto e cartão pela API de Cobranças (boleto com
+    Pix "bolix" para pagar na hora; cartão na página segura da Efí). Rotas conferidas com a documentação e o SDK oficial. Webhook do Pix
+    cadastrado pelo admin sem mTLS (`x-skip-mtls-checking`), com segredo na URL e IP da Efí; boleto e cartão avisam pela URL de
+    notificação da cobrança. Em homologação o admin cria um Pix de teste de R$ 1,00.
+  - `cielo` (`gateways/cielo.ts`): Pix (Provider `Cielo2`) e boleto (`Bradesco2`/`BancoDoBrasil3`; sandbox `Simulado`) pela API
+    E-commerce 3.0; cartão pelo Link de Pagamento (página segura da Cielo, até 6x; OAuth com Client ID/Secret; sem sandbox, usar o Modo
+    Teste). No portal da Cielo cadastram-se a URL de notificação da API (com o cabeçalho `X-Multiloja-Segredo`) e a URL de mudança de
+    status do Link (com `?hmac=`); o admin mostra as duas e o segredo.
+  - `/admin/pagamentos` mostra o diagnóstico de cada gateway (credenciais, certificado, autenticação, webhook).
+  - **Simuladores:** `node scripts/efi-mock.mjs` (launch "efi-mock", porta 3199) e `node scripts/cielo-mock.mjs` ("cielo-mock", 3198).
+    Com `MULTILOJA_EFI_MOCK_URL` / `MULTILOJA_CIELO_MOCK_URL` num `.env.development.local` (ignorados em produção) dá para testar tudo sem
+    credenciais: Efí `POST /mock/pagar/<txid>` (Pix acima de R$ 10) e `GET /mock/checkout/<id>` (cartão/boleto); Cielo
+    `POST /mock/config {apiUrl, linkUrl, segredo}` (para onde avisar), `POST /mock/pagar/<PaymentId>` (Pix/boleto) e
+    `GET /mock/link/<id>` (cartão). Testado ponta a ponta nos dois; nenhum dos dois rodou ainda contra o sandbox real.
 - **Produção.** Em `/admin`, "Enviar para produção" monta o `gerarpedido` no preço base em nome de `PADRAO_MULTILOJA_CLIENTE_ID`; só chama a
   API com `PADRAO_ORDERS_ENABLED=true`, senão simula e mostra os dados. Status seguintes (enviado, entregue) com nota no histórico.
 - **Painel** (`/painel`): cadastro; início com vendas dos 30 dias, saldo e checklist; vendas e detalhe do pedido (artes, valores,
   histórico); clientes; financeiro (saldo, chave Pix, saque, extrato); divulgação (links, visitas, conversão); produtos e margens; dados
   da loja (frete fixo e grátis a partir de, domínio próprio); aparência; conta. Server Actions em `painel/actions.ts`; a loja sempre vem
   da sessão.
-- **Admin da Padrão** (`/admin`): visão geral, pedidos de todas as lojas (produção e status), lojas (plano, no ar, bloqueio, domínio) e
-  saques. Conta criada com `MULTILOJA_ADMIN_SENHA=… npm run multiloja:admin -- email "Nome"`.
+- **Admin da Padrão** (`/admin`): visão geral (rede toda: visitantes, pedidos, conversão, abandono, canais, configuração), análises,
+  pedidos de todas as lojas (produção e status), lojas, saques e pagamentos. Em Lojas a Padrão cria o lojista e a loja (senha provisória
+  mostrada uma vez), gera senha nova, troca plano, tira do ar, bloqueia, libera domínio e abre ou fecha o cadastro público
+  (`/painel/cadastro` fechado = "cadastro por convite"). Cada loja tem um raio-x em `/admin/lojas/<id>` (vendas, saldo do lojista, últimos
+  pedidos e as mesmas análises só dela). Conta de admin criada com `MULTILOJA_ADMIN_SENHA=… npm run multiloja:admin -- email "Nome"`.
+- **Rastreamento e análises** (`/admin/analises`, filtros de período e canal: tudo, só o site, só as multilojas ou uma loja). O site da
+  Padrão (loja 0) e todas as lojas mandam eventos anônimos para `POST /api/eventos` (`src/lib/tracking.ts`, `PageTracker`): visita,
+  produto visto, carrinho (+/−) e checkout; o servidor grava pedido feito (com os itens) e pago. Visitante e sessão são números
+  aleatórios no navegador (sessão acaba após 30 min parada); sem nome, e-mail ou IP; robôs e quem liga "Global Privacy Control"/"Do Not
+  Track" ficam de fora. O painel mostra funil (sessões em cada etapa), fluxo de pessoas e de vendas por dia e por hora, site × multilojas,
+  produtos vencedores (vistos → carrinho → vendidos, receita no site e nas lojas), carrinhos abandonados (o que ficou e onde), origens e
+  aparelhos. Consultas em `analytics.ts`; regras puras e testadas em `eventos.ts`. No site da Padrão o pagamento é confirmado no sistema
+  da Padrão, então lá entram só os pedidos feitos.
 - **Planos.** Grátis (10 produtos ativos), Básico (50) e Premium (sem limite), trocados no admin.
 - **Dados.** SQLite local (`node:sqlite`) em `.data/multiloja.db`; imagens e artes em `.data/arquivos/` (fora do git). Esquema em
   `src/lib/multiloja/schema.ts` (migrações em ordem; mudança = item novo no fim). Todo SQL fica em `repo.ts` e `repo-vendas.ts`, para a
   troca por Postgres mexer só neles. Logins com scrypt e cookies lacrados próprios (`auth.ts`), com limite de tentativas.
 - **Demonstração.** `npm run multiloja:seed` recria a loja `atelie-demo` (16 produtos, frete, 2 links) e um admin de teste; e-mails e
   senhas de teste estão no próprio script.
-- **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, homologação da Efí, cliente da multiloja
-  na API Padrão e e-mails automáticos ao cliente (hoje ele recebe o link na tela e o lojista pode reenviar pelo painel).
+- **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, homologação da Efí e da Cielo
+  (credenciais, Pix e boleto habilitados na conta, URLs de aviso cadastradas), cliente da multiloja na API Padrão, aviso de privacidade
+  sobre o rastreamento anônimo e e-mails automáticos ao cliente (hoje ele recebe o link na tela e o lojista pode reenviar pelo painel).
 
 ## Estrutura
 

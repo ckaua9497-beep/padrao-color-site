@@ -12,7 +12,9 @@ import { formatCep, formatDocument, formatPhone, onlyDigits } from "@/lib/api/va
 import { formatBRL } from "@/lib/format";
 import { PIX_DISCOUNT, pixPrice } from "@/lib/pricing";
 import type { OrderQuote } from "@/lib/multiloja/pedido";
+import type { PaymentKind } from "@/lib/multiloja/core";
 import { readRef } from "./RefTracker";
+import { track, trackingHeaders } from "@/lib/tracking";
 
 /*
  * Fechamento do pedido na loja do lojista: dados, entrega, pagamento (Pix com desconto ou cartão) e resumo
@@ -22,7 +24,13 @@ import { readRef } from "./RefTracker";
  */
 
 type Props = { storeName: string; whatsapp: string | null; email: string | null };
-type Method = "pix" | "cartao";
+type Method = PaymentKind;
+
+const METHOD_INFO: Record<Method, { label: string; hint: string }> = {
+  pix: { label: "Pix", hint: `${Math.round(PIX_DISCOUNT * 100)}% de desconto, aprovação na hora` },
+  boleto: { label: "Boleto", hint: "Aprovação em até 2 dias úteis após o pagamento" },
+  cartao: { label: "Cartão de crédito", hint: "Página segura de pagamento, em parcelas" },
+};
 
 const EMPTY_ADDRESS = { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "" };
 
@@ -35,12 +43,18 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
   const [notes, setNotes] = useState("");
   const [quote, setQuote] = useState<OrderQuote | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
+  const [methods, setMethods] = useState<Method[]>([]);
   const [lineErrors, setLineErrors] = useState<{ key: string; error: string }[]>([]);
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
   const [step, setStep] = useState<"form" | "enviando" | "artes">("form");
   const [cepStatus, setCepStatus] = useState<"" | "buscando" | "erro">("");
 
   const items = useMemo(() => lines.map(({ item, unitPrice }) => toOrderItem(item, unitPrice)), [lines]);
+
+  // Rastreamento: abriu o checkout.
+  useEffect(() => {
+    track("checkout_inicio");
+  }, []);
   const itemsKey = JSON.stringify(items);
 
   // Cotação do servidor: preço da loja, desconto do Pix, frete. Refaz quando o carrinho ou a forma mudam.
@@ -55,10 +69,13 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
       signal: controller.signal,
     })
       .then((r) => r.json())
-      .then((data: { ok?: boolean; quote?: OrderQuote; online?: boolean; errors?: { key: string; error: string }[] }) => {
+      .then((data: { ok?: boolean; quote?: OrderQuote; online?: boolean; metodos?: Method[]; metodo?: Method; errors?: { key: string; error: string }[] }) => {
         if (data.ok && data.quote) {
           setQuote(data.quote);
           setOnline(Boolean(data.online));
+          setMethods(data.metodos ?? []);
+          // O servidor ajusta a forma quando a escolhida não está disponível.
+          if (data.metodo && data.metodo !== method) setMethod(data.metodo);
           setLineErrors([]);
         } else setLineErrors(data.errors ?? []);
       })
@@ -121,7 +138,7 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
     setStep("enviando");
     const response = await fetch("/api/multiloja/pedido", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...trackingHeaders() },
       body: JSON.stringify({ items, cliente, entrega, pagamento: method, expectedTotal: quote.total, ref: readRef(), observacoes: notes }),
     }).catch(() => null);
     const data = (await response?.json().catch(() => null)) as { ok?: boolean; error?: string; field?: string; quote?: OrderQuote; codigo?: string; token?: string; url?: string } | null;
@@ -217,13 +234,8 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
           {online === false ? (
             <p className="text-[15px] text-muted">Esta loja ainda fecha os pedidos pelo WhatsApp: a forma de pagamento é combinada na conversa.</p>
           ) : (
-            <div role="radiogroup" aria-label="Forma de pagamento" className="grid gap-3 sm:grid-cols-2">
-              {(
-                [
-                  ["pix", "Pix", `${Math.round(PIX_DISCOUNT * 100)}% de desconto, aprovação na hora`],
-                  ["cartao", "Cartão de crédito", "Página segura de pagamento"],
-                ] as const
-              ).map(([value, label, hint]) => (
+            <div role="radiogroup" aria-label="Forma de pagamento" className="grid gap-3 sm:grid-cols-3">
+              {methods.map((value) => [value, METHOD_INFO[value].label, METHOD_INFO[value].hint] as const).map(([value, label, hint]) => (
                 <label key={value} className="flex cursor-pointer items-start gap-3 rounded-control border border-line p-4 has-[:checked]:border-ink has-[:checked]:ring-2 has-[:checked]:ring-ink">
                   <input type="radio" name="pagamento" value={value} checked={method === value} onChange={() => setMethod(value)} className="mt-1 accent-ink" />
                   <span>
@@ -288,7 +300,7 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
           </p>
         )}
         <Button type="submit" size="lg" block loading={busy} disabled={busy || lineErrors.length > 0 || (online !== false && !quote)}>
-          {online === false ? (whatsapp ? "Enviar pedido pelo WhatsApp" : "Enviar pedido por e-mail") : method === "pix" ? "Gerar Pix" : "Ir para o pagamento"}
+          {online === false ? (whatsapp ? "Enviar pedido pelo WhatsApp" : "Enviar pedido por e-mail") : method === "pix" ? "Gerar Pix" : method === "boleto" ? "Gerar boleto" : "Ir para o pagamento"}
         </Button>
         <p className={cx("text-caption text-muted", step === "artes" && "font-semibold text-ink")} aria-live="polite">
           {step === "artes" ? "Enviando as artes do pedido…" : "Seus dados são usados só para este pedido e a entrega."}

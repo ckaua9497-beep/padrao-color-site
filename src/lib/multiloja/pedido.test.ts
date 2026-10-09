@@ -32,7 +32,8 @@ test("checkout: recusa o que falta ou não confere", () => {
   assert.equal(name.ok === false && name.field, "nome");
   const cep = parseCheckout({ ...valid, entrega: { ...valid.entrega, cep: "123" } });
   assert.equal(cep.ok === false && cep.field, "entrega");
-  assert.equal(parseCheckout({ ...valid, pagamento: "boleto" }).ok, false);
+  assert.equal(parseCheckout({ ...valid, pagamento: "boleto" }).ok, true);
+  assert.equal(parseCheckout({ ...valid, pagamento: "cheque" }).ok, false);
   // ref fora do formato é ignorada (não derruba o pedido).
   const ref = parseCheckout({ ...valid, ref: "<script>" });
   assert.equal(ref.ok && ref.value.ref, null);
@@ -40,8 +41,9 @@ test("checkout: recusa o que falta ou não confere", () => {
 
 test("totais: desconto do PIX, frete e comissão", () => {
   const lines = [{ total: 39.42, baseTotal: 28.16 }];
-  const pix = quoteOrder(lines, "pix", { fixed: 0, freeAbove: null }, { pix: 0, cartao: 0 });
+  const zero = { pct: 0, fixed: 0 };
+  const pix = quoteOrder(lines, "pix", { fixed: 0, freeAbove: null }, { pix: zero, boleto: zero, cartao: zero });
   assert.deepEqual(pix, { subtotal: 39.42, desconto: 1.97, frete: 0, total: 37.45, custoBase: 28.16, taxa: 0, comissao: 9.29 });
-  const card = quoteOrder(lines, "cartao", { fixed: 15, freeAbove: 100 }, { pix: 1, cartao: 5 });
+  const card = quoteOrder(lines, "cartao", { fixed: 15, freeAbove: 100 }, { pix: { pct: 1, fixed: 0 }, boleto: zero, cartao: { pct: 5, fixed: 0 } });
   assert.deepEqual(card, { subtotal: 39.42, desconto: 0, frete: 15, total: 54.42, custoBase: 28.16, taxa: 2.72, comissao: 8.54 });
 });

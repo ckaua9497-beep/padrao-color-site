@@ -21,6 +21,8 @@ import {
   type PricedLine,
 } from "@/lib/orders";
 import { clearSession, profileOf } from "@/lib/session";
+import { recordOrderEvent } from "@/lib/multiloja/analytics";
+import { isTrackingId } from "@/lib/multiloja/eventos";
 
 /*
  * POST /api/pedidos — fecha o pedido do checkout.
@@ -104,7 +106,22 @@ export async function POST(request: Request) {
   if (!deliveryInfo) return fail(400, "Seu cadastro não tem endereço de entrega completo. Informe outro endereço ou escolha a retirada.");
 
   const payload = buildOrderPayload({ customerId: session.id, lines, method: payment, delivery: deliveryInfo });
-  if (!ordersEnabled()) return json({ mode: "simulation", payload, quote });
+  // Rastreamento (site da Padrão = loja 0): pedido e itens, ligados à sessão anônima de quem comprou.
+  const visitante = request.headers.get("x-pc-visitante");
+  const sessaoRastreio = request.headers.get("x-pc-sessao");
+  const trackOrder = (codigo: string) =>
+    recordOrderEvent("pedido_criado", {
+      lojaId: 0,
+      visitante: isTrackingId(visitante) ? visitante : null,
+      sessao: isTrackingId(sessaoRastreio) ? sessaoRastreio : null,
+      codigo,
+      total: totals.total,
+      itens: lines.map((line) => ({ produto: getProduct(line.input.slug)?.id ?? String(line.groupId), quantidade: line.units, valor: line.total })),
+    });
+  if (!ordersEnabled()) {
+    trackOrder(`SIM-${Date.now().toString(36)}`);
+    return json({ mode: "simulation", payload, quote });
+  }
 
   const key = `${session.id}:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`;
   const previous = recentOrders.get(key);
@@ -118,6 +135,7 @@ export async function POST(request: Request) {
     const result = await gerarPedido(payload, session.token);
     const order = extractOrderNumber(result);
     rememberOrder(key, { order });
+    trackOrder(order ? `PC-${order}` : `PC-${Date.now().toString(36)}`);
     return json({ mode: "order", order, quote });
   } catch (error) {
     // Só libera a repetição com certeza de que o pedido não foi criado: nada saiu (sem conexão, disjuntor,

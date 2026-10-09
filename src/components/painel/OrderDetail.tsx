@@ -7,6 +7,8 @@ import StatusBadge from "./StatusBadge";
 
 /* Detalhe do pedido, igual no painel do lojista e no admin da Padrão (o admin acrescenta as ações em `actions`). */
 
+const GATEWAY_LABEL: Record<string, string> = { efi: "Efí", cielo: "Cielo" };
+
 function Row({ label, value, strong = false }: { label: string; value: ReactNode; strong?: boolean }) {
   return (
     <div className={strong ? "flex justify-between border-t border-line pt-2 font-bold" : "flex justify-between"}>
@@ -29,6 +31,7 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome 
             <StatusBadge status={pedido.status} />
             <span className="text-caption text-muted">
               {PAYMENT_LABEL[pedido.formaPagamento]}
+              {pedido.pagamentoProvedor && GATEWAY_LABEL[pedido.pagamentoProvedor] ? ` pela ${GATEWAY_LABEL[pedido.pagamentoProvedor]}` : ""}
               {pedido.pagoEm ? ` · pago em ${formatDateTime(pedido.pagoEm)}` : ""}
               {pedido.pagamentoProvedor === "simulado" ? " · pagamento de teste" : ""}
               {pedido.padraoPedido ? ` · pedido Padrão nº ${pedido.padraoPedido}` : ""}

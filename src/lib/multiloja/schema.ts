@@ -164,4 +164,36 @@ export const MIGRATIONS: string[] = [
     ultimo_login TEXT
   );
   `,
+  // Etapa 3: configurações editáveis no admin (gateway de pagamento, chaves cifradas) e rastreamento de eventos
+  // (site Padrão = loja 0 e multilojas), sem dados pessoais.
+  `
+  CREATE TABLE configuracoes (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE eventos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    dia TEXT NOT NULL,
+    loja_id INTEGER NOT NULL DEFAULT 0,
+    visitante TEXT NOT NULL,
+    sessao TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    produto_id TEXT,
+    quantidade REAL,
+    valor REAL,
+    pedido TEXT,
+    ref TEXT,
+    caminho TEXT,
+    dispositivo TEXT
+  );
+  CREATE INDEX eventos_dia ON eventos(dia, loja_id);
+  CREATE INDEX eventos_sessao ON eventos(sessao);
+  CREATE INDEX eventos_tipo ON eventos(tipo, dia);
+  CREATE INDEX eventos_produto ON eventos(produto_id, tipo);
+
+  ALTER TABLE pedidos ADD COLUMN sessao TEXT;
+  `,
 ];

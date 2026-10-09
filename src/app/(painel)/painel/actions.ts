@@ -27,7 +27,7 @@ import {
 } from "@/lib/multiloja/core";
 import { endPainelSession, hashPassword, painelLimits, requestIp, requirePainel, startPainelSession, timingDummy, verifyPassword } from "@/lib/multiloja/auth";
 import { deleteImage, saveImage } from "@/lib/multiloja/files";
-import { dnsTarget, releaseDays } from "@/lib/multiloja/config";
+import { dnsTarget, releaseDays, signupOpen } from "@/lib/multiloja/config";
 import { createLink, createSaque, deleteLink, listComissoes, listSaques } from "@/lib/multiloja/repo-vendas";
 import {
   activateProdutos,
@@ -99,6 +99,7 @@ export async function cadastrar(_prev: FormState, form: FormData): Promise<FormS
   const lojaNome = text(form, "loja", 60);
   const subdominio = text(form, "subdominio", 40).toLowerCase();
   const aceite = form.get("aceite") === "on";
+  if (!signupOpen()) return { message: "O cadastro de lojas está fechado. Fale com a Padrão Color para abrir a sua." };
 
   const errors: Record<string, string> = {};
   if (nome.length < 3) errors.nome = "Informe seu nome.";

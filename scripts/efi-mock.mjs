@@ -10,7 +10,7 @@
  * Imita as rotas e respostas da documentação da Efí (API Pix e API de Cobranças), inclusive o comportamento da
  * homologação: Pix de R$ 0,01 a R$ 10,00 é confirmado sozinho e o webhook é chamado. Para valores maiores:
  *   POST /mock/pagar/<txid>          → paga a cobrança Pix e chama o webhook
- *   GET  /mock/checkout/<charge_id>  → "página da Efí" do cartão: paga e manda a notificação
+ *   GET  /mock/checkout/<charge_id>  → "página da Efí" do cartão (ou link do boleto): paga e manda a notificação
  * Não confere mTLS nem certificado (isso só existe na Efí de verdade).
  */
 import { randomBytes } from "node:crypto";
@@ -105,6 +105,13 @@ const server = createServer(async (req, res) => {
     const cob = cobs.get(m[1]);
     return cob ? send(res, 200, cob) : send(res, 404, { nome: "cobranca_nao_encontrada" });
   }
+  if (method === "PATCH" && (m = /^\/pix\/v2\/cob\/([a-zA-Z0-9]{26,35})$/.exec(path))) {
+    const cob = cobs.get(m[1]);
+    if (!cob) return send(res, 404, { nome: "cobranca_nao_encontrada" });
+    if (body?.status === "REMOVIDA_PELO_USUARIO_RECEBEDOR" && cob.status === "ATIVA") cob.status = "REMOVIDA_PELO_USUARIO_RECEBEDOR";
+    log(`Pix ${cob.txid} → ${cob.status}`);
+    return send(res, 200, cob);
+  }
   if ((m = /^\/pix\/v2\/webhook\/(.+)$/.exec(path))) {
     if (method === "GET") return webhook ? send(res, 200, { webhookUrl: webhook, chave: decodeURIComponent(m[1]), criacao: new Date().toISOString() }) : send(res, 404, { nome: "webhook_nao_encontrado" });
     if (method === "PUT") {
@@ -137,6 +144,38 @@ const server = createServer(async (req, res) => {
     const charge = { charge_id: ++chargeSeq, status: "link", total: item.value * (item.amount ?? 1), custom_id: body.metadata?.custom_id ?? null, notification_url: body.metadata?.notification_url ?? null };
     charges.set(String(charge.charge_id), charge);
     return send(res, 200, { code: 200, data: { ...charge, payment_url: `${BASE}/mock/checkout/${charge.charge_id}`, payment_method: "credit_card", expire_at: body.settings.expire_at, created_at: new Date().toISOString() } });
+  }
+  if (method === "POST" && path === "/cobrancas/v1/charge/one-step") {
+    const item = body?.items?.[0];
+    const billet = body?.payment?.banking_billet;
+    const c = billet?.customer;
+    if (!item?.name || !Number.isInteger(item.value) || !billet?.expire_at || !c?.name || !(c.cpf || c.juridical_person?.cnpj) || !c.phone_number) {
+      return send(res, 400, { code: 3500034, error: "validation_error", error_description: "boleto: items/customer/expire_at inválidos" });
+    }
+    const charge = { charge_id: ++chargeSeq, status: "waiting", total: item.value * (item.amount ?? 1), custom_id: body.metadata?.custom_id ?? null, notification_url: body.metadata?.notification_url ?? null };
+    charges.set(String(charge.charge_id), charge);
+    const digits = String(charge.charge_id).padStart(10, "0");
+    return send(res, 200, {
+      code: 200,
+      data: {
+        ...charge,
+        payment: "banking_billet",
+        barcode: `36490.00019 00002.${digits.slice(0, 5)} ${digits.slice(5)}0.000000 1 9999000000${String(charge.total).padStart(4, "0")}`,
+        link: `${BASE}/mock/checkout/${charge.charge_id}`,
+        billet_link: `${BASE}/mock/checkout/${charge.charge_id}`,
+        pdf: { charge: `${BASE}/mock/boleto/${charge.charge_id}.pdf` },
+        expire_at: billet.expire_at,
+        pix: { qrcode: `00020101021226BOLIX${charge.charge_id}`, qrcode_image: PNG_1PX },
+      },
+    });
+  }
+  if (method === "PUT" && (m = /^\/cobrancas\/v1\/charge\/(\d+)\/cancel$/.exec(path))) {
+    const charge = charges.get(m[1]);
+    if (!charge) return send(res, 404, { code: 3500010, error: "charge_not_found" });
+    if (!["new", "waiting", "unpaid", "link"].includes(charge.status)) return send(res, 400, { code: 3500020, error: "charge_cannot_be_canceled" });
+    charge.status = "canceled";
+    log(`cobrança ${charge.charge_id} cancelada`);
+    return send(res, 200, { code: 200 });
   }
   if (method === "GET" && (m = /^\/cobrancas\/v1\/charge\/(\d+)$/.exec(path))) {
     const charge = charges.get(m[1]);

@@ -1,9 +1,11 @@
 import { fail, json, readJsonBody } from "@/lib/api/guard";
 import { limited, lojaDaRequisicao, requestOrigin, vitrineLimits } from "@/lib/multiloja/http";
 import { parseCheckout } from "@/lib/multiloja/pedido";
-import { activeProvider } from "@/lib/multiloja/payments";
+import { activeProvider, availableMethods } from "@/lib/multiloja/payments";
+import { isPaymentKind } from "@/lib/multiloja/core";
 import { placeOrder, priceCart, quoteFor } from "@/lib/multiloja/vendas";
 import { MAX_ORDER_ITEMS, parseItem, type OrderItemInput } from "@/lib/orders";
+import { isTrackingId } from "@/lib/multiloja/eventos";
 
 /*
  * Pedido da vitrine da multiloja (chamado no host da loja).
@@ -26,15 +28,20 @@ export async function POST(request: Request) {
     if (list.length === 0 || list.some((item) => item === null)) return fail(400, "Carrinho inválido.");
     const priced = priceCart(loja, list as OrderItemInput[]);
     if (!priced.ok) return json({ ok: false, errors: priced.errors }, 422);
-    const method = raw.pagamento === "cartao" ? "cartao" : "pix";
-    return json({ ok: true, quote: quoteFor(loja, priced.items, method), online: activeProvider() !== null });
+    const metodos = availableMethods();
+    const method = isPaymentKind(raw.pagamento) && metodos.includes(raw.pagamento) ? raw.pagamento : (metodos[0] ?? "pix");
+    return json({ ok: true, quote: quoteFor(loja, priced.items, method), online: activeProvider() !== null && metodos.length > 0, metodos, metodo: method });
   }
 
   if (!parsed.ok) return fail(400, parsed.error, parsed.field ? { field: parsed.field } : undefined);
   if (!activeProvider()) return fail(503, "O pagamento online ainda não está disponível nesta loja. Finalize pelo WhatsApp da loja.");
+  if (!availableMethods().includes(parsed.value.pagamento)) return fail(422, "Esta forma de pagamento não está disponível agora. Escolha outra.");
   if (limited(vitrineLimits.pedido, request, `pedido:${loja.id}`)) return fail(429, "Muitos pedidos seguidos. Espere alguns minutos e tente de novo.");
 
-  const result = await placeOrder(loja, parsed.value, requestOrigin(request));
+  const visitante = request.headers.get("x-pc-visitante");
+  const sessao = request.headers.get("x-pc-sessao");
+  const tracking = isTrackingId(visitante) && isTrackingId(sessao) ? { visitante, sessao } : null;
+  const result = await placeOrder(loja, parsed.value, requestOrigin(request), tracking);
   if (result.ok) {
     const { pedido } = result;
     return json({ ok: true, codigo: pedido.codigo, url: `/pedido/${pedido.codigo}?t=${pedido.token}`, token: pedido.token }, 201);

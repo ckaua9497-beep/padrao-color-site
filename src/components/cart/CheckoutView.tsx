@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { track } from "@/lib/tracking";
 import { getJson, lookupCep, postJson } from "@/components/account/client-api";
 import { FormAlert, UfSelect } from "@/components/account/FormBits";
 import { LoginForm } from "@/components/account/LoginForm";
@@ -349,6 +350,11 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     setCheckOrders(false);
     setAuthTab("entrar");
     setAuthInfo({ tone: "info", text: "Sua sessão expirou. Entre de novo para continuar a compra: o carrinho continua aqui." });
+  }, []);
+
+  // Rastreamento: abriu o checkout (abandono de checkout).
+  useEffect(() => {
+    track("checkout_inicio");
   }, []);
 
   // Endereço do cadastro e saldo (GET /api/conta/resumo) da conta logada.
