@@ -10,7 +10,7 @@ import { applyChargeStatus } from "@/lib/multiloja/vendas";
  * mudar o pedido. A URL leva ?hmac=<segredo> (montada ao criar o boleto ou o link do cartão).
  */
 export async function POST(request: Request) {
-  if (!efiWebhookAllowed(request)) return new Response(null, { status: 401 });
+  if (!(await efiWebhookAllowed(request))) return new Response(null, { status: 401 });
   let token = "";
   try {
     const form = await request.formData();
@@ -21,10 +21,10 @@ export async function POST(request: Request) {
   if (!/^[\w-]{10,100}$/.test(token)) return new Response(null, { status: 200 });
   try {
     for (const { codigo, chargeNumber } of await efiChargeNotification(token)) {
-      const pedido = getPedidoByCodigo(codigo);
+      const pedido = await getPedidoByCodigo(codigo);
       const ours = pedido?.pagamentoId?.replace(/^(cartao|boleto)-/, "");
       if (!pedido || pedido.pagamentoProvedor !== "efi" || ours !== chargeNumber || !pedido.pagamentoId) continue;
-      applyChargeStatus(pedido, await chargeStatus("efi", pedido.pagamentoId), pedido.formaPagamento === "boleto" ? "notificação do boleto" : "notificação do cartão");
+      await applyChargeStatus(pedido, await chargeStatus("efi", pedido.pagamentoId), pedido.formaPagamento === "boleto" ? "notificação do boleto" : "notificação do cartão");
     }
   } catch (error) {
     console.error("[multiloja] notificação de cobrança:", error instanceof Error ? error.message : error);

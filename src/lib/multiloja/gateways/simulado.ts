@@ -13,8 +13,8 @@ const id = () => `sim-${randomBytes(8).toString("hex")}`;
 export const simuladoGateway: Gateway = {
   name: "simulado",
   label: "Simulação (teste)",
-  methods: ["pix", "boleto", "cartao"],
-  configured: () => process.env.NODE_ENV !== "production",
+  methods: async () => ["pix", "boleto", "cartao"],
+  configured: async () => process.env.NODE_ENV !== "production",
 
   async create(method, input) {
     if (method === "pix") {

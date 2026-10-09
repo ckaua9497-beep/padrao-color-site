@@ -11,9 +11,9 @@ export async function POST(request: Request) {
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
   const { codigo, token } = (body.data ?? {}) as { codigo?: unknown; token?: unknown };
-  const pedido = typeof codigo === "string" ? getPedidoByCodigo(codigo) : null;
+  const pedido = typeof codigo === "string" ? await getPedidoByCodigo(codigo) : null;
   if (!pedido || typeof token !== "string" || !tokenMatches(pedido, token)) return fail(404, "Pedido não encontrado.");
   if (pedido.pagamentoProvedor !== "simulado") return fail(409, "Este pedido não é de teste.");
-  confirmPayment(pedido, "pagamento", "Pagamento simulado (ambiente de teste).");
+  await confirmPayment(pedido, "pagamento", "Pagamento simulado (ambiente de teste).");
   return json({ ok: true });
 }

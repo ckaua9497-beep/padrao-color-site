@@ -14,8 +14,8 @@ export default async function PainelVendas(props: PageProps<"/painel/vendas">) {
   const search = await props.searchParams;
   const status = typeof search.status === "string" && isOrderStatus(search.status) ? search.status : "";
   const busca = typeof search.busca === "string" ? search.busca.trim().slice(0, 60) : "";
-  const pedidos = listPedidos({ lojaId: loja.id, status, busca, limite: 300 });
-  const mes = salesSummary(loja.id, sqlDaysAgo(30));
+  const pedidos = await listPedidos({ lojaId: loja.id, status, busca, limite: 300 });
+  const mes = await salesSummary(loja.id, sqlDaysAgo(30));
 
   const cards = [
     { label: "Pedidos (30 dias)", value: String(mes.pedidos) },

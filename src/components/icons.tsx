@@ -172,3 +172,56 @@ export const IconStorefront = (p: IconProps) => (
     <path d="M10 20v-5h4v5" />
   </svg>
 );
+
+/* Admin da multiloja (menu lateral). */
+
+export const IconGauge = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M4.5 17a8 8 0 1 1 15 0" />
+    <path d="m12 13 3.5-3.5" />
+    <circle cx="12" cy="13" r="1.2" />
+  </svg>
+);
+
+export const IconReceipt = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M6 3.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4z" />
+    <path d="M9 8h6M9 11.5h6M9 15h3.5" />
+  </svg>
+);
+
+export const IconChart = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M4 20h16" />
+    <path d="M7 16v-5M12 16V6M17 16v-8" />
+  </svg>
+);
+
+export const IconWallet = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3" />
+    <rect x="4" y="8" width="16" height="11" rx="2" />
+    <path d="M16 13.5h1.5" />
+  </svg>
+);
+
+export const IconCard = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="3" y="5.5" width="18" height="13" rx="2" />
+    <path d="M3 10h18M7 15h3" />
+  </svg>
+);
+
+export const IconLogout = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M14 4.5H6.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5H14" />
+    <path d="M10 12h10M17 8.5l3.5 3.5-3.5 3.5" />
+  </svg>
+);
+
+export const IconExternal = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M14 4h6v6M20 4l-8.5 8.5" />
+    <path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" />
+  </svg>
+);

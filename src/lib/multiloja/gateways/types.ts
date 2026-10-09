@@ -36,10 +36,10 @@ export type OrderPayment = { codigo: string; total: number; formaPagamento: Paym
 export interface Gateway {
   name: GatewayName;
   label: string;
-  /** Meios que o gateway sabe cobrar. */
-  methods: readonly PaymentKind[];
+  /** Meios que o gateway sabe cobrar (a Cielo só cobra cartão com o Link de Pagamento configurado). */
+  methods(): Promise<readonly PaymentKind[]>;
   /** Credenciais completas para cobrar. */
-  configured(): boolean;
+  configured(): Promise<boolean>;
   create(method: PaymentKind, input: ChargeInput): Promise<Charge>;
   status(chargeId: string): Promise<ChargeStatus>;
   /** Devolve um pagamento já recebido (pedido cancelado). */

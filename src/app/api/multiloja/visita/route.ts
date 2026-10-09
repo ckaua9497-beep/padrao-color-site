@@ -10,7 +10,7 @@ import { countVisit, listLinks } from "@/lib/multiloja/repo-vendas";
 export async function POST(request: Request) {
   const noContent = new Response(null, { status: 204 });
   if (!isSameOrigin(request)) return noContent;
-  const loja = lojaDaRequisicao(request);
+  const loja = await lojaDaRequisicao(request);
   if (!loja || limited(vitrineLimits.visita, request, `visita:${loja.id}`)) return noContent;
   let ref = "";
   try {
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   } catch {
     // sem corpo: acesso direto
   }
-  if (ref && (linkSlugError(ref) || !listLinks(loja.id).some((link) => link.slug === ref))) ref = "";
-  countVisit(loja.id, ref, dayKey());
+  if (ref && (linkSlugError(ref) || !(await listLinks(loja.id)).some((link) => link.slug === ref))) ref = "";
+  await countVisit(loja.id, ref, dayKey());
   return noContent;
 }

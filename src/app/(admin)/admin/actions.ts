@@ -32,10 +32,10 @@ export async function entrarAdmin(_prev: FormState, form: FormData): Promise<For
     const hit = limiter.hit(key);
     if (!hit.ok) return { message: "Muitas tentativas. Tente de novo em alguns minutos." };
   }
-  const admin = findAdminLogin(email);
+  const admin = await findAdminLogin(email);
   const valid = admin ? await verifyPassword(senha, admin.senhaHash) : (await verifyPassword(senha, await timingDummy()), false);
   if (!admin || !valid) return { message: "E-mail ou senha incorretos." };
-  touchAdminLogin(admin.id);
+  await touchAdminLogin(admin.id);
   await startAdminSession(admin.id);
   redirect("/admin");
 }
@@ -49,7 +49,7 @@ export type AdminResult = { ok: boolean; message: string; payload?: string };
 
 export async function mudarStatus(codigo: string, status: string, nota: string): Promise<AdminResult> {
   const admin = await requireAdmin();
-  const pedido = getPedidoByCodigo(codigo);
+  const pedido = await getPedidoByCodigo(codigo);
   if (!pedido) return { ok: false, message: "Pedido não encontrado." };
   if (!isOrderStatus(status) || !ORDER_NEXT[pedido.status].includes(status)) return { ok: false, message: "Mudança de status não permitida." };
   if (status === "cancelado") {
@@ -58,14 +58,14 @@ export async function mudarStatus(codigo: string, status: string, nota: string):
     refresh();
     return result;
   }
-  setPedidoStatus(pedido.id, status, `admin:${admin.email}`, nota.trim().slice(0, 300));
+  await setPedidoStatus(pedido.id, status, `admin:${admin.email}`, nota.trim().slice(0, 300));
   refresh();
   return { ok: true, message: "Status atualizado." };
 }
 
 export async function enviarProducao(codigo: string): Promise<AdminResult> {
   await requireAdmin();
-  const pedido = getPedidoByCodigo(codigo);
+  const pedido = await getPedidoByCodigo(codigo);
   if (!pedido) return { ok: false, message: "Pedido não encontrado." };
   if (pedido.status !== "pago") return { ok: false, message: "Só pedidos pagos vão para a produção." };
   const result = await sendToProduction(pedido);
@@ -80,32 +80,32 @@ export async function enviarProducao(codigo: string): Promise<AdminResult> {
 
 export async function definirPlano(lojaId: number, plano: string): Promise<AdminResult> {
   await requireAdmin();
-  if (!isPlan(plano) || !getLoja(lojaId)) return { ok: false, message: "Plano ou loja inválidos." };
-  updateLoja(lojaId, { plano });
+  if (!isPlan(plano) || !(await getLoja(lojaId))) return { ok: false, message: "Plano ou loja inválidos." };
+  await updateLoja(lojaId, { plano });
   refresh();
   return { ok: true, message: "Plano atualizado." };
 }
 
 export async function alternarLoja(lojaId: number, ativa: boolean): Promise<AdminResult> {
   await requireAdmin();
-  if (!getLoja(lojaId)) return { ok: false, message: "Loja não encontrada." };
-  updateLoja(lojaId, { ativa });
+  if (!(await getLoja(lojaId))) return { ok: false, message: "Loja não encontrada." };
+  await updateLoja(lojaId, { ativa });
   refresh();
   return { ok: true, message: ativa ? "Loja reativada." : "Loja fora do ar." };
 }
 
 export async function marcarDominio(lojaId: number, verificado: boolean): Promise<AdminResult> {
   await requireAdmin();
-  const loja = getLoja(lojaId);
+  const loja = await getLoja(lojaId);
   if (!loja?.dominio) return { ok: false, message: "A loja não tem domínio próprio cadastrado." };
-  updateLoja(lojaId, { dominioVerificado: verificado });
+  await updateLoja(lojaId, { dominioVerificado: verificado });
   refresh();
   return { ok: true, message: verificado ? `Domínio ${loja.dominio} liberado.` : "Domínio desligado." };
 }
 
 export async function bloquearLojista(lojistaId: number, bloquear: boolean): Promise<AdminResult> {
   await requireAdmin();
-  setLojistaStatus(lojistaId, bloquear ? "bloqueado" : "ativo");
+  await setLojistaStatus(lojistaId, bloquear ? "bloqueado" : "ativo");
   refresh();
   return { ok: true, message: bloquear ? "Acesso do lojista bloqueado." : "Acesso do lojista liberado." };
 }
@@ -114,7 +114,7 @@ export async function resolverSaque(id: number, status: "pago" | "recusado", not
   await requireAdmin();
   if (status !== "pago" && status !== "recusado") return { ok: false, message: "Situação inválida." };
   if (status === "recusado" && !nota.trim()) return { ok: false, message: "Diga o motivo da recusa (o lojista vê)." };
-  const done = resolveSaque(id, status, nota.trim().slice(0, 200));
+  const done = await resolveSaque(id, status, nota.trim().slice(0, 200));
   refresh();
   return done ? { ok: true, message: status === "pago" ? "Saque marcado como pago." : "Saque recusado; o valor volta ao saldo do lojista." } : { ok: false, message: "Este saque já foi resolvido." };
 }
@@ -125,10 +125,10 @@ export async function resolverSaque(id: number, status: "pago" | "recusado", not
 export async function ativarGateway(nome: string): Promise<AdminResult> {
   const admin = await requireAdmin();
   if (nome !== "desligado" && !(nome in GATEWAYS)) return { ok: false, message: "Gateway desconhecido." };
-  if (nome !== "desligado" && !GATEWAYS[nome as keyof typeof GATEWAYS].configured()) return { ok: false, message: "Preencha e salve as credenciais deste gateway antes de ativar." };
+  if (nome !== "desligado" && !(await GATEWAYS[nome as keyof typeof GATEWAYS].configured())) return { ok: false, message: "Preencha e salve as credenciais deste gateway antes de ativar." };
   if (nome === "simulado" && process.env.NODE_ENV === "production") return { ok: false, message: "A simulação não pode cobrar em produção." };
-  const current = paymentSettings();
-  setSetting(PAYMENT_SETTINGS_KEY, { ...current, ativo: nome as PaymentSettings["ativo"] } satisfies PaymentSettings);
+  const current = await paymentSettings();
+  await setSetting(PAYMENT_SETTINGS_KEY, { ...current, ativo: nome as PaymentSettings["ativo"] } satisfies PaymentSettings);
   console.info(`[multiloja] gateway ativo: ${nome} (por ${admin.email})`);
   refresh();
   return { ok: true, message: nome === "desligado" ? "Pagamento online desligado: os pedidos seguem pelo WhatsApp das lojas." : `Pronto: as cobranças novas passam pela ${GATEWAYS[nome as keyof typeof GATEWAYS].label}.` };
@@ -141,7 +141,7 @@ const money = (raw: FormDataEntryValue | null) => {
 
 export async function salvarMeios(_prev: FormState, form: FormData): Promise<FormState> {
   await requireAdmin();
-  const current = paymentSettings();
+  const current = await paymentSettings();
   const metodos = Object.fromEntries(PAYMENT_KINDS.map((k) => [k, form.get(`metodo_${k}`) === "on"])) as PaymentSettings["metodos"];
   if (!Object.values(metodos).some(Boolean)) return { message: "Deixe pelo menos uma forma de pagamento ligada." };
   const taxas = {} as PaymentRates;
@@ -156,7 +156,7 @@ export async function salvarMeios(_prev: FormState, form: FormData): Promise<For
   const boletoDias = Math.round(Number(form.get("boletoDias")));
   if (!Number.isInteger(boletoDias) || boletoDias < 1 || boletoDias > 30) errors.boletoDias = "1 a 30 dias";
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
-  setSetting(PAYMENT_SETTINGS_KEY, { ...current, metodos, taxas, boletoDias } satisfies PaymentSettings);
+  await setSetting(PAYMENT_SETTINGS_KEY, { ...current, metodos, taxas, boletoDias } satisfies PaymentSettings);
   refresh();
   return { ok: true, message: "Formas de pagamento e taxas salvas." };
 }
@@ -166,7 +166,7 @@ const field = (form: FormData, name: string, max = 300) => String(form.get(name)
 /** Credenciais da Efí. Campo secreto em branco = mantém o que já estava salvo. */
 export async function salvarEfi(_prev: FormState, form: FormData): Promise<FormState> {
   await requireAdmin();
-  const saved = getSetting<EfiSaved>(EFI_SETTINGS_KEY) ?? {};
+  const saved = (await getSetting<EfiSaved>(EFI_SETTINGS_KEY)) ?? {};
   const next: EfiSaved = {
     sandbox: form.get("sandbox") === "on",
     clientId: field(form, "clientId", 200),
@@ -188,7 +188,7 @@ export async function salvarEfi(_prev: FormState, form: FormData): Promise<FormS
   if (!next.certBase64) errors.certificado = "Envie o certificado .p12.";
   if (!next.pixKey) errors.pixKey = "Informe a chave Pix da conta.";
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
-  setSetting(EFI_SETTINGS_KEY, next);
+  await setSetting(EFI_SETTINGS_KEY, next);
   refresh();
   return { ok: true, message: "Credenciais da Efí salvas. Confira o diagnóstico abaixo." };
 }
@@ -196,7 +196,7 @@ export async function salvarEfi(_prev: FormState, form: FormData): Promise<FormS
 /** Credenciais da Cielo. Campo secreto em branco = mantém o que já estava salvo. */
 export async function salvarCielo(_prev: FormState, form: FormData): Promise<FormState> {
   await requireAdmin();
-  const saved = getSetting<CieloSaved>(CIELO_SETTINGS_KEY) ?? {};
+  const saved = (await getSetting<CieloSaved>(CIELO_SETTINGS_KEY)) ?? {};
   const next: CieloSaved = {
     sandbox: form.get("sandbox") === "on",
     merchantId: field(form, "merchantId", 100),
@@ -214,7 +214,7 @@ export async function salvarCielo(_prev: FormState, form: FormData): Promise<For
   if (!/^[0-9a-f-]{36}$/i.test(next.merchantId ?? "")) errors.merchantId = "MerchantId no formato da Cielo (36 caracteres).";
   if (!next.merchantKey) errors.merchantKey = "Informe a MerchantKey.";
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
-  setSetting(CIELO_SETTINGS_KEY, next);
+  await setSetting(CIELO_SETTINGS_KEY, next);
   refresh();
   return { ok: true, message: "Credenciais da Cielo salvas. Confira o diagnóstico abaixo." };
 }
@@ -265,19 +265,19 @@ export async function criarLojista(_prev: FormState, form: FormData): Promise<Cr
   if (nome.length < 3) errors.nome = "Informe o nome.";
   const emailProblem = emailError(email);
   if (emailProblem) errors.email = emailProblem;
-  else if (emailTaken(email)) errors.email = "Já existe um lojista com este e-mail.";
+  else if (await emailTaken(email)) errors.email = "Já existe um lojista com este e-mail.";
   if (!telefone) errors.telefone = "WhatsApp com DDD.";
   if (!LOJISTA_TYPES.includes(tipo)) errors.tipo = "Escolha o perfil.";
   if (lojaNome.length < 2) errors.loja = "Nome da loja.";
   const subProblem = subdomainError(subdominio);
   if (subProblem) errors.subdominio = subProblem;
-  else if (subdomainTaken(subdominio)) errors.subdominio = "Endereço já usado por outra loja.";
+  else if (await subdomainTaken(subdominio)) errors.subdominio = "Endereço já usado por outra loja.";
   if (!isPlan(plano)) errors.plano = "Escolha o plano.";
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
 
   const senha = tempPassword();
-  const { lojaId } = createLojistaWithLoja({ nome, email, senhaHash: await hashPassword(senha), tipo, telefone, loja: { nome: lojaNome, subdominio, margemPadrao: MARGIN_DEFAULT, whatsapp: telefone } });
-  if (isPlan(plano)) updateLoja(lojaId, { plano });
+  const { lojaId } = await createLojistaWithLoja({ nome, email, senhaHash: await hashPassword(senha), tipo, telefone, loja: { nome: lojaNome, subdominio, margemPadrao: MARGIN_DEFAULT, whatsapp: telefone } });
+  if (isPlan(plano)) await updateLoja(lojaId, { plano });
   refresh();
   return { ok: true, message: `Loja ${lojaNome} criada.`, senha, loja: subdominio };
 }
@@ -285,16 +285,16 @@ export async function criarLojista(_prev: FormState, form: FormData): Promise<Cr
 /** Gera uma senha provisória nova para o lojista (mostrada uma vez para a Padrão repassar). */
 export async function redefinirSenhaLojista(lojistaId: number): Promise<AdminResult & { senha?: string }> {
   await requireAdmin();
-  const lojista = getLojista(lojistaId);
+  const lojista = await getLojista(lojistaId);
   if (!lojista) return { ok: false, message: "Lojista não encontrado." };
   const senha = tempPassword();
-  updateLojistaPassword(lojistaId, await hashPassword(senha));
+  await updateLojistaPassword(lojistaId, await hashPassword(senha));
   return { ok: true, message: `Senha nova de ${lojista.email}:`, senha };
 }
 
 export async function alternarCadastro(aberto: boolean): Promise<AdminResult> {
   await requireAdmin();
-  setSetting(SIGNUP_OPEN_KEY, aberto);
+  await setSetting(SIGNUP_OPEN_KEY, aberto);
   refresh();
   return { ok: true, message: aberto ? "Cadastro aberto: qualquer pessoa pode criar loja em /painel/cadastro." : "Cadastro fechado: só a Padrão cria lojas, por aqui." };
 }

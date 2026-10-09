@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
   const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || request.headers.get("host") || "";
   const tenant = parseTenantHost(host, rootDomain(), mainHosts());
-  const lojaId = tenant.kind === "main" ? 0 : (lojaDaRequisicao(request)?.id ?? null);
+  const lojaId = tenant.kind === "main" ? 0 : ((await lojaDaRequisicao(request))?.id ?? null);
   if (lojaId === null) return done;
 
   let raw: unknown;
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   const batch = parseEventBatch(raw);
   if (!batch?.eventos.length) return done;
   try {
-    insertEvents(lojaId, batch.visitante, batch.sessao, deviceFrom(request.headers.get("user-agent")), batch.eventos);
+    await insertEvents(lojaId, batch.visitante, batch.sessao, deviceFrom(request.headers.get("user-agent")), batch.eventos);
   } catch (error) {
     console.error("[rastreamento]", error instanceof Error ? error.message : error);
   }

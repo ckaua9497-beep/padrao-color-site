@@ -81,23 +81,23 @@ async function chargesCall(config: EfiConfig, path: string, init: HttpInit = {})
   return httpJson(`${chargesBase(config)}${path}`, { ...init, headers: { Authorization: `Bearer ${bearer}`, ...init.headers } });
 }
 
-function requireConfig(): EfiConfig {
-  const config = efiConfig();
+async function requireConfig(): Promise<EfiConfig> {
+  const config = await efiConfig();
   if (!config) throw new GatewayError("Efí não configurada", 0, "");
   return config;
 }
 
 /** URL das notificações da API de Cobranças (boleto e cartão), com o segredo. */
-function chargesNotificationUrl(): string | null {
+async function chargesNotificationUrl(): Promise<string | null> {
   const base = publicUrl();
-  const secret = efiWebhookSecret();
+  const secret = await efiWebhookSecret();
   return base && secret ? `${base}/api/multiloja/pagamento/efi/cartao?hmac=${encodeURIComponent(secret)}` : null;
 }
 
 /** URL do webhook Pix: segredo na query (a Efí devolve igual) e ?ignorar= para ela não acrescentar /pix. */
-export function pixWebhookUrl(): string | null {
+export async function pixWebhookUrl(): Promise<string | null> {
   const base = publicUrl();
-  const secret = efiWebhookSecret();
+  const secret = await efiWebhookSecret();
   return base && secret ? `${base}/api/multiloja/pagamento/efi/pix?hmac=${encodeURIComponent(secret)}&ignorar=` : null;
 }
 
@@ -130,7 +130,7 @@ async function createPix(config: EfiConfig, input: ChargeInput): Promise<Charge>
 
 async function createBoleto(config: EfiConfig, input: ChargeInput): Promise<Charge> {
   const doc = input.cliente.documento.replace(/\D/g, "");
-  const notification = chargesNotificationUrl();
+  const notification = await chargesNotificationUrl();
   const expire = new Date(Date.now() + input.boletoDias * 86_400_000).toISOString().slice(0, 10);
   const e = input.entrega;
   const res = await chargesCall(config, "/v1/charge/one-step", {
@@ -169,7 +169,7 @@ async function createBoleto(config: EfiConfig, input: ChargeInput): Promise<Char
 }
 
 async function createCard(config: EfiConfig, input: ChargeInput): Promise<Charge> {
-  const notification = chargesNotificationUrl();
+  const notification = await chargesNotificationUrl();
   const expire = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
   const res = await chargesCall(config, "/v1/charge/one-step/link", {
     method: "POST",
@@ -208,7 +208,7 @@ async function chargeApiStatus(config: EfiConfig, chargeId: string): Promise<Cha
 
 /** Notificação da API de Cobranças (token do POST da Efí) → pedido (custom_id) e cobrança de cada evento. */
 export async function efiChargeNotification(notificationToken: string): Promise<{ codigo: string; chargeNumber: string }[]> {
-  const config = requireConfig();
+  const config = await requireConfig();
   const res = await chargesCall(config, `/v1/notification/${encodeURIComponent(notificationToken)}`);
   if (res.status !== 200) fail("A Efí não informou a notificação", res);
   const events = (res.body as { data?: { custom_id?: string; identifiers?: { charge_id?: number } }[] } | null)?.data ?? [];
@@ -218,8 +218,8 @@ export async function efiChargeNotification(notificationToken: string): Promise<
 // ---------------------------------------------------------------------------------- webhook do Pix e testes
 
 export async function registerPixWebhook(): Promise<GatewayResult> {
-  const config = efiConfig();
-  const url = pixWebhookUrl();
+  const config = await efiConfig();
+  const url = await pixWebhookUrl();
   if (!config || !url) return { ok: false, message: "Configure a Efí, a URL pública (MULTILOJA_URL_PUBLICA) e o segredo do webhook." };
   if (!url.startsWith("https://") && !mockUrl()) return { ok: false, message: "A Efí só aceita webhook em https." };
   try {
@@ -233,7 +233,7 @@ export async function registerPixWebhook(): Promise<GatewayResult> {
 
 /** Pix de teste (só em homologação): de R$ 0,01 a R$ 10,00 a Efí confirma sozinha e chama o webhook. */
 export async function sandboxTestPix(): Promise<{ ok: true; txid: string; pixCode?: string; pixImage?: string } | { ok: false; message: string }> {
-  const config = efiConfig();
+  const config = await efiConfig();
   if (!config) return { ok: false, message: "Efí não configurada." };
   if (!config.sandbox) return { ok: false, message: "O Pix de teste só roda em homologação." };
   try {
@@ -257,23 +257,23 @@ export async function sandboxTestPix(): Promise<{ ok: true; txid: string; pixCod
 export const efiGateway: Gateway = {
   name: "efi",
   label: "Efí",
-  methods: ["pix", "boleto", "cartao"],
-  configured: () => efiConfig() !== null,
+  methods: async () => ["pix", "boleto", "cartao"],
+  configured: async () => (await efiConfig()) !== null,
 
   async create(method: PaymentKind, input: ChargeInput) {
-    const config = requireConfig();
+    const config = await requireConfig();
     if (method === "pix") return createPix(config, input);
     if (method === "boleto") return createBoleto(config, input);
     return createCard(config, input);
   },
 
   async status(chargeId: string) {
-    const config = requireConfig();
+    const config = await requireConfig();
     return isChargesApi(chargeId) ? chargeApiStatus(config, chargeId) : pixStatus(config, chargeId);
   },
 
   async refund(order: OrderPayment) {
-    const config = requireConfig();
+    const config = await requireConfig();
     if (!order.pagamentoId) return { ok: false, message: "Cobrança sem identificador." };
     if (order.pagamentoId.startsWith("boleto-")) {
       // Boleto não tem estorno pela API: a devolução é por transferência.
@@ -294,7 +294,7 @@ export const efiGateway: Gateway = {
   },
 
   async void(order: OrderPayment) {
-    const config = requireConfig();
+    const config = await requireConfig();
     if (!order.pagamentoId) return { ok: true, message: "Sem cobrança aberta." };
     if (isChargesApi(order.pagamentoId)) {
       const res = await chargesCall(config, `/v1/charge/${encodeURIComponent(chargeNumber(order.pagamentoId))}/cancel`, { method: "PUT" });
@@ -305,12 +305,14 @@ export const efiGateway: Gateway = {
   },
 
   async diagnostics() {
-    const config = efiConfig();
+    const config = await efiConfig();
+    const webhookSecret = await efiWebhookSecret();
+    const webhookUrl = await pixWebhookUrl();
     const checks: Check[] = [
       { label: "Credenciais (Client ID e Secret)", ok: Boolean(config?.clientId && config.clientSecret), detail: "Da aplicação no painel da Efí, com as APIs Pix e Emissão de Cobranças." },
       { label: "Certificado .p12", ok: Boolean(config?.certPath || config?.certBase64), detail: "Do mesmo ambiente (homologação ou produção) das credenciais." },
       { label: "Chave Pix da conta", ok: Boolean(config?.pixKey), detail: "Chave cadastrada na conta Efí que recebe." },
-      { label: "URL pública e segredo dos avisos", ok: Boolean(publicUrl() && efiWebhookSecret()), detail: "MULTILOJA_URL_PUBLICA e o segredo (gerado ao salvar a Efí)." },
+      { label: "URL pública e segredo dos avisos", ok: Boolean(publicUrl() && webhookSecret), detail: "MULTILOJA_URL_PUBLICA e o segredo (gerado ao salvar a Efí)." },
     ];
     if (!config) return checks;
     const attempt = async (label: string, fn: () => Promise<string>) => {
@@ -328,7 +330,7 @@ export const efiGateway: Gateway = {
       if (res.status === 404) throw new Error("nenhum webhook cadastrado para a chave: use o botão abaixo");
       if (res.status !== 200) fail("A Efí não informou o webhook", res);
       const registered = (res.body as { webhookUrl?: string } | null)?.webhookUrl ?? null;
-      if (pixWebhookUrl() && registered !== pixWebhookUrl()) throw new Error("cadastrado com outra URL: cadastre de novo");
+      if (webhookUrl && registered !== webhookUrl) throw new Error("cadastrado com outra URL: cadastre de novo");
       return "ok";
     });
     return checks;

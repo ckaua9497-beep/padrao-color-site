@@ -1,7 +1,8 @@
 import type { Scope } from "@/lib/multiloja/analytics";
 import { dayKeyDaysAgo } from "@/lib/multiloja/core";
+import { control } from "./ui";
 
-/* Filtros do painel de análise (numa linha, acima dos gráficos): período e canal. Formulário GET, sem JS. */
+/* Filtros do painel de análise (numa linha, no cabeçalho, acima dos gráficos): período e canal. Formulário GET, sem JS. */
 
 export const PERIODS = [7, 30, 90] as const;
 
@@ -15,12 +16,12 @@ export function parseAnalyticsSearch(search: Record<string, string | string[] | 
 
 export default function AnalyticsFilters({ dias, canal, lojas, action, showCanal = true }: { dias: number; canal: string; lojas: { id: number; nome: string }[]; action: string; showCanal?: boolean }) {
   return (
-    <form action={action} className="flex flex-wrap items-end gap-3 rounded-panel bg-white p-4 shadow-card">
+    <form action={action} className="flex flex-wrap items-end gap-2">
       <div>
-        <label htmlFor="filtro-dias" className="mb-1 block text-caption font-semibold text-muted">
+        <label htmlFor="filtro-dias" className="mb-1 block text-[12px] font-semibold text-muted">
           Período
         </label>
-        <select id="filtro-dias" name="dias" defaultValue={String(dias)} className="h-11 rounded-full border border-line bg-white px-4 text-[15px]">
+        <select id="filtro-dias" name="dias" defaultValue={String(dias)} className={control}>
           {PERIODS.map((d) => (
             <option key={d} value={d}>
               Últimos {d} dias
@@ -30,10 +31,10 @@ export default function AnalyticsFilters({ dias, canal, lojas, action, showCanal
       </div>
       {showCanal && (
         <div>
-          <label htmlFor="filtro-canal" className="mb-1 block text-caption font-semibold text-muted">
+          <label htmlFor="filtro-canal" className="mb-1 block text-[12px] font-semibold text-muted">
             Canal
           </label>
-          <select id="filtro-canal" name="canal" defaultValue={canal} className="h-11 max-w-72 rounded-full border border-line bg-white px-4 text-[15px]">
+          <select id="filtro-canal" name="canal" defaultValue={canal} className={`${control} max-w-72`}>
             <option value="todas">Tudo (site + multilojas)</option>
             <option value="site">Só o site da Padrão</option>
             <option value="multilojas">Só as multilojas</option>
@@ -45,7 +46,7 @@ export default function AnalyticsFilters({ dias, canal, lojas, action, showCanal
           </select>
         </div>
       )}
-      <button type="submit" className="h-11 rounded-full bg-ink px-6 text-[15px] font-bold text-white hover:bg-coral-700">
+      <button type="submit" className="h-10 rounded-control bg-ink px-4 text-[14px] font-bold text-white transition-colors hover:bg-coral-700">
         Aplicar
       </button>
     </form>

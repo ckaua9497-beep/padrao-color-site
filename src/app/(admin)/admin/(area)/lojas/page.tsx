@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
-import AdminStoreRow from "@/components/admin/AdminStoreRow";
-import { NovoLojistaForm, ResetPassword, SignupToggle } from "@/components/admin/LojistaForms";
-import { Panel } from "@/components/painel/fields";
-import { signupOpen } from "@/lib/multiloja/config";
+import { NovaLojaDrawer, SignupToggle } from "@/components/admin/LojistaForms";
+import { Empty, PageHeader, Sheet, Tag, control, table } from "@/components/admin/ui";
+import { cx } from "@/components/ui/cx";
 import { formatBRL } from "@/lib/format";
-import { LOJISTA_TYPE_LABEL, formatDateTime, plural, type LojistaType } from "@/lib/multiloja/core";
+import { signupOpen } from "@/lib/multiloja/config";
+import { LOJISTA_TYPE_LABEL, PLAN_INFO, formatDateTime, type LojistaType, type Plan } from "@/lib/multiloja/core";
 import { listLojasAdmin } from "@/lib/multiloja/repo-vendas";
 import { lojaUrl, rootDomain } from "@/lib/multiloja/tenant";
 
@@ -15,66 +15,95 @@ export const metadata: Metadata = { title: "Lojas" };
 export default async function AdminLojas(props: PageProps<"/admin/lojas">) {
   const search = await props.searchParams;
   const busca = typeof search.busca === "string" ? search.busca.trim().slice(0, 60) : "";
-  const lojas = listLojasAdmin(busca);
+  const lojas = await listLojasAdmin(busca);
   const urls = await Promise.all(lojas.map((l) => lojaUrl({ subdominio: l.subdominio, dominio: null })));
   const root = rootDomain();
   const port = root === "localhost" ? /:(\d+)$/.exec((await headers()).get("host") ?? "")?.[1] : undefined;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-title">Lojas e lojistas ({lojas.length})</h1>
-      <Panel title="Nova loja" description="Cria o acesso do lojista e a loja. A senha provisória aparece uma vez para você repassar." id="nova-loja">
-        <NovoLojistaForm domainSuffix={`.${root}${port ? `:${port}` : ""}`} />
-        <div className="mt-6 border-t border-line pt-4">
-          <SignupToggle open={signupOpen()} />
+      <PageHeader
+        group="Rede"
+        title="Lojas"
+        description="Cada multiloja, quem cuida dela e como está vendendo. Clique numa loja para ver os números dela, trocar o plano, tirar do ar ou gerar senha nova."
+        actions={<NovaLojaDrawer domainSuffix={`.${root}${port ? `:${port}` : ""}`} />}
+      />
+
+      <Sheet flush>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
+          <SignupToggle open={await signupOpen()} />
+          <form className="flex w-full items-center gap-2 sm:w-auto">
+            <label htmlFor="busca" className="sr-only">
+              Buscar loja
+            </label>
+            <input id="busca" name="busca" type="search" defaultValue={busca} placeholder="Loja, endereço, lojista ou e-mail" className={cx(control, "w-full sm:w-72")} />
+            <button type="submit" className="h-10 rounded-control bg-ink px-4 text-[14px] font-bold text-white transition-colors hover:bg-coral-700">
+              Buscar
+            </button>
+          </form>
         </div>
-      </Panel>
-      <form className="flex gap-3 rounded-panel bg-white p-4 shadow-card">
-        <label htmlFor="busca" className="sr-only">
-          Buscar loja
-        </label>
-        <input id="busca" name="busca" defaultValue={busca} placeholder="Nome da loja, endereço, lojista ou e-mail" className="h-11 flex-1 rounded-full border border-line bg-mist px-4 text-[15px]" />
-        <button type="submit" className="h-11 rounded-full bg-ink px-6 text-[15px] font-bold text-white hover:bg-coral-700">
-          Buscar
-        </button>
-      </form>
-      <ul className="space-y-3">
-        {lojas.map((l, i) => (
-          <li key={l.id} className="rounded-panel bg-white p-4 shadow-card">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-lg font-bold">
-                  <Link href={`/admin/lojas/${l.id}`} className="underline-offset-4 hover:underline">
-                    {l.nome}
-                  </Link> {!l.ativa && <span className="ml-1 rounded-full bg-mist px-2 py-0.5 text-[12px] text-muted">fora do ar</span>}
-                </p>
-                <a href={urls[i]} target="_blank" rel="noreferrer" className="text-caption underline underline-offset-2">
-                  {urls[i].replace(/^https?:\/\//, "")}
-                </a>
-                {l.dominio && (
-                  <span className="ml-2 text-caption text-muted">
-                    + {l.dominio} ({l.dominioVerificado ? "verificado" : "aguardando DNS"})
-                  </span>
-                )}
-                <p className="mt-1 text-caption text-muted">
-                  {l.lojistaNome} · {l.lojistaEmail} · {LOJISTA_TYPE_LABEL[l.lojistaTipo as LojistaType] ?? l.lojistaTipo}
-                  {l.lojistaStatus === "bloqueado" && " · acesso bloqueado"} · desde {formatDateTime(l.criadoEm, false)}
-                </p>
-              </div>
-              <p className="text-right text-[14px]">
-                <span className="block font-bold tabular-nums">{formatBRL(l.faturamento)}</span>
-                <span className="text-caption text-muted">
-                  {plural(l.pedidosPagos, "venda", "vendas")} · {plural(l.produtos, "produto", "produtos")}
-                </span>
-              </p>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
-              <ResetPassword lojistaId={l.lojistaId} />
-              <AdminStoreRow lojaId={l.id} lojistaId={l.lojistaId} plano={l.plano} ativa={l.ativa} bloqueado={l.lojistaStatus === "bloqueado"} dominio={l.dominio} dominioVerificado={l.dominioVerificado} />
-            </div>
-          </li>
-        ))}
-      </ul>
+
+        {lojas.length === 0 ? (
+          <Empty>{busca ? `Nenhuma loja encontrada para “${busca}”.` : "Nenhuma loja ainda. Use “Nova loja” para criar a primeira."}</Empty>
+        ) : (
+          <div className={table.wrap}>
+            <table className={cx(table.table, "min-w-[900px]")}>
+              <thead className={table.head}>
+                <tr>
+                  <th className={table.th}>Loja</th>
+                  <th className={table.th}>Lojista</th>
+                  <th className={table.th}>Plano</th>
+                  <th className={cx(table.th, "text-right")}>Produtos</th>
+                  <th className={cx(table.th, "text-right")}>Vendas pagas</th>
+                  <th className={cx(table.th, "text-right")}>Faturamento</th>
+                  <th className={table.th}>Situação</th>
+                  <th className={table.th}>
+                    <span className="sr-only">Abrir</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className={table.body}>
+                {lojas.map((l, i) => (
+                  <tr key={l.id} className={table.row}>
+                    <td className={table.td}>
+                      <Link href={`/admin/lojas/${l.id}`} className="font-bold underline-offset-4 hover:underline">
+                        {l.nome}
+                      </Link>
+                      <a href={urls[i]} target="_blank" rel="noreferrer" className="block text-[12px] text-muted underline-offset-2 hover:text-ink hover:underline">
+                        {urls[i].replace(/^https?:\/\//, "")}
+                        {l.dominio && ` · ${l.dominio}`}
+                      </a>
+                    </td>
+                    <td className={table.td}>
+                      {l.lojistaNome}
+                      <span className="block text-[12px] text-muted">{l.lojistaEmail}</span>
+                      <span className="block text-[12px] text-muted">
+                        {(LOJISTA_TYPE_LABEL[l.lojistaTipo as LojistaType] ?? l.lojistaTipo).split(" /")[0]} · desde {formatDateTime(l.criadoEm, false)}
+                      </span>
+                    </td>
+                    <td className={table.td}>{PLAN_INFO[l.plano as Plan]?.name ?? l.plano}</td>
+                    <td className={table.num}>{l.produtos}</td>
+                    <td className={table.num}>{l.pedidosPagos}</td>
+                    <td className={cx(table.num, "font-bold")}>{formatBRL(l.faturamento)}</td>
+                    <td className={table.td}>
+                      <span className="flex flex-wrap gap-1">
+                        {l.ativa ? <Tag tone="ok">No ar</Tag> : <Tag>Fora do ar</Tag>}
+                        {l.lojistaStatus === "bloqueado" && <Tag tone="warn">Acesso bloqueado</Tag>}
+                        {l.dominio && !l.dominioVerificado && <Tag tone="warn">Domínio aguardando</Tag>}
+                      </span>
+                    </td>
+                    <td className={cx(table.td, "text-right")}>
+                      <Link href={`/admin/lojas/${l.id}`} className="whitespace-nowrap text-[13px] font-semibold underline-offset-4 hover:underline">
+                        Gerenciar →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Sheet>
     </div>
   );
 }

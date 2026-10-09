@@ -22,10 +22,10 @@ const SAQUE_LABEL = { solicitado: "Solicitado", pago: "Pago", recusado: "Recusad
 export default async function PainelFinanceiro() {
   const { lojista, loja } = await requirePainel();
   const days = releaseDays();
-  const saques = listSaques(loja.id);
-  const balance = balanceOf(listComissoes(loja.id), saques, days);
-  const vendas = listPedidos({ lojaId: loja.id, limite: 100 }).filter((p) => p.pagoEm && p.status !== "cancelado");
-  const rates = paymentRates();
+  const saques = await listSaques(loja.id);
+  const balance = balanceOf(await listComissoes(loja.id), saques, days);
+  const vendas = (await listPedidos({ lojaId: loja.id, limite: 100 })).filter((p) => p.pagoEm && p.status !== "cancelado");
+  const rates = await paymentRates();
 
   const cards = [
     { label: "Disponível para saque", value: balance.available, tone: "bg-ink text-white" },

@@ -30,18 +30,37 @@ export function openSecret(value: string | null | undefined): string {
   return unseal<{ v: string }>(value.slice(4), secretKey())?.v ?? "";
 }
 
-export function getSetting<T>(chave: string): T | null {
-  const row = getDb().prepare("SELECT valor FROM configuracoes WHERE chave = ?").get(chave) as { valor?: string } | undefined;
-  if (!row?.valor) return null;
+// Todas as configurações numa leitura só, guardadas por 3 s (uma página lê várias); quem salva limpa na hora.
+// Outros servidores veem a mudança em até 3 s.
+const CACHE_MS = 3000;
+const cache = globalThis as typeof globalThis & { __multilojaSettings?: { at: number; values: Promise<Map<string, string>> } };
+
+function loadAll(): Promise<Map<string, string>> {
+  const now = Date.now();
+  const hit = cache.__multilojaSettings;
+  if (hit && now - hit.at < CACHE_MS) return hit.values;
+  const values = (async () => {
+    const rows = await (await getDb()).all<{ chave: string; valor: string }>("SELECT chave, valor FROM configuracoes");
+    return new Map(rows.map((r) => [r.chave, r.valor]));
+  })();
+  values.catch(() => {
+    if (cache.__multilojaSettings?.values === values) cache.__multilojaSettings = undefined;
+  });
+  cache.__multilojaSettings = { at: now, values };
+  return values;
+}
+
+export async function getSetting<T>(chave: string): Promise<T | null> {
+  const raw = (await loadAll()).get(chave);
+  if (!raw) return null;
   try {
-    return JSON.parse(row.valor) as T;
+    return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
 
-export function setSetting(chave: string, valor: unknown) {
-  getDb()
-    .prepare("INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = datetime('now')")
-    .run(chave, JSON.stringify(valor));
+export async function setSetting(chave: string, valor: unknown) {
+  await (await getDb()).run("INSERT INTO configuracoes (chave, valor) VALUES (?, ?) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, atualizado_em = agora()", [chave, JSON.stringify(valor)]);
+  cache.__multilojaSettings = undefined;
 }

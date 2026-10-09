@@ -3,7 +3,8 @@ import { formatBRL } from "@/lib/format";
 import { abandonedCarts, byDay, byHour, channels, kpis, products, sources, type Scope } from "@/lib/multiloja/analytics";
 import { formatDateTime } from "@/lib/multiloja/core";
 import { funnelRates } from "@/lib/multiloja/eventos";
-import { ColumnChart, FunnelChart, InlineBar, StatTile, compact } from "./charts";
+import { ColumnChart, FunnelChart, InlineBar, compact } from "./charts";
+import { KpiStrip } from "./ui";
 
 /*
  * Seções de análise (rastreamento anônimo): números gerais, funil, fluxo de pessoas e de vendas, canais, produtos
@@ -15,43 +16,46 @@ const shortDay = (dia: string) => `${dia.slice(8)}/${dia.slice(5, 7)}`;
 
 export function Section({ title, description, children, id }: { title: string; description?: string; children: React.ReactNode; id: string }) {
   return (
-    <section aria-labelledby={id} className="space-y-3">
+    <section aria-labelledby={id} className="scroll-mt-6 space-y-3">
       <div>
-        <h2 id={id} className="text-xl font-bold">
+        <h2 id={id} className="text-[18px] font-bold tracking-[-0.01em]">
           {title}
         </h2>
-        {description && <p className="text-[14px] text-muted">{description}</p>}
+        {description && <p className="text-[13px] text-muted">{description}</p>}
       </div>
       {children}
     </section>
   );
 }
 
-export function AnalyticsSections({ scope, desde, showChannels = true }: { scope: Scope; desde: string; showChannels?: boolean }) {
-  const k = kpis(scope, desde);
+export async function AnalyticsSections({ scope, desde, showChannels = true }: { scope: Scope; desde: string; showChannels?: boolean }) {
+  const k = await kpis(scope, desde);
   const rates = funnelRates(k);
-  const days = byDay(scope, desde);
-  const hours = byHour(scope, desde);
-  const prods = products(scope, desde, 30);
-  const carts = abandonedCarts(scope, desde, 25);
-  const src = sources(scope, desde);
-  const chans = showChannels ? channels(desde).filter((c) => scope === "todas" || (scope === "site" ? c.lojaId === 0 : scope === "multilojas" ? c.lojaId > 0 : c.lojaId === scope)) : [];
+  const days = await byDay(scope, desde);
+  const hours = await byHour(scope, desde);
+  const prods = await products(scope, desde, 30);
+  const carts = await abandonedCarts(scope, desde, 25);
+  const src = await sources(scope, desde);
+  const chans = showChannels ? (await channels(desde)).filter((c) => scope === "todas" || (scope === "site" ? c.lojaId === 0 : scope === "multilojas" ? c.lojaId > 0 : c.lojaId === scope)) : [];
   const maxChannel = Math.max(0, ...chans.map((c) => c.valor));
   const maxProduct = Math.max(0, ...prods.map((p) => p.receita));
   const totalSessions = Math.max(1, src.dispositivos.reduce((s, d) => s + d.sessoes, 0));
   const refSessions = Math.max(1, src.refs.reduce((s, r) => s + r.sessoes, 0));
 
   return (
-    <div className="space-y-10">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Visitantes" value={compact(k.visitantes)} hint={`${compact(k.sessoes)} sessões · ${compact(k.paginas)} páginas`} />
-        <StatTile label="Pedidos" value={compact(k.pedidos)} hint={`${formatBRL(k.valorPedidos)} · ticket ${formatBRL(k.ticketMedio)}`} />
-        <StatTile label="Conversão (sessão → pedido)" value={pct(rates.conversaoPedido)} hint={`pagos: ${compact(k.pagos)} (${formatBRL(k.valorPago)})`} />
-        <StatTile label="Abandono de carrinho" value={pct(rates.abandonoCarrinho)} hint={`checkout abandonado: ${pct(rates.abandonoCheckout)}`} />
-      </div>
+    <div className="space-y-8">
+      <KpiStrip
+        cols={4}
+        items={[
+          { label: "Visitantes", value: compact(k.visitantes), hint: `${compact(k.sessoes)} sessões · ${compact(k.paginas)} páginas` },
+          { label: "Pedidos", value: compact(k.pedidos), hint: `${formatBRL(k.valorPedidos)} · ticket ${formatBRL(k.ticketMedio)}` },
+          { label: "Conversão (sessão → pedido)", value: pct(rates.conversaoPedido), hint: `pagos: ${compact(k.pagos)} (${formatBRL(k.valorPago)})` },
+          { label: "Abandono de carrinho", value: pct(rates.abandonoCarrinho), hint: `checkout abandonado: ${pct(rates.abandonoCheckout)}` },
+        ]}
+      />
 
-      <Section id="funil" title="Funil de vendas" description="Sessões que chegaram a cada etapa; a taxa é sobre a etapa anterior.">
-        <div className="rounded-panel bg-white p-5 shadow-card">
+      <Section id="funil" title="Funil de vendas" description="Quantas sessões chegaram a cada etapa.">
+        <div className="rounded-card bg-white p-5 shadow-sheet">
           <FunnelChart
             steps={[
               { label: "Sessões", value: k.sessoes },
@@ -77,16 +81,16 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
 
       {showChannels && chans.length > 0 && (
         <Section id="canais" title="Site da Padrão × multilojas" description="Cada canal lado a lado, ordenado pelo valor dos pedidos.">
-          <div className="relative overflow-x-auto rounded-panel bg-white shadow-card">
+          <div className="relative overflow-x-auto rounded-card bg-white shadow-sheet">
             <table className="w-full min-w-[760px] text-left text-[14px]">
-              <thead className="border-b border-line text-caption text-muted">
+              <thead className="border-b border-line text-[12px] text-muted">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Canal</th>
-                  <th className="px-4 py-3 text-right font-semibold">Visitantes</th>
-                  <th className="px-4 py-3 text-right font-semibold">Carrinhos</th>
-                  <th className="px-4 py-3 text-right font-semibold">Pedidos</th>
-                  <th className="px-4 py-3 text-right font-semibold">Conversão</th>
-                  <th className="px-4 py-3 text-right font-semibold">Valor</th>
+                  <th className="px-5 py-3 font-semibold">Canal</th>
+                  <th className="px-5 py-3 text-right font-semibold">Visitantes</th>
+                  <th className="px-5 py-3 text-right font-semibold">Carrinhos</th>
+                  <th className="px-5 py-3 text-right font-semibold">Pedidos</th>
+                  <th className="px-5 py-3 text-right font-semibold">Conversão</th>
+                  <th className="px-5 py-3 text-right font-semibold">Valor</th>
                   <th className="w-40 px-4 py-3 font-semibold">
                     <span className="sr-only">Proporção</span>
                   </th>
@@ -95,13 +99,13 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
               <tbody className="divide-y divide-line">
                 {chans.map((c) => (
                   <tr key={c.lojaId}>
-                    <td className="px-4 py-2.5 font-semibold">{c.lojaId === 0 ? c.nome : <Link href={`/admin/lojas/${c.lojaId}`} className="underline-offset-4 hover:underline">{c.nome}</Link>}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{c.visitantes.toLocaleString("pt-BR")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{c.carrinho.toLocaleString("pt-BR")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{c.pedidos.toLocaleString("pt-BR")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{pct(c.sessoes ? Math.min(100, (c.sessoesPedido / c.sessoes) * 100) : 0)}</td>
-                    <td className="px-4 py-2.5 text-right font-bold tabular-nums">{formatBRL(c.valor)}</td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-5 py-2.5 font-semibold">{c.lojaId === 0 ? c.nome : <Link href={`/admin/lojas/${c.lojaId}`} className="underline-offset-4 hover:underline">{c.nome}</Link>}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{c.visitantes.toLocaleString("pt-BR")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{c.carrinho.toLocaleString("pt-BR")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{c.pedidos.toLocaleString("pt-BR")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{pct(c.sessoes ? Math.min(100, (c.sessoesPedido / c.sessoes) * 100) : 0)}</td>
+                    <td className="px-5 py-2.5 text-right font-bold tabular-nums">{formatBRL(c.valor)}</td>
+                    <td className="px-5 py-2.5">
                       <InlineBar value={c.valor} max={maxChannel} />
                     </td>
                   </tr>
@@ -114,20 +118,20 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
 
       <Section id="produtos" title="Produtos vencedores" description="Vistos → carrinho → vendidos, com a receita no site da Padrão e nas multilojas.">
         {prods.length === 0 ? (
-          <p className="rounded-panel bg-white p-6 text-muted shadow-card">Sem movimento de produtos no período.</p>
+          <p className="rounded-card bg-white p-6 text-center text-[14px] text-muted shadow-sheet">Sem movimento de produtos no período.</p>
         ) : (
-          <div className="relative overflow-x-auto rounded-panel bg-white shadow-card">
+          <div className="relative overflow-x-auto rounded-card bg-white shadow-sheet">
             <table className="w-full min-w-[900px] text-left text-[14px]">
-              <thead className="border-b border-line text-caption text-muted">
+              <thead className="border-b border-line text-[12px] text-muted">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">#</th>
-                  <th className="px-4 py-3 font-semibold">Produto</th>
-                  <th className="px-4 py-3 text-right font-semibold">Vistas</th>
-                  <th className="px-4 py-3 text-right font-semibold">Carrinhos</th>
-                  <th className="px-4 py-3 text-right font-semibold">Pedidos</th>
-                  <th className="px-4 py-3 text-right font-semibold">Vista → pedido</th>
-                  <th className="px-4 py-3 text-right font-semibold">Receita site</th>
-                  <th className="px-4 py-3 text-right font-semibold">Receita lojas</th>
+                  <th className="px-5 py-3 font-semibold">#</th>
+                  <th className="px-5 py-3 font-semibold">Produto</th>
+                  <th className="px-5 py-3 text-right font-semibold">Vistas</th>
+                  <th className="px-5 py-3 text-right font-semibold">Carrinhos</th>
+                  <th className="px-5 py-3 text-right font-semibold">Pedidos</th>
+                  <th className="px-5 py-3 text-right font-semibold">Vista → pedido</th>
+                  <th className="px-5 py-3 text-right font-semibold">Receita site</th>
+                  <th className="px-5 py-3 text-right font-semibold">Receita lojas</th>
                   <th className="w-36 px-4 py-3 font-semibold">
                     <span className="sr-only">Proporção</span>
                   </th>
@@ -136,21 +140,21 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
               <tbody className="divide-y divide-line">
                 {prods.map((p, i) => (
                   <tr key={p.produtoId}>
-                    <td className="px-4 py-2.5 tabular-nums text-muted">{i + 1}</td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-5 py-2.5 tabular-nums text-muted">{i + 1}</td>
+                    <td className="px-5 py-2.5">
                       <span className="font-semibold">{p.nome}</span>
                       <span className="block text-caption text-muted">
                         {p.categoria}
                         {p.lojas > 0 && ` · vendido em ${p.lojas} ${p.lojas === 1 ? "loja" : "lojas"}`}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{p.views.toLocaleString("pt-BR")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{p.carrinhos.toLocaleString("pt-BR")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{p.pedidos.toLocaleString("pt-BR")}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{p.views ? pct(Math.min(100, (p.compradores / p.views) * 100)) : "—"}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{formatBRL(p.receitaSite)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{formatBRL(p.receitaLojas)}</td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-5 py-2.5 text-right tabular-nums">{p.views.toLocaleString("pt-BR")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{p.carrinhos.toLocaleString("pt-BR")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{p.pedidos.toLocaleString("pt-BR")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{p.views ? pct(Math.min(100, (p.compradores / p.views) * 100)) : "—"}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{formatBRL(p.receitaSite)}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums">{formatBRL(p.receitaLojas)}</td>
+                    <td className="px-5 py-2.5">
                       <InlineBar value={p.receita} max={maxProduct} />
                     </td>
                   </tr>
@@ -163,9 +167,9 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
 
       <Section id="abandono" title="Carrinhos abandonados" description="Sessões com produto no carrinho, sem pedido, paradas há mais de 30 minutos. Anônimas: sem contato do cliente.">
         {carts.length === 0 ? (
-          <p className="rounded-panel bg-white p-6 text-muted shadow-card">Nenhum carrinho abandonado no período.</p>
+          <p className="rounded-card bg-white p-6 text-center text-[14px] text-muted shadow-sheet">Nenhum carrinho abandonado no período.</p>
         ) : (
-          <ul className="divide-y divide-line rounded-panel bg-white px-5 shadow-card">
+          <ul className="divide-y divide-line rounded-card bg-white px-5 shadow-sheet">
             {carts.map((c) => (
               <li key={`${c.lojaId}-${c.sessao}`} className="flex flex-wrap items-start justify-between gap-3 py-3 text-[14px]">
                 <div className="min-w-0">
@@ -186,7 +190,7 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
 
       <Section id="origens" title="Origens e aparelhos">
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-panel bg-white p-5 shadow-card">
+          <div className="rounded-card bg-white p-5 shadow-sheet">
             <p className="text-[15px] font-bold">De onde vêm as sessões</p>
             <ul className="mt-3 space-y-2 text-[14px]">
               {src.refs.length === 0 && <li className="text-muted">Sem visitas no período.</li>}
@@ -203,7 +207,7 @@ export function AnalyticsSections({ scope, desde, showChannels = true }: { scope
               ))}
             </ul>
           </div>
-          <div className="rounded-panel bg-white p-5 shadow-card">
+          <div className="rounded-card bg-white p-5 shadow-sheet">
             <p className="text-[15px] font-bold">Aparelhos</p>
             <ul className="mt-3 space-y-2 text-[14px]">
               {src.dispositivos.length === 0 && <li className="text-muted">Sem visitas no período.</li>}

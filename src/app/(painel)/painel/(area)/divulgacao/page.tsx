@@ -16,9 +16,9 @@ export default async function PainelDivulgacao() {
   const { loja } = await requirePainel();
   const url = await lojaUrl(loja);
   const since = dayKeyDaysAgo(29);
-  const links = listLinks(loja.id);
-  const stats = new Map(refStats(loja.id, since).map((s) => [s.ref, s]));
-  const days = visitsByDay(loja.id, since);
+  const links = await listLinks(loja.id);
+  const stats = new Map((await refStats(loja.id, since)).map((s) => [s.ref, s]));
+  const days = await visitsByDay(loja.id, since);
   const totalVisits = days.reduce((sum, d) => sum + d.visitas, 0);
   const max = Math.max(1, ...days.map((d) => d.visitas));
   const direct = stats.get("");

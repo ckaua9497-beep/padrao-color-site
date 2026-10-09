@@ -19,15 +19,11 @@ export const metadata: Metadata = {
     "Gráfica e comunicação visual: cartões, banners, brindes, vestuário e LED neon. Configure, envie sua arte e veja o produto em 3D antes de imprimir.",
 };
 
-// Marca o documento como "com JS" antes da pintura: animações de entrada só escondem conteúdo quando vão rodar.
-const JS_FLAG = "document.documentElement.classList.add('js')";
-
+// As animações de entrada só escondem o conteúdo quando há JS para mostrá-lo: isso fica no CSS
+// (@media (scripting: enabled), em globals.css), sem script no <head>.
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="pt-BR" className={`${figtree.variable} h-full antialiased`} data-scroll-behavior="smooth" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: JS_FLAG }} />
-      </head>
       <body className="flex min-h-full flex-col">
         <CustomerProvider>
           <CartProvider>{children}</CartProvider>

@@ -14,7 +14,6 @@ import {
   linkSlugError,
   SOCIAL_KEYS,
   emailError,
-  isPalette,
   marginError,
   parseMargin,
   passwordError,
@@ -26,7 +25,6 @@ import {
   type SocialKey,
 } from "@/lib/multiloja/core";
 import { endPainelSession, hashPassword, painelLimits, requestIp, requirePainel, startPainelSession, timingDummy, verifyPassword } from "@/lib/multiloja/auth";
-import { deleteImage, saveImage } from "@/lib/multiloja/files";
 import { dnsTarget, releaseDays, signupOpen } from "@/lib/multiloja/config";
 import { createLink, createSaque, deleteLink, listComissoes, listSaques } from "@/lib/multiloja/repo-vendas";
 import {
@@ -45,7 +43,6 @@ import {
   updateLoja,
   updateLojista,
   updateLojistaPassword,
-  type Banner,
 } from "@/lib/multiloja/repo";
 
 /*
@@ -79,13 +76,13 @@ export async function entrar(_prev: FormState, form: FormData): Promise<FormStat
     if (!hit.ok) return tooMany(hit.retryAfterSec);
   }
 
-  const lojista = findLojistaLogin(email);
+  const lojista = await findLojistaLogin(email);
   const valid = lojista ? await verifyPassword(senha, lojista.senhaHash) : (await verifyPassword(senha, await timingDummy()), false);
   if (!lojista || !valid) return { message: "E-mail ou senha incorretos." };
   if (lojista.status !== "ativo") return { message: "Seu acesso está suspenso. Fale com o suporte da Padrão Color." };
 
   painelLimits.loginEmail.reset(email);
-  touchLogin(lojista.id);
+  await touchLogin(lojista.id);
   await startPainelSession(lojista.id);
   redirect("/painel");
 }
@@ -99,7 +96,7 @@ export async function cadastrar(_prev: FormState, form: FormData): Promise<FormS
   const lojaNome = text(form, "loja", 60);
   const subdominio = text(form, "subdominio", 40).toLowerCase();
   const aceite = form.get("aceite") === "on";
-  if (!signupOpen()) return { message: "O cadastro de lojas está fechado. Fale com a Padrão Color para abrir a sua." };
+  if (!(await signupOpen())) return { message: "O cadastro de lojas está fechado. Fale com a Padrão Color para abrir a sua." };
 
   const errors: Record<string, string> = {};
   if (nome.length < 3) errors.nome = "Informe seu nome.";
@@ -122,11 +119,11 @@ export async function cadastrar(_prev: FormState, form: FormData): Promise<FormS
     if (!hit.ok) return tooMany(hit.retryAfterSec);
   }
 
-  if (emailTaken(email)) return { errors: { email: "Já existe uma loja com este e-mail. Entre com ele." }, message: "Confira os campos destacados." };
-  if (subdomainTaken(subdominio)) return { errors: { subdominio: "Este endereço já é de outra loja." }, message: "Confira os campos destacados." };
+  if (await emailTaken(email)) return { errors: { email: "Já existe uma loja com este e-mail. Entre com ele." }, message: "Confira os campos destacados." };
+  if (await subdomainTaken(subdominio)) return { errors: { subdominio: "Este endereço já é de outra loja." }, message: "Confira os campos destacados." };
 
   try {
-    const { lojistaId } = createLojistaWithLoja({
+    const { lojistaId } = await createLojistaWithLoja({
       nome,
       email,
       senhaHash: await hashPassword(senha),
@@ -162,7 +159,7 @@ export async function salvarLoja(_prev: FormState, form: FormData): Promise<Form
   const subdominio = text(form, "subdominio", 40).toLowerCase();
   const subProblem = subdomainError(subdominio);
   if (subProblem) errors.subdominio = subProblem;
-  else if (subdomainTaken(subdominio, loja.id)) errors.subdominio = "Este endereço já é de outra loja.";
+  else if (await subdomainTaken(subdominio, loja.id)) errors.subdominio = "Este endereço já é de outra loja.";
 
   const phoneField = (key: string, label: string) => {
     const raw = text(form, key, 30);
@@ -209,57 +206,9 @@ export async function salvarLoja(_prev: FormState, form: FormData): Promise<Form
 
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
 
-  updateLoja(loja.id, { subdominio, nome, slogan, sobre, whatsapp, telefone, emailContato, redes, margemPadrao: margem, categoriasDestaque, freteFixo, freteGratisAcima });
+  await updateLoja(loja.id, { subdominio, nome, slogan, sobre, whatsapp, telefone, emailContato, redes, margemPadrao: margem, categoriasDestaque, freteFixo, freteGratisAcima });
   refresh();
   return { ok: true, message: subdominio !== loja.subdominio ? "Salvo. O endereço da loja mudou: divulgue o link novo." : "Dados da loja salvos." };
-}
-
-export async function salvarAparencia(_prev: FormState, form: FormData): Promise<FormState> {
-  const { loja } = await requirePainel();
-  const paleta = text(form, "paleta", 20);
-  if (!isPalette(paleta)) return { message: "Escolha uma das cores." };
-
-  const patch: Parameters<typeof updateLoja>[1] = { paleta };
-
-  const logo = form.get("logo");
-  if (logo instanceof File && logo.size > 0) {
-    const saved = await saveImage(loja.id, "logo", logo, 2 * 1024 * 1024);
-    if (!saved.ok) return { errors: { logo: saved.error }, message: saved.error };
-    await deleteImage(loja.id, loja.logo);
-    patch.logo = saved.url;
-  } else if (form.get("removerLogo") === "on") {
-    await deleteImage(loja.id, loja.logo);
-    patch.logo = null;
-  }
-
-  // Banners: mantém os existentes (menos os marcados para remover), atualiza texto/link e soma os novos (máx. 3).
-  const banners: Banner[] = [];
-  for (let i = 0; i < loja.banners.length; i++) {
-    const current = loja.banners[i];
-    if (form.get(`banner_remover_${i}`) === "on") {
-      await deleteImage(loja.id, current.src);
-      continue;
-    }
-    banners.push({ src: current.src, alt: text(form, `banner_alt_${i}`, 120), href: bannerHref(text(form, `banner_link_${i}`, 200)) });
-  }
-  const novo = form.get("banner_novo");
-  if (novo instanceof File && novo.size > 0) {
-    if (banners.length >= 3) return { errors: { banner_novo: "A loja já tem 3 banners. Remova um para enviar outro." }, message: "Limite de banners." };
-    const saved = await saveImage(loja.id, "banner", novo, 5 * 1024 * 1024);
-    if (!saved.ok) return { errors: { banner_novo: saved.error }, message: saved.error };
-    banners.push({ src: saved.url, alt: text(form, "banner_novo_alt", 120), href: bannerHref(text(form, "banner_novo_link", 200)) });
-  }
-  patch.banners = banners;
-
-  updateLoja(loja.id, patch);
-  refresh();
-  return { ok: true, message: "Aparência salva. Abra a loja para ver como ficou." };
-}
-
-/** Link do banner: só caminho interno da loja (/produtos?…, /produto/…), para não virar redirecionador. */
-function bannerHref(raw: string): string | null {
-  if (!raw) return null;
-  return /^\/(?!\/)[\w\-/?=&%.]*$/.test(raw) ? raw : null;
 }
 
 // ---------------------------------------------------------------------------------- produtos
@@ -277,9 +226,9 @@ function validIds(ids: unknown): string[] {
 export async function ativarProdutos(ids: string[]): Promise<ProdutosResult> {
   const { loja } = await requirePainel();
   const list = validIds(ids);
-  const room = planRoom(loja.plano, countLojaProdutos(loja.id));
+  const room = planRoom(loja.plano, await countLojaProdutos(loja.id));
   if (room <= 0) return { ok: false, message: "Seu plano chegou ao limite de produtos ativos. Desative algum ou mude de plano." };
-  const added = activateProdutos(loja.id, list.slice(0, Number.isFinite(room) ? room : undefined));
+  const added = await activateProdutos(loja.id, list.slice(0, Number.isFinite(room) ? room : undefined));
   refresh();
   const skipped = list.length - added;
   if (Number.isFinite(room) && list.length > room) return { ok: true, message: `${added} ativados. ${list.length - room} ficaram de fora pelo limite do plano.` };
@@ -288,7 +237,7 @@ export async function ativarProdutos(ids: string[]): Promise<ProdutosResult> {
 
 export async function desativarProdutos(ids: string[]): Promise<ProdutosResult> {
   const { loja } = await requirePainel();
-  const removed = deactivateProdutos(loja.id, validIds(ids));
+  const removed = await deactivateProdutos(loja.id, validIds(ids));
   refresh();
   return { ok: true, message: removed === 1 ? "1 produto desativado." : `${removed} produtos desativados.` };
 }
@@ -300,7 +249,7 @@ export async function definirMargem(ids: string[], margem: number | null): Promi
     const problem = marginError(margem);
     if (problem) return { ok: false, message: problem };
   }
-  const changed = setProdutosMargem(loja.id, validIds(ids), margem);
+  const changed = await setProdutosMargem(loja.id, validIds(ids), margem);
   refresh();
   if (changed === 0) return { ok: false, message: "Ative o produto antes de mudar a margem dele." };
   return { ok: true, message: margem === null ? `Margem padrão aplicada a ${changed} ${changed === 1 ? "produto" : "produtos"}.` : `Margem de ${margem}% aplicada a ${changed} ${changed === 1 ? "produto" : "produtos"}.` };
@@ -310,7 +259,7 @@ export async function marcarDestaque(id: string, destaque: boolean): Promise<Pro
   const { loja } = await requirePainel();
   const [valid] = validIds([id]);
   if (!valid) return { ok: false, message: "Produto não encontrado." };
-  setProdutoDestaque(loja.id, valid, destaque);
+  await setProdutoDestaque(loja.id, valid, destaque);
   refresh();
   return { ok: true, message: destaque ? "Produto em destaque na página inicial." : "Produto fora dos destaques." };
 }
@@ -326,7 +275,7 @@ export async function salvarConta(_prev: FormState, form: FormData): Promise<For
   const telefone = telefoneRaw ? phoneDigits(telefoneRaw) : null;
   if (telefoneRaw && !telefone) errors.telefone = "Telefone inválido.";
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
-  updateLojista(lojista.id, { nome, telefone });
+  await updateLojista(lojista.id, { nome, telefone });
   refresh();
   return { ok: true, message: "Dados salvos." };
 }
@@ -335,11 +284,11 @@ export async function trocarSenha(_prev: FormState, form: FormData): Promise<For
   const { lojista } = await requirePainel();
   const atual = String(form.get("atual") ?? "");
   const nova = String(form.get("nova") ?? "");
-  const login = findLojistaLogin(lojista.email);
+  const login = await findLojistaLogin(lojista.email);
   if (!login || !(await verifyPassword(atual, login.senhaHash))) return { errors: { atual: "Senha atual incorreta." }, message: "Senha atual incorreta." };
   const problem = passwordError(nova);
   if (problem) return { errors: { nova: problem }, message: problem };
-  updateLojistaPassword(lojista.id, await hashPassword(nova));
+  await updateLojistaPassword(lojista.id, await hashPassword(nova));
   return { ok: true, message: "Senha alterada." };
 }
 
@@ -351,7 +300,7 @@ export async function salvarChavePix(_prev: FormState, form: FormData): Promise<
   const raw = text(form, "chavePix", 120);
   const chave = raw ? cleanPixKey(raw) : null;
   if (raw && !chave) return { errors: { chavePix: "Chave Pix inválida. Use CPF, CNPJ, e-mail, celular com +55 ou chave aleatória." }, message: "Chave Pix inválida." };
-  setChavePix(lojista.id, chave);
+  await setChavePix(lojista.id, chave);
   refresh();
   return { ok: true, message: chave ? "Chave Pix salva." : "Chave Pix removida." };
 }
@@ -360,10 +309,10 @@ export async function solicitarSaque(_prev: FormState, form: FormData): Promise<
   const { lojista, loja } = await requirePainel();
   if (!lojista.chavePix) return { message: "Cadastre a sua chave Pix antes de pedir o saque." };
   const valor = Math.round(Number(text(form, "valor", 12).replace(/[R$\s.]/g, "").replace(",", ".")) * 100) / 100;
-  const saldo = balanceOf(listComissoes(loja.id), listSaques(loja.id), releaseDays());
+  const saldo = balanceOf(await listComissoes(loja.id), await listSaques(loja.id), releaseDays());
   if (!Number.isFinite(valor) || valor < WITHDRAW_MIN) return { errors: { valor: `O saque mínimo é de R$ ${WITHDRAW_MIN},00.` }, message: "Valor abaixo do mínimo." };
   if (valor > saldo.available + 0.001) return { errors: { valor: "O valor passa do saldo disponível." }, message: "Saldo insuficiente." };
-  createSaque(loja.id, valor, lojista.chavePix);
+  await createSaque(loja.id, valor, lojista.chavePix);
   refresh();
   return { ok: true, message: "Saque solicitado. A Padrão Color faz o Pix em até 2 dias úteis." };
 }
@@ -379,14 +328,14 @@ export async function criarLink(_prev: FormState, form: FormData): Promise<FormS
   const slugProblem = linkSlugError(slug);
   if (slugProblem) errors.slug = slugProblem;
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
-  if (!createLink(loja.id, slug, nome)) return { errors: { slug: "Já existe um link com este nome curto." }, message: "Nome curto repetido." };
+  if (!(await createLink(loja.id, slug, nome))) return { errors: { slug: "Já existe um link com este nome curto." }, message: "Nome curto repetido." };
   refresh();
   return { ok: true, message: "Link criado. Copie e use na divulgação." };
 }
 
 export async function removerLink(id: number) {
   const { loja } = await requirePainel();
-  if (Number.isInteger(id)) deleteLink(loja.id, id);
+  if (Number.isInteger(id)) await deleteLink(loja.id, id);
   refresh();
 }
 
@@ -396,14 +345,14 @@ export async function salvarDominio(_prev: FormState, form: FormData): Promise<F
   const { loja } = await requirePainel();
   const dominio = text(form, "dominio", 253).toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
   if (!dominio) {
-    updateLoja(loja.id, { dominio: null, dominioVerificado: false });
+    await updateLoja(loja.id, { dominio: null, dominioVerificado: false });
     refresh();
     return { ok: true, message: "Domínio próprio removido. A loja segue no endereço da multiloja." };
   }
   const problem = customDomainError(dominio);
   if (problem) return { errors: { dominio: problem }, message: problem };
-  if (domainTaken(dominio, loja.id)) return { errors: { dominio: "Este domínio já está em outra loja." }, message: "Domínio em uso." };
-  if (dominio !== loja.dominio) updateLoja(loja.id, { dominio, dominioVerificado: false });
+  if (await domainTaken(dominio, loja.id)) return { errors: { dominio: "Este domínio já está em outra loja." }, message: "Domínio em uso." };
+  if (dominio !== loja.dominio) await updateLoja(loja.id, { dominio, dominioVerificado: false });
   return verificar(loja.id, dominio);
 }
 
@@ -422,7 +371,7 @@ async function verificar(lojaId: number, dominio: string): Promise<FormState> {
   } catch {
     ok = false;
   }
-  updateLoja(lojaId, { dominioVerificado: ok });
+  await updateLoja(lojaId, { dominioVerificado: ok });
   refresh();
   return ok
     ? { ok: true, message: "Domínio verificado! A loja já responde nele (o certificado HTTPS pode levar alguns minutos)." }

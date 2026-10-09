@@ -30,7 +30,8 @@ npm run dev -- -p 3100 # http://localhost:3100
 
 | Comando         | O que faz                                                                                          |
 | --------------- | -------------------------------------------------------------------------------------------------- |
-| `npm run dev`   | Servidor de desenvolvimento com recarga ao vivo.                                                   |
+| `npm run dev`   | Servidor de desenvolvimento com recarga ao vivo. Liga antes o PostgreSQL local da multiloja (sem `DATABASE_URL`). |
+| `npm run db`    | Só o PostgreSQL local da multiloja (`.data/postgres`, porta 5433), até Ctrl+C.                     |
 | `npm run build` | Build de produção (as páginas de produto e categoria são geradas estaticamente).                   |
 | `npm start`     | Serve o build de produção.                                                                         |
 | `npm run lint`  | ESLint (`eslint-config-next` + regras do React Compiler). Deve terminar com 0 erros e 0 avisos.    |
@@ -40,6 +41,7 @@ npm run dev -- -p 3100 # http://localhost:3100
 | `npm run fotos:novos` | Fotografa os produtos novos (mockup 3D + estampa da marca) em `public/produtos-novos/`. |
 | `npm run multiloja:seed` | Cria/recria a loja de demonstração da multiloja no banco local (ver "Multiloja"). |
 | `npm run multiloja:admin` | Cria ou troca a senha de um admin da multiloja (senha em `MULTILOJA_ADMIN_SENHA`). |
+| `npm run multiloja:migrar-sqlite` | Copia uma vez o banco SQLite antigo (`.data/multiloja.db` + `.data/arquivos`) para o PostgreSQL. |
 
 ## Dados reais × demonstração
 
@@ -241,6 +243,18 @@ todas as lojas: a loja é escolhida pelo endereço.
 - **Vitrine** (`src/app/(vitrine)/vitrine/[host]/`): início, produtos com busca/filtro/ordem, produto (o mesmo `ProductExperience` do site,
   com 3D e gabarito), carrinho, sobre, finalização e página do pedido (`/pedido/<código>?t=<token>`: status, Pix, boleto, cartão e envio de arte).
   Links de divulgação: `?ref=<nome>` marca a origem por 30 dias e o pedido leva essa origem; visitas contadas por dia.
+- **Personalizar loja** (`/painel/personalizar`, editor em tela cheia; a antiga "Aparência" redireciona para ele). O lojista
+  escolhe um dos 7 modelos prontos (Clássico, Boutique, Vibrante, Minimalista, Impacto, Empresas e brindes, Festas e eventos), que
+  monta a página inicial inteira com o nome da loja nos textos, e ajusta: seções (12 prontas: destaque principal, banners, vantagens,
+  categorias, vitrines de destaques/novidades/categoria/escolhidos, chamadas, quem somos, depoimentos, perguntas), ordem (arrastar ou
+  ↑ ↓), esconder, duplicar; estilo (logo, 8 cores com contraste conferido, 5 fontes de título, cantos, botões, cartões, fundo);
+  cabeçalho (3 formatos, faixa de aviso, busca, menu) e rodapé (3). A prévia ao vivo (`/painel/previa` num iframe, computador ou
+  celular) recebe o tema por `postMessage`; clicar numa parte da prévia abre o formulário dela. Desfazer/Refazer (Ctrl+Z), rascunho
+  salvo sozinho (`lojas.tema_rascunho`) e Publicar (`lojas.tema`; também sincroniza `paleta` e `logo`). Imagens enviadas no editor
+  ficam no banco; ao publicar ou descartar, as que nenhum tema usa são apagadas. Tipos, modelos, seções prontas e a validação de tudo
+  o que chega do navegador (`parseTema`: imagens só da própria loja, links só internos, textos com limite) em
+  `src/lib/multiloja/tema.ts` (testado); desenho das seções em `src/components/vitrine/loja/Secoes.tsx` (o mesmo na loja e na prévia),
+  CSS do tema em `loja/estilo.ts` + `.loja-tema` no `globals.css`; editor em `src/components/painel/editor/`.
 - **Preço e comissão.** Preço base = preço do catálogo × `MULTILOJA_FATOR_BASE` (padrão 1, provisório até a Padrão definir a tabela da
   multiloja); preço da loja = base × (1 + margem), de 20% a 300%. No pedido, o servidor recalcula cada item duas vezes (`priceLine`): no
   preço da loja e no base. Comissão = pago pelo cliente − custo base − frete − taxa do pagamento (`src/lib/multiloja/pedido.ts`, testado).
@@ -287,9 +301,15 @@ todas as lojas: a loja é escolhida pelo endereço.
   aparelhos. Consultas em `analytics.ts`; regras puras e testadas em `eventos.ts`. No site da Padrão o pagamento é confirmado no sistema
   da Padrão, então lá entram só os pedidos feitos.
 - **Planos.** Grátis (10 produtos ativos), Básico (50) e Premium (sem limite), trocados no admin.
-- **Dados.** SQLite local (`node:sqlite`) em `.data/multiloja.db`; imagens e artes em `.data/arquivos/` (fora do git). Esquema em
-  `src/lib/multiloja/schema.ts` (migrações em ordem; mudança = item novo no fim). Todo SQL fica em `repo.ts` e `repo-vendas.ts`, para a
-  troca por Postgres mexer só neles. Logins com scrypt e cookies lacrados próprios (`auth.ts`), com limite de tentativas.
+- **Dados.** Tudo num banco PostgreSQL: lojistas, lojas, produtos ativos, pedidos, saques, divulgação, admins, configurações (chaves
+  cifradas), rastreamento e os arquivos enviados (logos, banners e artes, na tabela `arquivos`). Produção: `DATABASE_URL` (Supabase, Neon,
+  RDS… com SSL; em serverless, a URL do pooler). Desenvolvimento: sem `DATABASE_URL`, `npm run dev` liga um Postgres de verdade embutido
+  no projeto (`embedded-postgres`, dados em `.data/postgres`, porta 5433; `npm run db` liga só ele). Conexão e marcadores `?` em
+  `src/lib/multiloja/pg.ts` (o site e os scripts usam); esquema em `schema.ts`, aplicado sozinho na primeira consulta (migrações em ordem,
+  com trava para dois servidores não migrarem juntos; mudança = item novo no fim). Todo SQL fica em `repo.ts`, `repo-vendas.ts`,
+  `analytics.ts`, `settings.ts` e `files.ts`. Datas em texto UTC `AAAA-MM-DD HH:MM:SS` (função `agora()`), dinheiro em double precision.
+  Banco SQLite antigo: `npm run multiloja:migrar-sqlite` copia tudo de uma vez (recusa se o Postgres já tiver lojistas). Logins com scrypt
+  e cookies lacrados próprios (`auth.ts`), com limite de tentativas.
 - **Demonstração.** `npm run multiloja:seed` recria a loja `atelie-demo` (16 produtos, frete, 2 links) e um admin de teste; e-mails e
   senhas de teste estão no próprio script.
 - **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, homologação da Efí e da Cielo

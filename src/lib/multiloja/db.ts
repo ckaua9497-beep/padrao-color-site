@@ -1,67 +1,35 @@
 import "server-only";
 
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { MIGRATIONS } from "./schema";
+import { connect, migrate, type Db, type Sql } from "./pg";
 
 /*
- * Banco da multiloja. Em desenvolvimento é um SQLite local (node:sqlite, sem dependência), em
- * MULTILOJA_DB (padrão: .data/multiloja.db, fora do git). Toda leitura e escrita passa por repo.ts, que usa
- * só SQL comum, para a troca por Postgres em produção mexer num arquivo só.
- *
- * Migrações (schema.ts): rodam em ordem, uma vez cada (PRAGMA user_version guarda a última aplicada).
+ * Banco da multiloja no servidor: PostgreSQL (pg.ts). Um pool de conexões por processo; na primeira consulta
+ * aplica as migrações que faltam. Toda leitura e escrita passa por repo.ts, repo-vendas.ts, analytics.ts,
+ * settings.ts e files.ts.
  */
 
-type Holder = { db?: DatabaseSync };
-// Um banco por processo (o dev server recarrega módulos: o globalThis segura a mesma conexão).
-const holder = globalThis as typeof globalThis & { __multilojaDb?: Holder };
+type Holder = { ready?: Promise<Db> };
+// O dev server recarrega módulos: o globalThis segura o mesmo pool.
+const holder = globalThis as typeof globalThis & { __multilojaPg?: Holder };
 
-function dbPath(): string {
-  const configured = process.env.MULTILOJA_DB?.trim();
-  // turbopackIgnore: caminho só conhecido em execução; sem ele o build rastreia o projeto inteiro.
-  return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured || ".data/multiloja.db");
-}
-
-function migrate(db: DatabaseSync) {
-  const current = Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
-  for (let i = current; i < MIGRATIONS.length; i++) {
-    db.exec("BEGIN");
-    try {
-      db.exec(MIGRATIONS[i]);
-      db.exec(`PRAGMA user_version = ${i + 1}`);
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
-    }
-  }
-}
-
-export function getDb(): DatabaseSync {
-  holder.__multilojaDb ??= {};
-  const h = holder.__multilojaDb;
-  if (!h.db) {
-    const file = dbPath();
-    mkdirSync(path.dirname(file), { recursive: true });
-    const db = new DatabaseSync(file);
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    migrate(db);
-    h.db = db;
-  }
-  return h.db;
+export function getDb(): Promise<Db> {
+  holder.__multilojaPg ??= {};
+  const h = holder.__multilojaPg;
+  h.ready ??= (async () => {
+    const db = connect();
+    await migrate(db);
+    return db;
+  })().catch((error) => {
+    // Banco fora do ar na subida: a próxima requisição tenta de novo (sem guardar a falha).
+    h.ready = undefined;
+    throw error;
+  });
+  return h.ready;
 }
 
 /** Roda `fn` numa transação (tudo ou nada). */
-export function transaction<T>(fn: (db: DatabaseSync) => T): T {
-  const db = getDb();
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = fn(db);
-    db.exec("COMMIT");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+export async function transaction<T>(fn: (sql: Sql) => Promise<T>): Promise<T> {
+  return (await getDb()).tx(fn);
 }
+
+export type { Sql };

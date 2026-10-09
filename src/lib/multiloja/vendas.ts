@@ -13,6 +13,7 @@ import {
   createPedido,
   getPedidoByCodigo,
   listItens,
+  markPedidoPago,
   mergePedidoPagamento,
   setPedidoPadrao,
   setPedidoPagamento,
@@ -48,8 +49,8 @@ export type PricedItem = { line: PricedLine; base: PricedLine; item: LojaItem };
 export type PriceResult = { ok: true; items: PricedItem[] } | { ok: false; errors: { key: string; name: string; error: string }[] };
 
 /** Preço de cada item do carrinho na loja (e o custo base). Item que a loja não vende mais vira erro. */
-export function priceCart(loja: Loja, inputs: OrderItemInput[]): PriceResult {
-  const items = lojaItens(loja.id, loja.margemPadrao);
+export async function priceCart(loja: Loja, inputs: OrderItemInput[]): Promise<PriceResult> {
+  const items = await lojaItens(loja.id, loja.margemPadrao);
   const byGroup = new Map(items.map((i) => [i.product.groupId ?? Number(i.product.id), i]));
   const bySlug = new Map(items.map((i) => [i.product.slug, i]));
   const priced: PricedItem[] = [];
@@ -69,12 +70,12 @@ export function priceCart(loja: Loja, inputs: OrderItemInput[]): PriceResult {
   return errors.length ? { ok: false, errors } : { ok: true, items: priced };
 }
 
-export function quoteFor(loja: Loja, items: PricedItem[], method: PaymentKind): OrderQuote {
+export async function quoteFor(loja: Loja, items: PricedItem[], method: PaymentKind): Promise<OrderQuote> {
   return quoteOrder(
     items.map(({ line, base }) => ({ total: line.total, baseTotal: base.total })),
     method,
     { fixed: loja.freteFixo, freeAbove: loja.freteGratisAcima },
-    paymentRates(),
+    await paymentRates(),
   );
 }
 
@@ -87,9 +88,9 @@ export type PlaceResult =
 export type TrackingIds = { visitante: string; sessao: string } | null;
 
 export async function placeOrder(loja: Loja, request: CheckoutRequest, origin: string, tracking: TrackingIds = null): Promise<PlaceResult> {
-  const priced = priceCart(loja, request.items);
+  const priced = await priceCart(loja, request.items);
   if (!priced.ok) return { ok: false, status: 422, message: priced.errors[0].error, errors: priced.errors };
-  const quote = quoteFor(loja, priced.items, request.pagamento);
+  const quote = await quoteFor(loja, priced.items, request.pagamento);
   if (Math.abs(quote.total - request.expectedTotal) > 0.009) {
     return { ok: false, status: 409, quote, message: "O valor do pedido mudou. Confira o novo total antes de continuar." };
   }
@@ -116,7 +117,7 @@ export async function placeOrder(loja: Loja, request: CheckoutRequest, origin: s
     prazoDias: line.leadDays,
     arteNome: line.input.artName,
   }));
-  const pedidoId = createPedido(
+  const pedidoId = await createPedido(
     {
       lojaId: loja.id,
       codigo,
@@ -138,7 +139,7 @@ export async function placeOrder(loja: Loja, request: CheckoutRequest, origin: s
     },
     itens,
   );
-  recordOrderEvent("pedido_criado", {
+  await recordOrderEvent("pedido_criado", {
     lojaId: loja.id,
     visitante: tracking?.visitante ?? null,
     sessao: tracking?.sessao ?? null,
@@ -147,19 +148,19 @@ export async function placeOrder(loja: Loja, request: CheckoutRequest, origin: s
     itens: itens.map((i) => ({ produto: i.produtoId, quantidade: i.unidades, valor: i.total })),
   });
 
-  let pedido = getPedidoByCodigo(codigo) as Pedido;
+  let pedido = (await getPedidoByCodigo(codigo)) as Pedido;
   try {
     const { provider, charge } = await createCharge(request.pagamento, {
       codigo,
       total: quote.total,
       cliente: request.cliente,
       entrega: request.entrega,
-      boletoDias: paymentSettings().boletoDias,
+      boletoDias: (await paymentSettings()).boletoDias,
       descricao: `Pedido ${codigo} — ${loja.nome}`,
       returnUrl: `${origin}/pedido/${codigo}?t=${token}`,
     });
-    setPedidoPagamento(pedidoId, provider, charge.id, charge.data);
-    pedido = getPedidoByCodigo(codigo) as Pedido;
+    await setPedidoPagamento(pedidoId, provider, charge.id, charge.data);
+    pedido = (await getPedidoByCodigo(codigo)) as Pedido;
     return { ok: true, pedido };
   } catch (error) {
     console.error("[multiloja] cobrança:", error instanceof Error ? error.message : error);
@@ -175,22 +176,25 @@ export function tokenMatches(pedido: Pedido, token: string | null | undefined): 
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Pagamento confirmado (webhook, consulta ou simulação): marca "pago" uma vez só. */
-export function confirmPayment(pedido: Pedido, autor: string, nota: string): boolean {
+/**
+ * Pagamento confirmado (webhook, consulta ou simulação): marca "pago" uma vez só, mesmo com o aviso do gateway e a
+ * consulta da página chegando juntos (o banco só deixa um dos dois mudar o status).
+ */
+export async function confirmPayment(pedido: Pedido, autor: string, nota: string): Promise<boolean> {
   if (pedido.status !== "aguardando_pagamento" && pedido.status !== "expirado") return false;
-  setPedidoStatus(pedido.id, "pago", autor, nota);
+  if (!(await markPedidoPago(pedido.id, autor, nota))) return false;
   const [visitante, sessao] = (pedido.sessao ?? "").split("|");
-  recordOrderEvent("pedido_pago", { lojaId: pedido.lojaId, visitante: visitante || null, sessao: sessao || null, codigo: pedido.codigo, total: pedido.total, itens: [] });
+  await recordOrderEvent("pedido_pago", { lojaId: pedido.lojaId, visitante: visitante || null, sessao: sessao || null, codigo: pedido.codigo, total: pedido.total, itens: [] });
   return true;
 }
 
 /** Aplica a situação consultada no provedor: pago (guarda o e2eId do Pix) ou cobrança removida. */
-export function applyChargeStatus(pedido: Pedido, result: ChargeStatus, origem: string): void {
+export async function applyChargeStatus(pedido: Pedido, result: ChargeStatus, origem: string): Promise<void> {
   if (result.status === "pago") {
-    if (result.e2eId) mergePedidoPagamento(pedido.id, { e2eId: result.e2eId });
-    confirmPayment(pedido, "pagamento", `Pagamento confirmado (${origem}).`);
+    if (result.e2eId) await mergePedidoPagamento(pedido.id, { e2eId: result.e2eId });
+    await confirmPayment(pedido, "pagamento", `Pagamento confirmado (${origem}).`);
   } else if (result.status === "expirado" && pedido.status === "aguardando_pagamento") {
-    setPedidoStatus(pedido.id, "expirado", "pagamento", `A cobrança foi cancelada ou venceu (${origem}).`);
+    await setPedidoStatus(pedido.id, "expirado", "pagamento", `A cobrança foi cancelada ou venceu (${origem}).`);
   }
 }
 
@@ -205,11 +209,11 @@ export async function refreshPayment(pedido: Pedido): Promise<Pedido> {
   if (now - (lastCheck.get(pedido.codigo) ?? 0) < 15_000) return pedido;
   lastCheck.set(pedido.codigo, now);
   try {
-    applyChargeStatus(pedido, await chargeStatus(pedido.pagamentoProvedor, pedido.pagamentoId), "consulta");
+    await applyChargeStatus(pedido, await chargeStatus(pedido.pagamentoProvedor, pedido.pagamentoId), "consulta");
   } catch (error) {
     console.error("[multiloja] consulta de pagamento:", error instanceof Error ? error.message : error);
   }
-  return getPedidoByCodigo(pedido.codigo) ?? pedido;
+  return (await getPedidoByCodigo(pedido.codigo)) ?? pedido;
 }
 
 /** O Pix do pedido já venceu (o cliente pode gerar outro). */
@@ -227,7 +231,7 @@ export async function renewCharge(pedido: Pedido, origin: string, lojaNome: stri
   if (pedido.pagamentoProvedor && pedido.pagamentoProvedor !== "simulado" && pedido.pagamentoId) {
     const current = await chargeStatus(pedido.pagamentoProvedor, pedido.pagamentoId).catch(() => null);
     if (current?.status === "pago") {
-      applyChargeStatus(pedido, current, "consulta");
+      await applyChargeStatus(pedido, current, "consulta");
       return { ok: true };
     }
   }
@@ -237,12 +241,12 @@ export async function renewCharge(pedido: Pedido, origin: string, lojaNome: stri
       total: pedido.total,
       cliente: pedido.cliente,
       entrega: pedido.entrega,
-      boletoDias: paymentSettings().boletoDias,
+      boletoDias: (await paymentSettings()).boletoDias,
       descricao: `Pedido ${pedido.codigo} — ${lojaNome}`,
       returnUrl: `${origin}/pedido/${pedido.codigo}?t=${pedido.token}`,
     });
-    setPedidoPagamento(pedido.id, provider, charge.id, charge.data);
-    if (pedido.status === "expirado") setPedidoStatus(pedido.id, "aguardando_pagamento", "cliente", "Nova cobrança gerada.");
+    await setPedidoPagamento(pedido.id, provider, charge.id, charge.data);
+    if (pedido.status === "expirado") await setPedidoStatus(pedido.id, "aguardando_pagamento", "cliente", "Nova cobrança gerada.");
     return { ok: true };
   } catch (error) {
     console.error("[multiloja] nova cobrança:", error instanceof Error ? error.message : error);
@@ -250,19 +254,19 @@ export async function renewCharge(pedido: Pedido, origin: string, lojaNome: stri
   }
 }
 
-/** Cancela o pedido e, se já foi pago, pede a devolução (Pix) ou o reembolso (cartão) na Efí. */
+/** Cancela o pedido e, se já foi pago, pede a devolução (Pix) ou o reembolso (cartão) no gateway que cobrou. */
 export async function cancelOrder(pedido: Pedido, autor: string, nota: string): Promise<{ ok: boolean; message: string }> {
   const paid = Boolean(pedido.pagoEm) && pedido.status !== "cancelado";
   if (paid) {
     const refund = await refundCharge(pedido).catch((error) => ({ ok: false as const, message: error instanceof Error ? error.message : "erro na Efí" }));
     if (!refund.ok) return { ok: false, message: `${refund.message} O pedido NÃO foi cancelado.` };
-    mergePedidoPagamento(pedido.id, { refund: refund.message });
-    setPedidoStatus(pedido.id, "cancelado", autor, [nota, refund.message].filter(Boolean).join(" "));
+    await mergePedidoPagamento(pedido.id, { refund: refund.message });
+    await setPedidoStatus(pedido.id, "cancelado", autor, [nota, refund.message].filter(Boolean).join(" "));
     return { ok: true, message: `Pedido cancelado. ${refund.message}` };
   }
   // Sem pagamento: invalida o Pix/boleto/link em aberto para ninguém pagar depois.
   const voided = await voidCharge(pedido);
-  setPedidoStatus(pedido.id, "cancelado", autor, [nota, voided.ok ? voided.message : `Atenção: ${voided.message}`].filter(Boolean).join(" "));
+  await setPedidoStatus(pedido.id, "cancelado", autor, [nota, voided.ok ? voided.message : `Atenção: ${voided.message}`].filter(Boolean).join(" "));
   return { ok: true, message: `Pedido cancelado (não havia pagamento). ${voided.message}` };
 }
 
@@ -278,7 +282,7 @@ export type ProductionResult = { ok: true; simulated: boolean; numero: string | 
  */
 export async function sendToProduction(pedido: Pedido): Promise<ProductionResult> {
   const { enabled, customerId } = padraoProduction();
-  const itens = listItens(pedido.id);
+  const itens = await listItens(pedido.id);
   const lines: PricedLine[] = [];
   for (const item of itens) {
     const product = getProductById(item.produtoId);
@@ -308,14 +312,14 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
     nome_trabalho: `${pedido.codigo} ${pedido.cliente.nome}`.slice(0, 60),
   };
   if (!enabled || !customerId) {
-    setPedidoStatus(pedido.id, "em_producao", "padrao", "Enviado para produção (simulação: PADRAO_ORDERS_ENABLED desligado).");
+    await setPedidoStatus(pedido.id, "em_producao", "padrao", "Enviado para produção (simulação: PADRAO_ORDERS_ENABLED desligado).");
     return { ok: true, simulated: true, numero: null, payload };
   }
   try {
     const result = await gerarPedido(payload);
     const numero = extractOrderNumber(result);
-    if (numero) setPedidoPadrao(pedido.id, String(numero));
-    setPedidoStatus(pedido.id, "em_producao", "padrao", numero ? `Pedido ${numero} na Padrão Color.` : "Enviado para produção na Padrão Color.");
+    if (numero) await setPedidoPadrao(pedido.id, String(numero));
+    await setPedidoStatus(pedido.id, "em_producao", "padrao", numero ? `Pedido ${numero} na Padrão Color.` : "Enviado para produção na Padrão Color.");
     return { ok: true, simulated: false, numero: numero ? String(numero) : null, payload };
   } catch (error) {
     console.error("[multiloja] gerarpedido:", error instanceof Error ? error.message : error);

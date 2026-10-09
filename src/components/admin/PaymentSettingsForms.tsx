@@ -17,46 +17,53 @@ export function GatewaySwitcher({ gateways, desligado }: { gateways: GatewayCard
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminResult | null>(null);
   const choose = (name: string) => startTransition(async () => setResult(await ativarGateway(name)));
+  const card = (active: boolean) => cx("relative flex flex-col rounded-card bg-white p-4 shadow-sheet transition-shadow", active && "ring-2 ring-ink");
+  const pick = "h-9 rounded-full px-3.5 text-[13px] font-bold transition-colors disabled:opacity-50";
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {gateways.map((g) => (
-          <div key={g.name} className={cx("flex flex-col rounded-panel border-2 bg-white p-4", g.active ? "border-ink" : "border-transparent shadow-card")}>
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-lg font-black">{g.label}</p>
-              {g.active && <span className="rounded-full bg-ink px-3 py-1 text-[12px] font-bold text-white">Ativo</span>}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="list" aria-label="Gateways de pagamento">
+        {gateways.map((g) => {
+          const tone = g.configured ? (g.problems ? "bg-coral" : "bg-lime-700") : "bg-line-strong";
+          return (
+            <div key={g.name} role="listitem" className={card(g.active)}>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[16px] font-extrabold">{g.label}</p>
+                {g.active && <span className="rounded-full bg-ink px-2.5 py-0.5 text-[12px] font-bold text-white">Ativo</span>}
+              </div>
+              <p className="mt-0.5 text-[12px] text-muted">{g.methods.map((m) => PAYMENT_LABEL[m]).join(" · ")}</p>
+              <p className="mt-3 flex items-center gap-2 text-[13px] font-semibold">
+                <span aria-hidden className={cx("size-2 rounded-full", tone)} />
+                {g.configured ? (g.problems ? `${g.problems} ${g.problems === 1 ? "alerta" : "alertas"} no diagnóstico` : "Configurado e funcionando") : "Sem credenciais"}
+              </p>
+              <div className="mt-auto pt-4">
+                {g.active ? (
+                  <p className="text-[12px] text-muted">Todas as cobranças novas passam por aqui.</p>
+                ) : (
+                  <button type="button" disabled={pending || !g.configured} onClick={() => choose(g.name)} className={cx(pick, g.configured ? "bg-ink text-white hover:bg-coral-700" : "border border-line-strong text-muted")}>
+                    {g.configured ? "Usar este gateway" : "Configure abaixo"}
+                  </button>
+                )}
+              </div>
             </div>
-            <p className="mt-1 text-caption text-muted">{g.methods.map((m) => PAYMENT_LABEL[m]).join(" · ")}</p>
-            <p className={cx("mt-2 text-[14px] font-semibold", g.configured ? (g.problems ? "text-coral-700" : "text-ink") : "text-muted")}>
-              {g.configured ? (g.problems ? `Configurado, ${g.problems} ${g.problems === 1 ? "alerta" : "alertas"} no diagnóstico` : "Configurado e funcionando") : "Sem credenciais"}
-            </p>
-            <div className="mt-auto pt-3">
-              {g.active ? (
-                <p className="text-caption text-muted">Todas as cobranças novas passam por aqui.</p>
-              ) : (
-                <Button type="button" size="sm" variant={g.configured ? "dark" : "outline"} disabled={pending || !g.configured} onClick={() => choose(g.name)}>
-                  Usar este gateway
-                </Button>
-              )}
-            </div>
+          );
+        })}
+        <div role="listitem" className={card(desligado)}>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[16px] font-extrabold">Desligado</p>
+            {desligado && <span className="rounded-full bg-ink px-2.5 py-0.5 text-[12px] font-bold text-white">Ativo</span>}
           </div>
-        ))}
-        <div className={cx("flex flex-col rounded-panel border-2 bg-white p-4", desligado ? "border-ink" : "border-transparent shadow-card")}>
-          <p className="text-lg font-black">Desligado</p>
-          <p className="mt-1 text-caption text-muted">Sem pagamento online: o pedido vai pronto para o WhatsApp da loja.</p>
-          <div className="mt-auto pt-3">
-            {desligado ? (
-              <span className="rounded-full bg-ink px-3 py-1 text-[12px] font-bold text-white">Ativo</span>
-            ) : (
-              <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => choose("desligado")}>
+          <p className="mt-0.5 text-[12px] text-muted">Sem pagamento online: o pedido vai pronto para o WhatsApp da loja.</p>
+          <div className="mt-auto pt-4">
+            {!desligado && (
+              <button type="button" disabled={pending} onClick={() => choose("desligado")} className={cx(pick, "border border-line-strong hover:border-ink")}>
                 Desligar pagamento online
-              </Button>
+              </button>
             )}
           </div>
         </div>
       </div>
       {result && (
-        <p role="status" className={result.ok ? "text-[15px] font-semibold" : "text-[15px] font-semibold text-coral-700"}>
+        <p role="status" className={result.ok ? "text-[14px] font-semibold" : "text-[14px] font-semibold text-coral-700"}>
           {result.message}
         </p>
       )}

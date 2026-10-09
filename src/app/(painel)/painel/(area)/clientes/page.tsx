@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Clientes" };
 
 export default async function PainelClientes() {
   const { loja } = await requirePainel();
-  const clientes = listClientes(loja.id);
+  const clientes = await listClientes(loja.id);
   const compradores = clientes.filter((c) => c.pagos > 0).length;
 
   return (

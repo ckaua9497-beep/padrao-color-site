@@ -28,7 +28,7 @@ export async function generateMetadata(props: PageProps<"/vitrine/[host]/produto
 export default async function VitrineProdutos(props: PageProps<"/vitrine/[host]/produtos">) {
   const { host } = await props.params;
   const search = (await props.searchParams) as Search;
-  const loja = lojaDoHost(host);
+  const loja = await lojaDoHost(host);
   if (!loja) notFound();
 
   const q = one(search.q).trim().slice(0, 80);
@@ -36,7 +36,7 @@ export default async function VitrineProdutos(props: PageProps<"/vitrine/[host]/
   const ordemRaw = one(search.ordem);
   const ordem: Order = ordemRaw in ORDERS ? (ordemRaw as Order) : "relevancia";
 
-  const items = lojaItens(loja.id, loja.margemPadrao);
+  const items = await lojaItens(loja.id, loja.margemPadrao);
   const categories = lojaCategorias(items, loja.categoriasDestaque);
   const words = normalize(q).split(" ").filter(Boolean);
 

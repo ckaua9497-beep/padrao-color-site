@@ -65,8 +65,8 @@ function fail(what: string, res: HttpResult): never {
   throw new GatewayError(`${what} (HTTP ${res.status})`, res.status, detail(res.body));
 }
 
-function requireConfig(): CieloConfig {
-  const config = cieloConfig();
+async function requireConfig(): Promise<CieloConfig> {
+  const config = await cieloConfig();
   if (!config) throw new GatewayError("Cielo não configurada", 0, "");
   return config;
 }
@@ -214,13 +214,13 @@ export const cieloGateway: Gateway = {
   name: "cielo",
   label: "Cielo",
   // Cartão só com as credenciais do Link de Pagamento.
-  get methods(): readonly PaymentKind[] {
-    return hasLink(cieloConfig()) ? ["pix", "boleto", "cartao"] : ["pix", "boleto"];
+  async methods(): Promise<readonly PaymentKind[]> {
+    return hasLink(await cieloConfig()) ? ["pix", "boleto", "cartao"] : ["pix", "boleto"];
   },
-  configured: () => cieloConfig() !== null,
+  configured: async () => (await cieloConfig()) !== null,
 
   async create(method, input) {
-    const config = requireConfig();
+    const config = await requireConfig();
     if (method === "pix") return createPix(config, input);
     if (method === "boleto") return createBoleto(config, input);
     if (!hasLink(config)) throw new GatewayError("Cartão na Cielo precisa das credenciais do Link de Pagamento", 0, "");
@@ -228,12 +228,12 @@ export const cieloGateway: Gateway = {
   },
 
   async status(chargeId) {
-    const config = requireConfig();
+    const config = await requireConfig();
     return chargeId.startsWith("link-") ? linkStatus(config, chargeId) : saleStatus(config, chargeId);
   },
 
   async refund(order: OrderPayment) {
-    const config = requireConfig();
+    const config = await requireConfig();
     if (!order.pagamentoId) return { ok: false, message: "Cobrança sem identificador." };
     if (order.formaPagamento === "boleto") return { ok: false, message: "Boleto pago não tem estorno pela API da Cielo: devolva por transferência e cancele de novo." };
     if (order.pagamentoId.startsWith("link-")) {
@@ -250,7 +250,7 @@ export const cieloGateway: Gateway = {
   },
 
   async void(order: OrderPayment) {
-    const config = requireConfig();
+    const config = await requireConfig();
     if (!order.pagamentoId) return { ok: true, message: "Sem cobrança aberta." };
     if (order.formaPagamento === "pix") {
       const res = await httpJson(`${apiBase(config)}/1/sales/${encodeURIComponent(order.pagamentoId)}/void`, { method: "PUT", headers: apiHeaders(config) });
@@ -260,7 +260,7 @@ export const cieloGateway: Gateway = {
   },
 
   async diagnostics() {
-    const config = cieloConfig();
+    const config = await cieloConfig();
     const checks: Check[] = [
       { label: "MerchantId e MerchantKey (API E-commerce)", ok: Boolean(config), detail: "Site Cielo → E-commerce → Gestão API E-commerce. Pix e boleto saem por aqui." },
       { label: "Banco do boleto (Provider)", ok: Boolean(config?.boletoProvider), detail: "Bradesco2 (status automático) ou BancoDoBrasil3 (baixa manual no portal); sandbox: Simulado." },
@@ -292,9 +292,9 @@ export const cieloGateway: Gateway = {
 };
 
 /** URLs que a Padrão cadastra no portal da Cielo (com o segredo). */
-export function cieloNotificationUrls(): { api: string | null; link: string | null; header: string } {
+export async function cieloNotificationUrls(): Promise<{ api: string | null; link: string | null; header: string }> {
   const base = publicUrl();
-  const secret = cieloConfig()?.webhookSecret;
+  const secret = (await cieloConfig())?.webhookSecret;
   return {
     api: base ? `${base}/api/multiloja/pagamento/cielo` : null,
     link: base && secret ? `${base}/api/multiloja/pagamento/cielo/link?hmac=${encodeURIComponent(secret)}` : null,

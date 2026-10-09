@@ -10,7 +10,7 @@ import { applyChargeStatus } from "@/lib/multiloja/vendas";
  * No cadastro a Efí manda um aviso de teste sem Pix: responde 200.
  */
 export async function POST(request: Request) {
-  if (!efiWebhookAllowed(request)) return new Response(null, { status: 401 });
+  if (!(await efiWebhookAllowed(request))) return new Response(null, { status: 401 });
   let body: unknown;
   try {
     body = await request.json();
@@ -20,10 +20,10 @@ export async function POST(request: Request) {
   const pix = (body as { pix?: { txid?: unknown }[] } | null)?.pix;
   const txids = Array.isArray(pix) ? pix.map((p) => p?.txid).filter((t): t is string => typeof t === "string" && /^[a-zA-Z0-9]{26,35}$/.test(t)).slice(0, 20) : [];
   for (const txid of txids) {
-    const pedido = getPedidoByPagamento(txid);
+    const pedido = await getPedidoByPagamento(txid);
     if (!pedido || pedido.pagamentoProvedor !== "efi") continue;
     try {
-      applyChargeStatus(pedido, await chargeStatus("efi", txid), "webhook Pix");
+      await applyChargeStatus(pedido, await chargeStatus("efi", txid), "webhook Pix");
     } catch (error) {
       console.error("[multiloja] webhook pix:", error instanceof Error ? error.message : error);
       // 500: a Efí tenta de novo (até 9 vezes).

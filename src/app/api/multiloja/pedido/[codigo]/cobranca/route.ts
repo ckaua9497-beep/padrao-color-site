@@ -10,8 +10,8 @@ import { renewCharge, tokenMatches } from "@/lib/multiloja/vendas";
 export async function POST(request: Request, ctx: RouteContext<"/api/multiloja/pedido/[codigo]/cobranca">) {
   if (!isSameOrigin(request)) return fail(403, "Origem não permitida.");
   const { codigo } = await ctx.params;
-  const loja = lojaDaRequisicao(request);
-  const pedido = getPedidoByCodigo(codigo);
+  const loja = await lojaDaRequisicao(request);
+  const pedido = await getPedidoByCodigo(codigo);
   if (!loja || !pedido || pedido.lojaId !== loja.id || !tokenMatches(pedido, new URL(request.url).searchParams.get("t"))) return fail(404, "Pedido não encontrado.");
   if (limited(vitrineLimits.pedido, request, `cobranca:${pedido.id}`)) return fail(429, "Muitas tentativas. Espere alguns minutos.");
   const result = await renewCharge(pedido, requestOrigin(request), loja.nome);

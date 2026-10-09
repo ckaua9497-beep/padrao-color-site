@@ -36,8 +36,8 @@ export function dnsTarget(): string | null {
 
 /** Cadastro público de lojistas (/painel/cadastro) aberto? A Padrão fecha no admin e cria as lojas por lá. */
 export const SIGNUP_OPEN_KEY = "multiloja.cadastroAberto";
-export function signupOpen(): boolean {
-  return getSetting<boolean>(SIGNUP_OPEN_KEY) ?? true;
+export async function signupOpen(): Promise<boolean> {
+  return (await getSetting<boolean>(SIGNUP_OPEN_KEY)) ?? true;
 }
 
 // ---------------------------------------------------------------------------------- pagamento: geral
@@ -71,8 +71,8 @@ function envRates(): PaymentRates {
   };
 }
 
-export function paymentSettings(): PaymentSettings {
-  const saved = getSetting<Partial<PaymentSettings>>(PAYMENT_SETTINGS_KEY);
+export async function paymentSettings(): Promise<PaymentSettings> {
+  const saved = await getSetting<Partial<PaymentSettings>>(PAYMENT_SETTINGS_KEY);
   const metodos = Object.fromEntries(PAYMENT_KINDS.map((k) => [k, saved?.metodos?.[k] ?? true])) as Record<PaymentKind, boolean>;
   const rates = envRates();
   const taxas = Object.fromEntries(
@@ -90,8 +90,8 @@ export function paymentSettings(): PaymentSettings {
 }
 
 /** Taxas de cada meio de pagamento (descontadas da comissão). */
-export function paymentRates(): PaymentRates {
-  return paymentSettings().taxas;
+export async function paymentRates(): Promise<PaymentRates> {
+  return (await paymentSettings()).taxas;
 }
 
 // ---------------------------------------------------------------------------------- Efí
@@ -113,8 +113,8 @@ export type EfiConfig = {
 export type EfiSaved = { sandbox?: boolean; clientId?: string; clientSecret?: string; certBase64?: string; pixKey?: string; webhookSecret?: string };
 export const EFI_SETTINGS_KEY = "pagamento.efi";
 
-export function efiConfig(): EfiConfig | null {
-  const saved = getSetting<EfiSaved>(EFI_SETTINGS_KEY);
+export async function efiConfig(): Promise<EfiConfig | null> {
+  const saved = await getSetting<EfiSaved>(EFI_SETTINGS_KEY);
   const config: EfiConfig = saved?.clientId
     ? {
         sandbox: saved.sandbox !== false,
@@ -138,8 +138,8 @@ export function efiConfig(): EfiConfig | null {
 }
 
 /** Segredo que vai na URL dos webhooks (?hmac=…): sem ele, o aviso é recusado. 24+ caracteres. */
-export function efiWebhookSecret(): string | null {
-  const saved = openSecret(getSetting<EfiSaved>(EFI_SETTINGS_KEY)?.webhookSecret);
+export async function efiWebhookSecret(): Promise<string | null> {
+  const saved = openSecret((await getSetting<EfiSaved>(EFI_SETTINGS_KEY))?.webhookSecret);
   const secret = saved || env("MULTILOJA_EFI_WEBHOOK_SEGREDO");
   return secret.length >= 24 && /^[A-Za-z0-9_-]+$/.test(secret) ? secret : null;
 }
@@ -173,8 +173,8 @@ export type CieloSaved = Partial<Omit<CieloConfig, "merchantKey" | "clientSecret
 export const CIELO_SETTINGS_KEY = "pagamento.cielo";
 
 /** Cielo salva no admin, ou no ambiente (MULTILOJA_CIELO_*). Null sem MerchantId/MerchantKey. */
-export function cieloConfig(): CieloConfig | null {
-  const saved = getSetting<CieloSaved>(CIELO_SETTINGS_KEY);
+export async function cieloConfig(): Promise<CieloConfig | null> {
+  const saved = await getSetting<CieloSaved>(CIELO_SETTINGS_KEY);
   const config: CieloConfig = saved?.merchantId
     ? {
         sandbox: saved.sandbox !== false,

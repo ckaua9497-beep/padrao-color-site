@@ -11,17 +11,17 @@ import { productTemplate } from "@/lib/templates-data";
 import { lojaDoHost, lojaItens, lojaProduct, lojaSummary } from "@/lib/multiloja/tenant";
 
 /** Produto ativo na loja (com o preço dela); undefined = a loja não vende esse produto. */
-function findItem(host: string, slug: string) {
-  const loja = lojaDoHost(host);
+async function findItem(host: string, slug: string) {
+  const loja = await lojaDoHost(host);
   if (!loja) return null;
-  const items = lojaItens(loja.id, loja.margemPadrao);
+  const items = await lojaItens(loja.id, loja.margemPadrao);
   const item = items.find((i) => i.product.slug === slug);
   return item ? { loja, items, item } : null;
 }
 
 export async function generateMetadata(props: PageProps<"/vitrine/[host]/produto/[slug]">): Promise<Metadata> {
   const { host, slug } = await props.params;
-  const found = findItem(host, slug);
+  const found = await findItem(host, slug);
   if (!found) return {};
   const { product } = found.item;
   const text = product.metaDescription || product.summary || product.description;
@@ -35,7 +35,7 @@ export async function generateMetadata(props: PageProps<"/vitrine/[host]/produto
 
 export default async function VitrineProduto(props: PageProps<"/vitrine/[host]/produto/[slug]">) {
   const { host, slug } = await props.params;
-  const found = findItem(host, slug);
+  const found = await findItem(host, slug);
   if (!found) notFound();
   const { loja, items, item } = found;
   const product = lojaProduct(item);
@@ -62,7 +62,7 @@ export default async function VitrineProduto(props: PageProps<"/vitrine/[host]/p
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\u003c") }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
       <div className="container-site pb-16 pt-8">
         <Breadcrumb
           className="mb-6"

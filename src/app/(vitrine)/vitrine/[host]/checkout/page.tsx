@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Finalizar pedido", robots: { index: 
 
 export default async function VitrineFinalizar(props: PageProps<"/vitrine/[host]/checkout">) {
   const { host } = await props.params;
-  const loja = lojaDoHost(host);
+  const loja = await lojaDoHost(host);
   if (!loja) notFound();
   return (
     <div className="bg-page-checkout">

@@ -15,7 +15,7 @@ const LINKS = [
   { href: "/painel/divulgacao", label: "Divulgação" },
   { href: "/painel/produtos", label: "Produtos e margens" },
   { href: "/painel/loja", label: "Dados da loja" },
-  { href: "/painel/aparencia", label: "Aparência" },
+  { href: "/painel/personalizar", label: "Personalizar loja" },
   { href: "/painel/conta", label: "Minha conta" },
 ];
 

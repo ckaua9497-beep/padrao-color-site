@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: "Criar minha loja" };
 
 export default async function PainelCadastro() {
   if (await getPainel()) redirect("/painel");
-  if (!signupOpen()) {
+  if (!(await signupOpen())) {
     return (
       <AuthShell title="Cadastro por convite" subtitle="As lojas da multiloja são abertas pela equipe da Padrão Color.">
         <p className="text-[15px]">

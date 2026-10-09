@@ -1,11 +1,11 @@
 import "server-only";
 
-import type { SQLInputValue } from "node:sqlite";
 import { getDb, transaction } from "./db";
 import { isPalette, isPlan, SOCIAL_KEYS, type LojistaType, type PaletteKey, type Plan, type SocialKey } from "./core";
+import { parseTema, temaInicial, type LojaInfo, type Tema } from "./tema";
 
 /*
- * Acesso aos dados da multiloja (SQL comum, parâmetros sempre ligados — nunca texto montado com entrada do
+ * Acesso aos dados da multiloja no PostgreSQL (parâmetros sempre ligados — nunca texto montado com entrada do
  * usuário). As páginas e ações usam só estas funções.
  */
 
@@ -47,6 +47,11 @@ export type Loja = {
   freteGratisAcima: number | null;
   plano: Plan;
   ativa: boolean;
+  /** Tema publicado da vitrine (sem editor aberto ainda: o clássico com o que a loja já tinha). */
+  tema: Tema;
+  /** Tema em edição no "Personalizar loja"; null = nada além do publicado. */
+  temaRascunho: Tema | null;
+  temaPublicadoEm: string | null;
   criadoEm: string;
   atualizadoEm: string;
 };
@@ -85,6 +90,18 @@ function toLoja(row: Row): Loja {
   const banners = parseJson<unknown[]>(row.banners, []);
   const paleta = str(row.paleta);
   const plano = str(row.plano);
+  const loja = toLojaBase(row, redes, banners, paleta, plano);
+  const info = lojaInfo(loja);
+  const tema = row.tema ? parseTema(row.tema, info) : temaInicial(info);
+  return { ...loja, tema, temaRascunho: row.tema_rascunho ? parseTema(row.tema_rascunho, info, tema) : null, temaPublicadoEm: strOrNull(row.tema_publicado_em) };
+}
+
+/** O que os modelos e as seções prontas usam da loja (nome, frase, sobre, logo, cor e banners antigos). */
+export function lojaInfo(loja: Pick<Loja, "id" | "nome" | "slogan" | "sobre" | "logo" | "paleta" | "banners">): LojaInfo {
+  return { lojaId: loja.id, nome: loja.nome, slogan: loja.slogan, sobre: loja.sobre, logo: loja.logo, paleta: loja.paleta, banners: loja.banners.map((b) => ({ src: b.src, alt: b.alt, href: b.href })) };
+}
+
+function toLojaBase(row: Row, redes: Record<string, unknown>, banners: unknown[], paleta: string, plano: string): Omit<Loja, "tema" | "temaRascunho" | "temaPublicadoEm"> {
   return {
     id: Number(row.id),
     lojistaId: Number(row.lojista_id),
@@ -116,42 +133,42 @@ function toLoja(row: Row): Loja {
 
 // ---------------------------------------------------------------------------------- lojista
 
-export function findLojistaLogin(email: string): (Lojista & { senhaHash: string }) | null {
-  const row = getDb().prepare("SELECT * FROM lojistas WHERE email = ?").get(email.toLowerCase()) as Row | undefined;
+export async function findLojistaLogin(email: string): Promise<(Lojista & { senhaHash: string }) | null> {
+  const row = await (await getDb()).get("SELECT * FROM lojistas WHERE email = ?", [email.toLowerCase()]);
   return row ? { ...toLojista(row), senhaHash: str(row.senha_hash) } : null;
 }
 
-export function getLojista(id: number): Lojista | null {
-  const row = getDb().prepare("SELECT * FROM lojistas WHERE id = ?").get(id) as Row | undefined;
+export async function getLojista(id: number): Promise<Lojista | null> {
+  const row = await (await getDb()).get("SELECT * FROM lojistas WHERE id = ?", [id]);
   return row ? toLojista(row) : null;
 }
 
-export function emailTaken(email: string): boolean {
-  return !!getDb().prepare("SELECT 1 FROM lojistas WHERE email = ?").get(email.toLowerCase());
+export async function emailTaken(email: string): Promise<boolean> {
+  return !!(await (await getDb()).get("SELECT 1 FROM lojistas WHERE email = ?", [email.toLowerCase()]));
 }
 
-export function touchLogin(id: number) {
-  getDb().prepare("UPDATE lojistas SET ultimo_login = datetime('now') WHERE id = ?").run(id);
+export async function touchLogin(id: number) {
+  await (await getDb()).run("UPDATE lojistas SET ultimo_login = agora() WHERE id = ?", [id]);
 }
 
-export function updateLojistaPassword(id: number, senhaHash: string) {
-  getDb().prepare("UPDATE lojistas SET senha_hash = ? WHERE id = ?").run(senhaHash, id);
+export async function updateLojistaPassword(id: number, senhaHash: string) {
+  await (await getDb()).run("UPDATE lojistas SET senha_hash = ? WHERE id = ?", [senhaHash, id]);
 }
 
-export function updateLojista(id: number, data: { nome: string; telefone: string | null }) {
-  getDb().prepare("UPDATE lojistas SET nome = ?, telefone = ? WHERE id = ?").run(data.nome, data.telefone, id);
+export async function updateLojista(id: number, data: { nome: string; telefone: string | null }) {
+  await (await getDb()).run("UPDATE lojistas SET nome = ?, telefone = ? WHERE id = ?", [data.nome, data.telefone, id]);
 }
 
-export function setChavePix(id: number, chave: string | null) {
-  getDb().prepare("UPDATE lojistas SET chave_pix = ? WHERE id = ?").run(chave, id);
+export async function setChavePix(id: number, chave: string | null) {
+  await (await getDb()).run("UPDATE lojistas SET chave_pix = ? WHERE id = ?", [chave, id]);
 }
 
-export function setLojistaStatus(id: number, status: "ativo" | "bloqueado") {
-  getDb().prepare("UPDATE lojistas SET status = ? WHERE id = ?").run(status, id);
+export async function setLojistaStatus(id: number, status: "ativo" | "bloqueado") {
+  await (await getDb()).run("UPDATE lojistas SET status = ? WHERE id = ?", [status, id]);
 }
 
-export function getLoja(id: number): Loja | null {
-  const row = getDb().prepare("SELECT * FROM lojas WHERE id = ?").get(id) as Row | undefined;
+export async function getLoja(id: number): Promise<Loja | null> {
+  const row = await (await getDb()).get("SELECT * FROM lojas WHERE id = ?", [id]);
   return row ? toLoja(row) : null;
 }
 
@@ -165,43 +182,52 @@ export type NewLojista = {
 };
 
 /** Cria o lojista e a loja dele numa transação. */
-export function createLojistaWithLoja(data: NewLojista): { lojistaId: number; lojaId: number } {
-  return transaction((db) => {
-    const lojista = db
-      .prepare("INSERT INTO lojistas (nome, email, senha_hash, tipo, telefone) VALUES (?, ?, ?, ?, ?)")
-      .run(data.nome, data.email.toLowerCase(), data.senhaHash, data.tipo, data.telefone);
-    const lojistaId = Number(lojista.lastInsertRowid);
-    const loja = db
-      .prepare("INSERT INTO lojas (lojista_id, subdominio, nome, margem_padrao, whatsapp, email_contato) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(lojistaId, data.loja.subdominio, data.loja.nome, data.loja.margemPadrao, data.loja.whatsapp, data.email.toLowerCase());
-    return { lojistaId, lojaId: Number(loja.lastInsertRowid) };
+export async function createLojistaWithLoja(data: NewLojista): Promise<{ lojistaId: number; lojaId: number }> {
+  return transaction(async (sql) => {
+    const lojista = await sql.get<{ id: number }>("INSERT INTO lojistas (nome, email, senha_hash, tipo, telefone) VALUES (?, ?, ?, ?, ?) RETURNING id", [
+      data.nome,
+      data.email.toLowerCase(),
+      data.senhaHash,
+      data.tipo,
+      data.telefone,
+    ]);
+    const lojistaId = Number(lojista?.id);
+    const loja = await sql.get<{ id: number }>("INSERT INTO lojas (lojista_id, subdominio, nome, margem_padrao, whatsapp, email_contato) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", [
+      lojistaId,
+      data.loja.subdominio,
+      data.loja.nome,
+      data.loja.margemPadrao,
+      data.loja.whatsapp,
+      data.email.toLowerCase(),
+    ]);
+    return { lojistaId, lojaId: Number(loja?.id) };
   });
 }
 
 // ---------------------------------------------------------------------------------- loja
 
-export function getLojaByLojista(lojistaId: number): Loja | null {
-  const row = getDb().prepare("SELECT * FROM lojas WHERE lojista_id = ? ORDER BY id LIMIT 1").get(lojistaId) as Row | undefined;
+export async function getLojaByLojista(lojistaId: number): Promise<Loja | null> {
+  const row = await (await getDb()).get("SELECT * FROM lojas WHERE lojista_id = ? ORDER BY id LIMIT 1", [lojistaId]);
   return row ? toLoja(row) : null;
 }
 
-export function getLojaBySubdomain(subdominio: string): Loja | null {
-  const row = getDb().prepare("SELECT * FROM lojas WHERE subdominio = ?").get(subdominio) as Row | undefined;
+export async function getLojaBySubdomain(subdominio: string): Promise<Loja | null> {
+  const row = await (await getDb()).get("SELECT * FROM lojas WHERE subdominio = ?", [subdominio]);
   return row ? toLoja(row) : null;
 }
 
 /** Loja do domínio próprio (só depois de verificado o DNS). */
-export function getLojaByDomain(dominio: string): Loja | null {
-  const row = getDb().prepare("SELECT * FROM lojas WHERE dominio = ? AND dominio_verificado = 1").get(dominio) as Row | undefined;
+export async function getLojaByDomain(dominio: string): Promise<Loja | null> {
+  const row = await (await getDb()).get("SELECT * FROM lojas WHERE dominio = ? AND dominio_verificado = 1", [dominio]);
   return row ? toLoja(row) : null;
 }
 
-export function subdomainTaken(subdominio: string, exceptLojaId = 0): boolean {
-  return !!getDb().prepare("SELECT 1 FROM lojas WHERE subdominio = ? AND id <> ?").get(subdominio, exceptLojaId);
+export async function subdomainTaken(subdominio: string, exceptLojaId = 0): Promise<boolean> {
+  return !!(await (await getDb()).get("SELECT 1 FROM lojas WHERE subdominio = ? AND id <> ?", [subdominio, exceptLojaId]));
 }
 
-export function domainTaken(dominio: string, exceptLojaId = 0): boolean {
-  return !!getDb().prepare("SELECT 1 FROM lojas WHERE dominio = ? AND id <> ?").get(dominio, exceptLojaId);
+export async function domainTaken(dominio: string, exceptLojaId = 0): Promise<boolean> {
+  return !!(await (await getDb()).get("SELECT 1 FROM lojas WHERE dominio = ? AND id <> ?", [dominio, exceptLojaId]));
 }
 
 export type LojaPatch = Partial<{
@@ -248,24 +274,42 @@ const COLUMNS: Record<keyof LojaPatch, string> = {
   ativa: "ativa",
 };
 
-export function updateLoja(id: number, patch: LojaPatch) {
+export async function updateLoja(id: number, patch: LojaPatch) {
   const sets: string[] = [];
-  const values: SQLInputValue[] = [];
+  const values: unknown[] = [];
   for (const [key, value] of Object.entries(patch) as [keyof LojaPatch, unknown][]) {
     if (value === undefined) continue;
     sets.push(`${COLUMNS[key]} = ?`);
-    values.push(typeof value === "boolean" ? (value ? 1 : 0) : typeof value === "object" && value !== null ? JSON.stringify(value) : (value as SQLInputValue));
+    values.push(typeof value === "boolean" ? (value ? 1 : 0) : typeof value === "object" && value !== null ? JSON.stringify(value) : value);
   }
   if (!sets.length) return;
-  getDb()
-    .prepare(`UPDATE lojas SET ${sets.join(", ")}, atualizado_em = datetime('now') WHERE id = ?`)
-    .run(...values, id);
+  await (await getDb()).run(`UPDATE lojas SET ${sets.join(", ")}, atualizado_em = agora() WHERE id = ?`, [...values, id]);
+}
+
+// ---------------------------------------------------------------------------------- tema (Personalizar loja)
+
+export async function saveTemaRascunho(lojaId: number, tema: Tema) {
+  await (await getDb()).run("UPDATE lojas SET tema_rascunho = ? WHERE id = ?", [JSON.stringify(tema), lojaId]);
+}
+
+/** Publica o tema: a vitrine passa a usar. A cor e o logo também ficam na loja (painel, favicon, e-mails). */
+export async function publishTema(lojaId: number, tema: Tema) {
+  await (await getDb()).run("UPDATE lojas SET tema = ?, tema_rascunho = NULL, tema_publicado_em = agora(), paleta = ?, logo = ?, atualizado_em = agora() WHERE id = ?", [
+    JSON.stringify(tema),
+    tema.estilo.paleta,
+    tema.marca.logo,
+    lojaId,
+  ]);
+}
+
+export async function discardTemaRascunho(lojaId: number) {
+  await (await getDb()).run("UPDATE lojas SET tema_rascunho = NULL WHERE id = ?", [lojaId]);
 }
 
 // ---------------------------------------------------------------------------------- produtos da loja
 
-export function listLojaProdutos(lojaId: number): LojaProduto[] {
-  const rows = getDb().prepare("SELECT * FROM loja_produtos WHERE loja_id = ? ORDER BY destaque DESC, ativado_em").all(lojaId) as Row[];
+export async function listLojaProdutos(lojaId: number): Promise<LojaProduto[]> {
+  const rows = await (await getDb()).all("SELECT * FROM loja_produtos WHERE loja_id = ? ORDER BY destaque DESC, ativado_em, produto_id", [lojaId]);
   return rows.map((row) => ({
     produtoId: str(row.produto_id),
     margem: row.margem === null || row.margem === undefined ? null : Number(row.margem),
@@ -274,39 +318,28 @@ export function listLojaProdutos(lojaId: number): LojaProduto[] {
   }));
 }
 
-export function countLojaProdutos(lojaId: number): number {
-  return Number((getDb().prepare("SELECT COUNT(*) AS n FROM loja_produtos WHERE loja_id = ?").get(lojaId) as Row).n);
+export async function countLojaProdutos(lojaId: number): Promise<number> {
+  const row = await (await getDb()).get<{ n: number }>("SELECT COUNT(*) AS n FROM loja_produtos WHERE loja_id = ?", [lojaId]);
+  return Number(row?.n ?? 0);
 }
 
 /** Ativa produtos (ignora os já ativos). Devolve quantos entraram. */
-export function activateProdutos(lojaId: number, produtoIds: string[]): number {
-  return transaction((db) => {
-    const insert = db.prepare("INSERT OR IGNORE INTO loja_produtos (loja_id, produto_id) VALUES (?, ?)");
-    let added = 0;
-    for (const id of produtoIds) added += Number(insert.run(lojaId, id).changes);
-    return added;
-  });
+export async function activateProdutos(lojaId: number, produtoIds: string[]): Promise<number> {
+  if (!produtoIds.length) return 0;
+  return (await getDb()).run("INSERT INTO loja_produtos (loja_id, produto_id) SELECT ?::integer, unnest(?::text[]) ON CONFLICT DO NOTHING", [lojaId, produtoIds]);
 }
 
-export function deactivateProdutos(lojaId: number, produtoIds: string[]): number {
-  return transaction((db) => {
-    const remove = db.prepare("DELETE FROM loja_produtos WHERE loja_id = ? AND produto_id = ?");
-    let removed = 0;
-    for (const id of produtoIds) removed += Number(remove.run(lojaId, id).changes);
-    return removed;
-  });
+export async function deactivateProdutos(lojaId: number, produtoIds: string[]): Promise<number> {
+  if (!produtoIds.length) return 0;
+  return (await getDb()).run("DELETE FROM loja_produtos WHERE loja_id = ? AND produto_id = ANY(?::text[])", [lojaId, produtoIds]);
 }
 
 /** Margem própria de produtos ativos; null volta para a margem padrão da loja. */
-export function setProdutosMargem(lojaId: number, produtoIds: string[], margem: number | null): number {
-  return transaction((db) => {
-    const update = db.prepare("UPDATE loja_produtos SET margem = ? WHERE loja_id = ? AND produto_id = ?");
-    let changed = 0;
-    for (const id of produtoIds) changed += Number(update.run(margem, lojaId, id).changes);
-    return changed;
-  });
+export async function setProdutosMargem(lojaId: number, produtoIds: string[], margem: number | null): Promise<number> {
+  if (!produtoIds.length) return 0;
+  return (await getDb()).run("UPDATE loja_produtos SET margem = ? WHERE loja_id = ? AND produto_id = ANY(?::text[])", [margem, lojaId, produtoIds]);
 }
 
-export function setProdutoDestaque(lojaId: number, produtoId: string, destaque: boolean) {
-  getDb().prepare("UPDATE loja_produtos SET destaque = ? WHERE loja_id = ? AND produto_id = ?").run(destaque ? 1 : 0, lojaId, produtoId);
+export async function setProdutoDestaque(lojaId: number, produtoId: string, destaque: boolean) {
+  await (await getDb()).run("UPDATE loja_produtos SET destaque = ? WHERE loja_id = ? AND produto_id = ?", [destaque ? 1 : 0, lojaId, produtoId]);
 }

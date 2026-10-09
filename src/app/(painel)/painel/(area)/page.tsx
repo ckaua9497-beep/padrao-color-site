@@ -18,14 +18,14 @@ export default async function PainelInicio(props: PageProps<"/painel">) {
   const { lojista, loja } = await requirePainel();
   const search = await props.searchParams;
   const url = await lojaUrl(loja);
-  const items = lojaItens(loja.id, loja.margemPadrao);
+  const items = await lojaItens(loja.id, loja.margemPadrao);
   const plan = PLAN_INFO[loja.plano];
   const room = planRoom(loja.plano, items.length);
 
   const steps = [
     { done: items.length > 0, title: "Ative seus produtos", text: "Escolha o que vender e defina a margem.", href: "/painel/produtos" },
-    { done: Boolean(loja.logo), title: "Envie sua logo", text: "Ela aparece no topo e no ícone da loja.", href: "/painel/aparencia" },
-    { done: loja.paleta !== "coral" || loja.banners.length > 0, title: "Deixe com a sua cara", text: "Cor da marca e banners da página inicial.", href: "/painel/aparencia" },
+    { done: Boolean(loja.logo), title: "Envie sua logo", text: "Ela aparece no topo e no ícone da loja (Personalizar loja → Estilo).", href: "/painel/personalizar" },
+    { done: Boolean(loja.temaPublicadoEm), title: "Deixe com a sua cara", text: "Escolha um modelo pronto e troque cores, textos e seções da página inicial.", href: "/painel/personalizar" },
     { done: Boolean(loja.whatsapp), title: "Informe o WhatsApp", text: "Os pedidos chegam por ele.", href: "/painel/loja" },
     { done: loja.sobre.length > 40, title: "Conte sua história", text: "Um texto curto na página Sobre.", href: "/painel/loja" },
   ];
@@ -34,9 +34,9 @@ export default async function PainelInicio(props: PageProps<"/painel">) {
   const example = items[0];
   const exampleBase = example ? example.product.price * baseFactor() : 0;
   const shareText = encodeURIComponent(`Conheça a minha loja de produtos personalizados: ${url}`);
-  const mes = salesSummary(loja.id, sqlDaysAgo(30));
-  const saldo = balanceOf(listComissoes(loja.id), listSaques(loja.id), releaseDays());
-  const recentes = listPedidos({ lojaId: loja.id, limite: 5 });
+  const mes = await salesSummary(loja.id, sqlDaysAgo(30));
+  const saldo = balanceOf(await listComissoes(loja.id), await listSaques(loja.id), releaseDays());
+  const recentes = await listPedidos({ lojaId: loja.id, limite: 5 });
 
   return (
     <div className="space-y-6">

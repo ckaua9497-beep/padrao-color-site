@@ -119,7 +119,7 @@ export async function POST(request: Request) {
       itens: lines.map((line) => ({ produto: getProduct(line.input.slug)?.id ?? String(line.groupId), quantidade: line.units, valor: line.total })),
     });
   if (!ordersEnabled()) {
-    trackOrder(`SIM-${Date.now().toString(36)}`);
+    await trackOrder(`SIM-${Date.now().toString(36)}`);
     return json({ mode: "simulation", payload, quote });
   }
 
@@ -135,7 +135,7 @@ export async function POST(request: Request) {
     const result = await gerarPedido(payload, session.token);
     const order = extractOrderNumber(result);
     rememberOrder(key, { order });
-    trackOrder(order ? `PC-${order}` : `PC-${Date.now().toString(36)}`);
+    await trackOrder(order ? `PC-${order}` : `PC-${Date.now().toString(36)}`);
     return json({ mode: "order", order, quote });
   } catch (error) {
     // Só libera a repetição com certeza de que o pedido não foi criado: nada saiu (sem conexão, disjuntor,

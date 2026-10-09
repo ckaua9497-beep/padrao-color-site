@@ -10,15 +10,15 @@ export const metadata: Metadata = { title: "Pedido" };
 
 export default async function AdminPedido(props: PageProps<"/admin/pedidos/[codigo]">) {
   const { codigo } = await props.params;
-  const pedido = getPedidoByCodigo(codigo);
+  const pedido = await getPedidoByCodigo(codigo);
   if (!pedido) notFound();
-  const loja = getLoja(pedido.lojaId);
+  const loja = await getLoja(pedido.lojaId);
   return (
     <div className="space-y-4">
-      <Link href="/admin/pedidos" className="text-[15px] font-semibold underline-offset-4 hover:underline">
-        ← Pedidos
+      <Link href="/admin/pedidos" className="inline-flex items-center gap-1 text-[13px] font-semibold text-muted underline-offset-4 hover:text-ink hover:underline">
+        <span aria-hidden>←</span> Pedidos
       </Link>
-      <OrderDetail pedido={pedido} itens={listItens(pedido.id)} eventos={listEventos(pedido.id)} lojaNome={loja?.nome} actions={<AdminOrderActions codigo={pedido.codigo} status={pedido.status} />} />
+      <OrderDetail pedido={pedido} itens={await listItens(pedido.id)} eventos={await listEventos(pedido.id)} lojaNome={loja?.nome} admin actions={<AdminOrderActions codigo={pedido.codigo} status={pedido.status} />} />
     </div>
   );
 }

@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Produtos e margens" };
 export default async function PainelProdutos() {
   const { loja } = await requirePainel();
   const factor = baseFactor();
-  const active = new Map(listLojaProdutos(loja.id).map((row) => [row.produtoId, row]));
+  const active = new Map((await listLojaProdutos(loja.id)).map((row) => [row.produtoId, row]));
 
   const rows: ManagerRow[] = getProducts()
     .filter((p) => p.price > 0)

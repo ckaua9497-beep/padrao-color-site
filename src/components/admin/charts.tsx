@@ -1,22 +1,9 @@
-import type { ReactNode } from "react";
-import { cx } from "@/components/ui/cx";
-
 /*
  * Gráficos do painel de análise (sem biblioteca). Regras da skill de dataviz: uma medida por gráfico (nunca dois
  * eixos), uma cor (série única não precisa de legenda: o título diz o que é), barras finas com ponta arredondada
  * presas à linha de base, 2px de vão entre barras, eixo discreto, valor no topo só do maior, dica ao passar o mouse
  * ou focar (o valor também está na tabela "Ver dados"). Texto sempre na cor do texto, nunca na cor da barra.
  */
-
-export function StatTile({ label, value, hint, hero = false }: { label: string; value: string; hint?: ReactNode; hero?: boolean }) {
-  return (
-    <div className="rounded-panel bg-white p-4 shadow-card">
-      <p className="text-caption font-semibold text-muted">{label}</p>
-      <p className={cx("mt-1 font-black tabular-nums", hero ? "text-4xl md:text-5xl" : "text-2xl")}>{value}</p>
-      {hint && <p className="mt-1 text-caption leading-tight text-muted">{hint}</p>}
-    </div>
-  );
-}
 
 export type BarPoint = { label: string; value: number; display: string; tick?: string };
 
@@ -26,7 +13,7 @@ export function ColumnChart({ title, points, height = 160, caption }: { title: s
   const top = max > 0 ? niceMax(max) : 1;
   const peak = points.reduce((best, p, i) => (p.value > (points[best]?.value ?? -1) ? i : best), 0);
   return (
-    <figure className="rounded-panel bg-white p-5 shadow-card">
+    <figure className="rounded-card bg-white p-5 shadow-sheet">
       <figcaption className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-[15px] font-bold">{title}</span>
         {caption && <span className="text-caption text-muted">{caption}</span>}
@@ -95,21 +82,21 @@ export function ColumnChart({ title, points, height = 160, caption }: { title: s
 
 export type FunnelStep = { label: string; value: number; rate?: string };
 
-/** Funil horizontal: cada etapa com o número e a taxa sobre a anterior. */
+/** Funil horizontal: cada etapa com o número e a taxa sobre a anterior (barra fina sobre um trilho = 100%). */
 export function FunnelChart({ steps }: { steps: FunnelStep[] }) {
   const max = Math.max(1, ...steps.map((s) => s.value));
   return (
-    <ol className="space-y-3">
+    <ol className="space-y-3.5">
       {steps.map((s) => (
-        <li key={s.label} className="grid grid-cols-[150px_1fr] items-center gap-3 md:grid-cols-[200px_1fr]">
+        <li key={s.label} className="grid grid-cols-[140px_1fr_56px] items-center gap-3 md:grid-cols-[200px_1fr_72px]">
           <span className="text-[14px] font-semibold leading-tight">
             {s.label}
-            {s.rate && <span className="block text-caption font-normal text-muted">{s.rate}</span>}
+            {s.rate && <span className="block text-[12px] font-normal text-muted">{s.rate} da etapa anterior</span>}
           </span>
-          <span className="flex items-center gap-2">
-            <span className="h-6 rounded-r-[4px] bg-ink" style={{ width: `${Math.max(s.value > 0 ? 1 : 0, (s.value / max) * 100)}%` }} aria-hidden />
-            <span className="text-[14px] font-bold tabular-nums">{s.value.toLocaleString("pt-BR")}</span>
+          <span className="block h-2.5 rounded-full bg-mist" aria-hidden>
+            <span className="block h-2.5 rounded-full bg-ink" style={{ width: `${Math.max(s.value > 0 ? 1.5 : 0, (s.value / max) * 100)}%` }} />
           </span>
+          <span className="text-right text-[15px] font-bold tabular-nums">{s.value.toLocaleString("pt-BR")}</span>
         </li>
       ))}
     </ol>

@@ -83,9 +83,9 @@ export type PainelContext = { lojista: Lojista; loja: Loja };
 export async function getPainel(): Promise<PainelContext | null> {
   const session = await readSession();
   if (!session) return null;
-  const lojista = getLojista(session.lojistaId);
+  const lojista = await getLojista(session.lojistaId);
   if (!lojista || lojista.status !== "ativo") return null;
-  const loja = getLojaByLojista(lojista.id);
+  const loja = await getLojaByLojista(lojista.id);
   return loja ? { lojista, loja } : null;
 }
 
@@ -125,7 +125,7 @@ export async function getAdminSession(): Promise<Admin | null> {
   const raw = (await cookies()).get(ADMIN_COOKIE)?.value;
   if (!raw) return null;
   const s = unseal<AdminSession>(raw, adminSessionKey());
-  return s && s.v === 1 && Number.isInteger(s.adminId) && s.exp > nowSec() ? getAdmin(s.adminId) : null;
+  return s && s.v === 1 && Number.isInteger(s.adminId) && s.exp > nowSec() ? await getAdmin(s.adminId) : null;
 }
 
 export async function requireAdmin(): Promise<Admin> {

@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Sobre a loja" };
 
 export default async function VitrineSobre(props: PageProps<"/vitrine/[host]/sobre">) {
   const { host } = await props.params;
-  const loja = lojaDoHost(host);
+  const loja = await lojaDoHost(host);
   if (!loja) notFound();
   const socials = Object.entries(loja.redes) as [SocialKey, string][];
 

@@ -75,6 +75,8 @@
   --shadow-header: 0 3px 45px rgb(0 0 0 / 0.15);
   --shadow-float: 0 5px 12px rgb(0 0 0 / 0.2);
   --shadow-panel: 0 20px 60px rgb(0 0 0 / 0.08);
+  /* Folha do admin: anel de 1px + duas profundidades suaves (uma estratégia só de profundidade no admin). */
+  --shadow-sheet: 0 0 0 1px rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 2px 4px rgb(0 0 0 / 0.03);
   --drop-shadow-pop: 0 30px 40px rgb(0 0 0 / 0.16);
 
   /* Escala tipográfica (tamanho / altura de linha / peso) */
@@ -237,7 +239,10 @@
 }
 
 @layer components {
-  /* Estados escondidos só valem com JS (classe .js no <html>): sem JS o conteúdo aparece. */
+  /*
+   * Estados escondidos só valem com JS (@media (scripting: enabled)): sem JS o conteúdo aparece. Navegador antigo
+   * que não conhece a consulta também mostra tudo, só sem a animação de entrada.
+   */
   .reveal {
     transition:
       opacity 1.15s var(--ease-reveal),
@@ -252,14 +257,16 @@
     transition-delay: var(--reveal-delay, 0ms);
   }
 
-  .js .reveal:not([data-shown="true"]) {
-    opacity: 0;
-    transform: translateY(40px);
-  }
+  @media (scripting: enabled) {
+    .reveal:not([data-shown="true"]) {
+      opacity: 0;
+      transform: translateY(40px);
+    }
 
-  .js .reveal-side:not([data-shown="true"]) {
-    opacity: 0;
-    transform: translateX(80px);
+    .reveal-side:not([data-shown="true"]) {
+      opacity: 0;
+      transform: translateX(80px);
+    }
   }
 
   .marker {
@@ -273,8 +280,10 @@
     transition: background-size 0.9s var(--ease-highlight);
   }
 
-  .js .marker:not([data-shown="true"]) {
-    background-size: 0% 80%;
+  @media (scripting: enabled) {
+    .marker:not([data-shown="true"]) {
+      background-size: 0% 80%;
+    }
   }
 
   /* Texto claro sobre o marca-texto: fica escuro até a faixa aparecer, para não sumir no fundo. */
@@ -284,8 +293,10 @@
       color 0.4s ease 0.25s;
   }
 
-  .js .marker-inverse:not([data-shown="true"]) {
-    color: var(--color-ink);
+  @media (scripting: enabled) {
+    .marker-inverse:not([data-shown="true"]) {
+      color: var(--color-ink);
+    }
   }
 
   .word-reveal > span {
@@ -301,8 +312,10 @@
     transition-delay: calc(var(--i) * 45ms);
   }
 
-  .js .word-reveal:not([data-shown="true"]) > span > span {
-    transform: translateY(110%);
+  @media (scripting: enabled) {
+    .word-reveal:not([data-shown="true"]) > span > span {
+      transform: translateY(110%);
+    }
   }
 
   .text-outline {
@@ -334,7 +347,7 @@
   }
 
   /* Sem animação a faixa já aparece cheia: o texto claro também. */
-  .js .marker-inverse:not([data-shown="true"]) {
+  .marker-inverse:not([data-shown="true"]) {
     color: inherit;
   }
 
@@ -343,4 +356,34 @@
   [class*="animate-fade-up"] {
     animation: none !important;
   }
+}
+
+/*
+ * Vitrine do lojista (tema do "Personalizar loja"): o invólucro .loja-tema recebe o fundo e os data-* do tema.
+ * Fora de camadas de propósito: vencem os utilitários do Tailwind (cartão, botão) só dentro da loja.
+ */
+.loja-tema {
+  background: var(--loja-fundo, var(--color-paper));
+}
+
+.loja-tema :is(h1, h2, h3),
+.font-titulo {
+  font-family: var(--font-titulo, var(--font-sans));
+}
+
+.loja-tema[data-fonte="oswald"] :is(h1, h2) {
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.loja-tema[data-cards="borda"] .shadow-card {
+  box-shadow: 0 0 0 1px var(--color-line);
+}
+
+.loja-tema[data-cards="plano"] .shadow-card {
+  box-shadow: none;
+}
+
+.loja-tema[data-botoes="reto"] .rounded-full {
+  border-radius: var(--radius-control);
 }

@@ -31,10 +31,10 @@ export function baseFactor(): number {
 }
 
 /** Loja ativa do host (param da rota já decodificado ou não); null = não existe ou está desativada. */
-export const lojaDoHost = cache((hostParam: string): Loja | null => {
+export const lojaDoHost = cache(async (hostParam: string): Promise<Loja | null> => {
   const host = decodeURIComponent(hostParam);
   const parsed = parseTenantHost(host, rootDomain(), mainHosts());
-  const loja = parsed.kind === "subdomain" ? getLojaBySubdomain(parsed.subdomain) : parsed.kind === "custom" ? getLojaByDomain(parsed.domain) : null;
+  const loja = parsed.kind === "subdomain" ? await getLojaBySubdomain(parsed.subdomain) : parsed.kind === "custom" ? await getLojaByDomain(parsed.domain) : null;
   return loja?.ativa ? loja : null;
 });
 
@@ -50,14 +50,14 @@ export async function lojaUrl(loja: Pick<Loja, "subdominio" | "dominio">): Promi
   return `https://${loja.subdominio}.${root}`;
 }
 
-export type LojaItem = { product: Product; margin: number; featured: boolean };
+export type LojaItem = { product: Product; margin: number; featured: boolean; ativadoEm: string };
 
 /** Produtos ativos da loja que existem no catálogo, com a margem que vale para cada um. */
-export const lojaItens = cache((lojaId: number, margemPadrao: number): LojaItem[] => {
+export const lojaItens = cache(async (lojaId: number, margemPadrao: number): Promise<LojaItem[]> => {
   const byId = new Map(getProducts().map((p) => [p.id, p]));
-  return listLojaProdutos(lojaId).flatMap((row) => {
+  return (await listLojaProdutos(lojaId)).flatMap((row) => {
     const product = byId.get(row.produtoId);
-    return product ? [{ product, margin: row.margem ?? margemPadrao, featured: row.destaque }] : [];
+    return product ? [{ product, margin: row.margem ?? margemPadrao, featured: row.destaque, ativadoEm: row.ativadoEm }] : [];
   });
 });
 

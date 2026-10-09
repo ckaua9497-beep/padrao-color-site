@@ -19,7 +19,7 @@ export default function AdminOrderActions({ codigo, status }: { codigo: string; 
     });
 
   return (
-    <div className="w-full max-w-md space-y-3 rounded-panel bg-white p-4 shadow-card">
+    <div className="w-full max-w-md space-y-3 rounded-card bg-white p-4 shadow-sheet">
       {status === "pago" && (
         <Button type="button" size="sm" block loading={pending} onClick={() => run(() => enviarProducao(codigo))}>
           Enviar para produção na Padrão

@@ -1,140 +1,240 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import StatusBadge from "@/components/painel/StatusBadge";
+import { InlineBar, compact } from "@/components/admin/charts";
+import { Dot, Empty, KpiStrip, PageHeader, Sheet } from "@/components/admin/ui";
+import { Button } from "@/components/ui/Button";
+import { cx } from "@/components/ui/cx";
 import { formatBRL } from "@/lib/format";
+import { channels, kpis, products } from "@/lib/multiloja/analytics";
+import { padraoProduction, signupOpen } from "@/lib/multiloja/config";
 import { dayKeyDaysAgo, formatDateTime, plural, sqlDaysAgo } from "@/lib/multiloja/core";
-import { activeGateway } from "@/lib/multiloja/payments";
-import { channels, kpis } from "@/lib/multiloja/analytics";
 import { funnelRates } from "@/lib/multiloja/eventos";
-import { StatTile, InlineBar, compact } from "@/components/admin/charts";
-import { padraoProduction } from "@/lib/multiloja/config";
+import { activeGateway } from "@/lib/multiloja/payments";
 import { listLojasAdmin, listPedidos, listSaques, salesSummary } from "@/lib/multiloja/repo-vendas";
 
 export const metadata: Metadata = { title: "Visão geral" };
 
-export default async function AdminInicio() {
-  const mes = salesSummary(null, sqlDaysAgo(30));
-  const paraProduzir = listPedidos({ status: "pago", limite: 50 });
-  const saques = listSaques(null).filter((s) => s.status === "solicitado");
-  const lojas = listLojasAdmin();
-  const gateway = activeGateway();
-  const rede = kpis("todas", dayKeyDaysAgo(29));
-  const taxas = funnelRates(rede);
-  const canais = channels(dayKeyDaysAgo(29)).slice(0, 6);
-  const maxCanal = Math.max(0, ...canais.map((c) => c.valor));
-  const production = padraoProduction();
+const pct = (n: number) => `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
 
-  const cards = [
-    { label: "Lojas", value: String(lojas.length), hint: `${lojas.filter((l) => l.ativa).length} no ar` },
-    { label: "Vendas pagas (30 dias)", value: String(mes.pagos), hint: `${plural(mes.pedidos, "pedido", "pedidos")} no total` },
-    { label: "Faturamento (30 dias)", value: formatBRL(mes.faturamento) },
-    { label: "Comissões (30 dias)", value: formatBRL(mes.comissao) },
-  ];
+/** Fila de trabalho: o número grande é o que falta fazer; zero aparece apagado ("em dia"). */
+function QueueCell({ href, label, count, hint }: { href: string; label: string; count: number; hint: string }) {
+  return (
+    <Link href={href} className="group block min-w-0 bg-white px-3 py-4 transition-colors hover:bg-page-checkout sm:px-5">
+      <span className="block text-[12px] font-semibold leading-snug text-muted">{label}</span>
+      <span className={cx("mt-1 block text-[28px] font-black leading-none tracking-[-0.02em] tabular-nums sm:text-[36px]", count === 0 && "text-line-strong")}>{count}</span>
+      <span className="mt-1.5 block truncate text-[12px] text-muted group-hover:text-ink">{count === 0 ? "em dia" : hint} →</span>
+    </Link>
+  );
+}
+
+export default async function AdminInicio() {
+  const desde = dayKeyDaysAgo(29);
+  const mes = await salesSummary(null, sqlDaysAgo(30));
+  const paraProduzir = await listPedidos({ status: "pago", limite: 50 });
+  const saques = (await listSaques(null)).filter((s) => s.status === "solicitado");
+  const lojas = await listLojasAdmin();
+  const dominios = lojas.filter((l) => l.dominio && !l.dominioVerificado);
+  const gateway = await activeGateway();
+  const production = padraoProduction();
+  const rede = await kpis("todas", desde);
+  const taxas = funnelRates(rede);
+  const canais = (await channels(desde)).slice(0, 6);
+  const maxCanal = Math.max(0, ...canais.map((c) => c.valor));
+  const top = (await products("todas", desde, 5)).filter((p) => p.receita > 0 || p.carrinhos > 0);
+  const maxTop = Math.max(0, ...top.map((p) => p.receita));
+  const productionOn = production.enabled && Boolean(production.customerId);
+  const signup = await signupOpen();
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-title">Visão geral</h1>
+    <div className="space-y-6">
+      <PageHeader
+        group="Operação"
+        title="Visão geral"
+        description="O que está esperando a equipe e como a rede está indo nos últimos 30 dias (site da Padrão + todas as multilojas)."
+        actions={
+          <Button href="/admin/analises" variant="outline" size="sm">
+            Abrir análises
+          </Button>
+        }
+      />
 
-      <section aria-labelledby="rede" className="space-y-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="rede" className="text-xl font-bold">
-            Toda a rede nos últimos 30 dias
-          </h2>
-          <Link href="/admin/analises" className="font-bold underline-offset-4 hover:underline">
-            Abrir análises completas
-          </Link>
-        </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Visitantes (site + lojas)" value={compact(rede.visitantes)} hint={`${compact(rede.sessoes)} sessões`} />
-          <StatTile label="Pedidos" value={compact(rede.pedidos)} hint={formatBRL(rede.valorPedidos)} />
-          <StatTile label="Conversão" value={`${taxas.conversaoPedido.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`} hint="sessões que viraram pedido" />
-          <StatTile label="Abandono de carrinho" value={`${taxas.abandonoCarrinho.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`} />
-        </div>
-        {canais.length > 0 && (
-          <ul className="divide-y divide-line rounded-panel bg-white px-5 shadow-card">
-            {canais.map((c) => (
-              <li key={c.lojaId} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 py-3 text-[14px] md:grid-cols-[220px_1fr_auto]">
-                <span className="font-semibold">{c.lojaId === 0 ? c.nome : <Link href={`/admin/lojas/${c.lojaId}`} className="underline-offset-4 hover:underline">{c.nome}</Link>}</span>
-                <span className="order-3 col-span-2 md:order-none md:col-span-1">
-                  <InlineBar value={c.valor} max={maxCanal} />
-                </span>
-                <span className="text-right tabular-nums">
-                  <strong>{formatBRL(c.valor)}</strong> <span className="text-muted">· {plural(c.pedidos, "pedido", "pedidos")} · {plural(c.visitantes, "visitante", "visitantes")}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {cards.map((c) => (
-          <div key={c.label} className="rounded-panel bg-white p-4 shadow-card">
-            <p className="text-caption font-semibold text-muted">{c.label}</p>
-            <p className="mt-1 text-2xl font-black tabular-nums">{c.value}</p>
-            {c.hint && <p className="text-caption text-muted">{c.hint}</p>}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <Sheet flush title="Para fazer agora" description="Pedidos pagos esperando a produção, saques e domínios." id="fila">
+          <div className="grid grid-cols-3 gap-px border-b border-line bg-line">
+            <QueueCell href="/admin/pedidos?status=pago" label="Enviar para produção" count={paraProduzir.length} hint="ver pedidos pagos" />
+            <QueueCell href="/admin/saques" label="Saques para pagar" count={saques.length} hint={formatBRL(saques.reduce((s, x) => s + x.valor, 0))} />
+            <QueueCell href="/admin/lojas" label="Domínios para liberar" count={dominios.length} hint={dominios.map((d) => d.dominio).join(", ")} />
           </div>
-        ))}
+          {paraProduzir.length === 0 ? (
+            <Empty>Nenhum pedido pago esperando produção.</Empty>
+          ) : (
+            <ul className="divide-y divide-line">
+              {paraProduzir.slice(0, 6).map((p) => (
+                <li key={p.id}>
+                  <Link href={`/admin/pedidos/${p.codigo}`} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-0.5 px-5 py-3 transition-colors hover:bg-page-checkout sm:grid-cols-[120px_1fr_auto]">
+                    <span className="text-[14px] font-bold">{p.codigo}</span>
+                    <span className="order-3 col-span-2 min-w-0 truncate text-[13px] text-muted sm:order-none sm:col-span-1">
+                      {p.lojaNome} · {p.cliente.nome} · pago {p.pagoEm ? formatDateTime(p.pagoEm) : "—"}
+                    </span>
+                    <span className="text-right text-[14px] font-bold tabular-nums">{formatBRL(p.total)}</span>
+                  </Link>
+                </li>
+              ))}
+              {paraProduzir.length > 6 && (
+                <li className="px-5 py-3 text-[13px]">
+                  <Link href="/admin/pedidos?status=pago" className="font-semibold underline-offset-4 hover:underline">
+                    Ver os {paraProduzir.length} pedidos pagos
+                  </Link>
+                </li>
+              )}
+            </ul>
+          )}
+        </Sheet>
+
+        <Sheet title="Situação" id="situacao">
+          <ul className="space-y-3.5 text-[14px]">
+            <li className="flex items-start gap-2.5">
+              <span className="mt-1.5">
+                <Dot tone={gateway && gateway.name !== "simulado" ? "ok" : "warn"} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12px] font-semibold text-muted">Pagamento online</span>
+                <strong className="font-semibold">{gateway ? (gateway.name === "simulado" ? "Simulação (nada é cobrado)" : gateway.label) : "Desligado (pedidos pelo WhatsApp)"}</strong>
+              </span>
+              <Link href="/admin/pagamentos" className="text-[13px] font-semibold underline underline-offset-2">
+                trocar
+              </Link>
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="mt-1.5">
+                <Dot tone={productionOn ? "ok" : "warn"} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12px] font-semibold text-muted">Envio para a produção (API Padrão)</span>
+                <strong className="font-semibold">{productionOn ? `Ligado · cliente ${production.customerId}` : "Simulado"}</strong>
+                {!productionOn && <span className="block text-[12px] text-muted">Os dados do pedido aparecem, nada vai para a Padrão.</span>}
+              </span>
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="mt-1.5">
+                <Dot tone={lojas.some((l) => l.ativa) ? "ok" : "off"} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12px] font-semibold text-muted">Lojas</span>
+                <strong className="font-semibold">
+                  {lojas.filter((l) => l.ativa).length} no ar de {lojas.length}
+                </strong>
+              </span>
+              <Link href="/admin/lojas" className="text-[13px] font-semibold underline underline-offset-2">
+                ver
+              </Link>
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="mt-1.5">
+                <Dot tone={signup ? "ok" : "off"} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12px] font-semibold text-muted">Cadastro público de lojistas</span>
+                <strong className="font-semibold">{signup ? "Aberto" : "Fechado (só por convite)"}</strong>
+              </span>
+              <Link href="/admin/lojas" className="text-[13px] font-semibold underline underline-offset-2">
+                mudar
+              </Link>
+            </li>
+          </ul>
+        </Sheet>
       </div>
 
-      <section className="rounded-panel bg-white p-5 shadow-card" aria-labelledby="config">
-        <h2 id="config" className="text-lg font-bold">
-          Configuração
-        </h2>
-        <ul className="mt-2 space-y-1 text-[15px]">
-          <li>
-            Pagamento online:{" "}
-            <strong>{gateway ? (gateway.name === "simulado" ? "simulação (teste, nada é cobrado)" : gateway.label) : "desligado (pedidos pelo WhatsApp)"}</strong>{" "}
-            <Link href="/admin/pagamentos" className="underline underline-offset-2">
-              trocar
+      <KpiStrip
+        items={[
+          { label: "Faturamento das lojas (30 dias)", value: formatBRL(mes.faturamento), hint: `${plural(mes.pagos, "venda paga", "vendas pagas")} de ${plural(mes.pedidos, "pedido", "pedidos")}`, hero: true },
+          { label: "Comissões dos lojistas", value: formatBRL(mes.comissao) },
+          { label: "Visitantes (site + lojas)", value: compact(rede.visitantes), hint: plural(rede.sessoes, "sessão", "sessões") },
+          { label: "Pedidos (site + lojas)", value: compact(rede.pedidos), hint: formatBRL(rede.valorPedidos) },
+          { label: "Conversão", value: pct(taxas.conversaoPedido), hint: `abandono de carrinho ${pct(taxas.abandonoCarrinho)}` },
+        ]}
+      />
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Sheet
+          flush
+          title="Site da Padrão × multilojas"
+          description="Valor dos pedidos por canal."
+          id="canais"
+          actions={
+            <Link href="/admin/analises#canais" className="font-semibold underline-offset-4 hover:underline">
+              Detalhes
             </Link>
-          </li>
-          <li>
-            Envio para produção na API Padrão: <strong>{production.enabled && production.customerId ? `ligado (cliente ${production.customerId})` : "simulação (PADRAO_ORDERS_ENABLED / PADRAO_MULTILOJA_CLIENTE_ID)"}</strong>
-          </li>
-        </ul>
-      </section>
+          }
+        >
+          {canais.length === 0 ? (
+            <Empty>Sem visitas nem pedidos no período.</Empty>
+          ) : (
+            <ul className="divide-y divide-line">
+              {canais.map((c) => (
+                <li key={c.lojaId} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1.5 px-5 py-3 text-[14px]">
+                  <span className="min-w-0 truncate font-semibold">
+                    {c.lojaId === 0 ? (
+                      c.nome
+                    ) : (
+                      <Link href={`/admin/lojas/${c.lojaId}`} className="underline-offset-4 hover:underline">
+                        {c.nome}
+                      </Link>
+                    )}
+                  </span>
+                  <span className="text-right tabular-nums">
+                    <strong>{formatBRL(c.valor)}</strong>
+                  </span>
+                  <span className="col-span-2 flex items-center gap-3">
+                    <span className="flex-1">
+                      <InlineBar value={c.valor} max={maxCanal} />
+                    </span>
+                    <span className="whitespace-nowrap text-[12px] text-muted">
+                      {plural(c.pedidos, "pedido", "pedidos")} · {plural(c.visitantes, "visitante", "visitantes")}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Sheet>
 
-      <section className="space-y-3" aria-labelledby="produzir">
-        <div className="flex items-baseline justify-between">
-          <h2 id="produzir" className="text-xl font-bold">
-            Pagos, aguardando produção ({paraProduzir.length})
-          </h2>
-          <Link href="/admin/pedidos?status=pago" className="font-bold underline-offset-4 hover:underline">
-            Ver todos
-          </Link>
-        </div>
-        {paraProduzir.length === 0 ? (
-          <p className="rounded-panel bg-white p-6 text-muted shadow-card">Nenhum pedido esperando produção.</p>
-        ) : (
-          <ul className="divide-y divide-line rounded-panel bg-white px-5 shadow-card">
-            {paraProduzir.slice(0, 10).map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center gap-3 py-3 text-[15px]">
-                <Link href={`/admin/pedidos/${p.codigo}`} className="font-bold underline-offset-4 hover:underline">
-                  {p.codigo}
-                </Link>
-                <span className="min-w-0 flex-1 truncate text-muted">
-                  {p.lojaNome} · {p.cliente.nome} · pago em {p.pagoEm ? formatDateTime(p.pagoEm) : "—"}
-                </span>
-                <span className="font-bold tabular-nums">{formatBRL(p.total)}</span>
-                <StatusBadge status={p.status} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="space-y-3" aria-labelledby="saques-pendentes">
-        <div className="flex items-baseline justify-between">
-          <h2 id="saques-pendentes" className="text-xl font-bold">
-            Saques para pagar ({saques.length})
-          </h2>
-          <Link href="/admin/saques" className="font-bold underline-offset-4 hover:underline">
-            Abrir saques
-          </Link>
-        </div>
-        {saques.length === 0 && <p className="rounded-panel bg-white p-6 text-muted shadow-card">Nenhum saque pendente.</p>}
-      </section>
+        <Sheet
+          flush
+          title="Produtos vencedores"
+          description="Maior receita na rede (site + lojas)."
+          id="vencedores"
+          actions={
+            <Link href="/admin/analises#produtos" className="font-semibold underline-offset-4 hover:underline">
+              Ranking completo
+            </Link>
+          }
+        >
+          {top.length === 0 ? (
+            <Empty>Sem vendas no período.</Empty>
+          ) : (
+            <ol className="divide-y divide-line">
+              {top.map((p, i) => (
+                <li key={p.produtoId} className="grid grid-cols-[24px_1fr_auto] items-center gap-x-3 gap-y-1.5 px-5 py-3 text-[14px]">
+                  <span className="text-[13px] font-bold tabular-nums text-muted">{i + 1}</span>
+                  <span className="min-w-0 truncate font-semibold">{p.nome}</span>
+                  <span className="text-right font-bold tabular-nums">{formatBRL(p.receita)}</span>
+                  <span />
+                  <span className="col-span-2 flex items-center gap-3">
+                    <span className="flex-1">
+                      <InlineBar value={p.receita} max={maxTop} />
+                    </span>
+                    <span className="whitespace-nowrap text-[12px] text-muted">
+                      {plural(p.pedidos, "pedido", "pedidos")}
+                      {p.lojas > 0 && ` · ${plural(p.lojas, "loja", "lojas")}`}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Sheet>
+      </div>
     </div>
   );
 }

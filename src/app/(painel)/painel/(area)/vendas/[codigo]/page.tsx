@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Pedido" };
 export default async function PainelPedido(props: PageProps<"/painel/vendas/[codigo]">) {
   const { loja } = await requirePainel();
   const { codigo } = await props.params;
-  const pedido = getPedidoByCodigo(codigo);
+  const pedido = await getPedidoByCodigo(codigo);
   // Pedido de outra loja: 404, sem dizer que existe.
   if (!pedido || pedido.lojaId !== loja.id) notFound();
   const link = `${await lojaUrl(loja)}/pedido/${pedido.codigo}?t=${pedido.token}`;
@@ -24,8 +24,8 @@ export default async function PainelPedido(props: PageProps<"/painel/vendas/[cod
       </Link>
       <OrderDetail
         pedido={pedido}
-        itens={listItens(pedido.id)}
-        eventos={listEventos(pedido.id)}
+        itens={await listItens(pedido.id)}
+        eventos={await listEventos(pedido.id)}
         actions={
           <div className="flex flex-col items-start gap-1">
             <CopyLink url={link} label="Copiar link do pedido para o cliente" />

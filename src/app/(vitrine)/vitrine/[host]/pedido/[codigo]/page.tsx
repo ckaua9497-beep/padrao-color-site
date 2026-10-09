@@ -31,13 +31,13 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
   const { host, codigo } = await props.params;
   const search = await props.searchParams;
   const token = typeof search.t === "string" ? search.t : "";
-  const loja = lojaDoHost(host);
-  const found = loja ? getPedidoByCodigo(codigo) : null;
+  const loja = await lojaDoHost(host);
+  const found = loja ? await getPedidoByCodigo(codigo) : null;
   if (!loja || !found || found.lojaId !== loja.id || !tokenMatches(found, token)) notFound();
 
   const pedido = await refreshPayment(found);
   const expired = pixExpired(pedido);
-  const itens = listItens(pedido.id);
+  const itens = await listItens(pedido.id);
   const stepIndex = STEPS.indexOf(pedido.status);
   const closed = pedido.status === "cancelado" || pedido.status === "expirado";
   const contact = loja.whatsapp ? whatsappLink(loja.whatsapp, `Olá! Sobre o pedido ${pedido.codigo}.`) : null;

@@ -10,7 +10,7 @@ import type { Loja } from "./repo";
 /* Ajudantes das rotas /api/multiloja: loja pelo Host da requisição e limites de tentativas. */
 
 /** Loja que atendeu a requisição (rotas chamadas pela vitrine, no host da própria loja). */
-export function lojaDaRequisicao(request: Request): Loja | null {
+export async function lojaDaRequisicao(request: Request): Promise<Loja | null> {
   const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || request.headers.get("host") || "";
   return host ? lojaDoHost(host.toLowerCase().replace(/:\d+$/, "")) : null;
 }
@@ -42,8 +42,8 @@ export function limited(limiter: (typeof vitrineLimits)[keyof typeof vitrineLimi
  * não exige mTLS: segredo na URL (?hmac=) e IP de origem. Mesmo aceito, o aviso só dispara uma consulta à
  * própria Efí; nada muda no pedido só com o que veio no corpo.
  */
-export function efiWebhookAllowed(request: Request): boolean {
-  const secret = efiWebhookSecret();
+export async function efiWebhookAllowed(request: Request): Promise<boolean> {
+  const secret = await efiWebhookSecret();
   if (!secret) return process.env.NODE_ENV !== "production";
   const given = new URL(request.url).searchParams.get("hmac") ?? "";
   const a = Buffer.from(given);
@@ -64,8 +64,8 @@ const sameSecret = (given: string, secret: string) => {
  * Aviso da Cielo: o segredo vem no cabeçalho X-Multiloja-Segredo (Post de Notificação da API E-commerce, cabeçalho
  * personalizado cadastrado no portal) ou em ?hmac= (notificação do Link de Pagamento, que não aceita cabeçalho).
  */
-export function cieloWebhookAllowed(request: Request): boolean {
-  const secret = cieloConfig()?.webhookSecret;
+export async function cieloWebhookAllowed(request: Request): Promise<boolean> {
+  const secret = (await cieloConfig())?.webhookSecret;
   if (!secret) return process.env.NODE_ENV !== "production";
   const given = request.headers.get("x-multiloja-segredo") ?? new URL(request.url).searchParams.get("hmac") ?? "";
   return sameSecret(given, secret);

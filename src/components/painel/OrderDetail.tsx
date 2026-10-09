@@ -18,7 +18,9 @@ function Row({ label, value, strong = false }: { label: string; value: ReactNode
   );
 }
 
-export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome }: { pedido: Pedido; itens: PedidoItem[]; eventos: PedidoEvento[]; actions?: ReactNode; lojaNome?: string }) {
+export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome, admin = false }: { pedido: Pedido; itens: PedidoItem[]; eventos: PedidoEvento[]; actions?: ReactNode; lojaNome?: string; admin?: boolean }) {
+  // O admin usa as folhas dele (anel fino); o painel do lojista, os cartões do painel.
+  const surface = admin ? "rounded-card bg-white p-5 shadow-sheet" : "rounded-panel bg-white p-5 shadow-card";
   const e = pedido.entrega;
   const contact = whatsappLink(pedido.cliente.telefone, `Olá, ${pedido.cliente.nome.split(" ")[0]}! Sobre o seu pedido ${pedido.codigo}.`);
   return (
@@ -42,7 +44,7 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome 
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        <section className="rounded-panel bg-white p-5 shadow-card" aria-labelledby="itens-pedido">
+        <section className={surface} aria-labelledby="itens-pedido">
           <h2 id="itens-pedido" className="text-lg font-bold">
             Itens
           </h2>
@@ -81,7 +83,7 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome 
         </section>
 
         <div className="space-y-6">
-          <section className="rounded-panel bg-white p-5 shadow-card" aria-labelledby="valores">
+          <section className={surface} aria-labelledby="valores">
             <h2 id="valores" className="text-lg font-bold">
               Valores
             </h2>
@@ -97,7 +99,7 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome 
             </dl>
           </section>
 
-          <section className="rounded-panel bg-white p-5 shadow-card" aria-labelledby="cliente">
+          <section className={surface} aria-labelledby="cliente">
             <h2 id="cliente" className="text-lg font-bold">
               Cliente e entrega
             </h2>
@@ -124,7 +126,7 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome 
         </div>
       </div>
 
-      <section className="rounded-panel bg-white p-5 shadow-card" aria-labelledby="historico">
+      <section className={surface} aria-labelledby="historico">
         <h2 id="historico" className="text-lg font-bold">
           Histórico
         </h2>

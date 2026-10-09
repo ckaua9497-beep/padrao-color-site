@@ -23,36 +23,36 @@ export function gatewayByName(name: string): Gateway | null {
 }
 
 /** Gateway que cobra os pedidos novos (null = pagamento online desligado ou gateway sem credenciais). */
-export function activeGateway(): Gateway | null {
-  const { ativo } = paymentSettings();
+export async function activeGateway(): Promise<Gateway | null> {
+  const { ativo } = await paymentSettings();
   if (ativo === "desligado") return null;
   const gateway = GATEWAYS[ativo];
-  return gateway?.configured() ? gateway : null;
+  return gateway && (await gateway.configured()) ? gateway : null;
 }
 
-export function activeProvider(): GatewayName | null {
-  return activeGateway()?.name ?? null;
+export async function activeProvider(): Promise<GatewayName | null> {
+  return (await activeGateway())?.name ?? null;
 }
 
 /** Meios oferecidos no checkout: ligados no admin e suportados pelo gateway ativo. */
-export function availableMethods(): PaymentKind[] {
-  const gateway = activeGateway();
+export async function availableMethods(): Promise<PaymentKind[]> {
+  const gateway = await activeGateway();
   if (!gateway) return [];
-  const { metodos } = paymentSettings();
-  return PAYMENT_KINDS.filter((k) => metodos[k] && gateway.methods.includes(k));
+  const [{ metodos }, supported] = await Promise.all([paymentSettings(), gateway.methods()]);
+  return PAYMENT_KINDS.filter((k) => metodos[k] && supported.includes(k));
 }
 
 export async function createCharge(method: PaymentKind, input: ChargeInput): Promise<{ provider: GatewayName; charge: Charge }> {
-  const gateway = activeGateway();
+  const gateway = await activeGateway();
   if (!gateway) throw new Error("Pagamento online desligado.");
-  if (!availableMethods().includes(method)) throw new Error("Forma de pagamento indisponível.");
+  if (!(await availableMethods()).includes(method)) throw new Error("Forma de pagamento indisponível.");
   return { provider: gateway.name, charge: await gateway.create(method, input) };
 }
 
 /** Situação da cobrança no gateway que a criou (o aviso só serve de gatilho; quem confirma é esta consulta). */
 export async function chargeStatus(provider: string, chargeId: string): Promise<ChargeStatus> {
   const gateway = gatewayByName(provider);
-  if (!gateway || provider === "simulado" || !gateway.configured()) return { status: "pendente" };
+  if (!gateway || provider === "simulado" || !(await gateway.configured())) return { status: "pendente" };
   return gateway.status(chargeId);
 }
 
@@ -80,13 +80,13 @@ export type GatewayStatus = { name: GatewayName; label: string; methods: readonl
 
 /** Situação de cada gateway para o admin (o diagnóstico chama as APIs só dos que têm credenciais). */
 export async function gatewaysOverview(): Promise<{ ativo: ActiveGateway; gateways: GatewayStatus[] }> {
-  const { ativo } = paymentSettings();
+  const { ativo } = await paymentSettings();
   const gateways = await Promise.all(
     (Object.values(GATEWAYS) as Gateway[]).map(async (g) => ({
       name: g.name,
       label: g.label,
-      methods: g.methods,
-      configured: g.configured(),
+      methods: await g.methods(),
+      configured: await g.configured(),
       active: ativo === g.name,
       checks: await g.diagnostics().catch((error) => [{ label: "Diagnóstico", ok: false, detail: errorText(error) }]),
     })),

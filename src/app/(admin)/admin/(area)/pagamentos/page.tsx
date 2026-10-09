@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import EfiTools from "@/components/admin/EfiTools";
 import { CieloForm, EfiForm, GatewaySwitcher, MeiosForm, RevealSecret } from "@/components/admin/PaymentSettingsForms";
 import { cieloMockActive, cieloNotificationUrls } from "@/lib/multiloja/gateways/cielo";
-import { Panel } from "@/components/painel/fields";
+import { PageHeader, Sheet } from "@/components/admin/ui";
 import { cx } from "@/components/ui/cx";
 import { CIELO_SETTINGS_KEY, EFI_SETTINGS_KEY, cieloConfig, efiConfig, paymentSettings, publicUrl, type CieloSaved, type EfiSaved } from "@/lib/multiloja/config";
 import { efiMockActive, gatewaysOverview, pixWebhookUrl, type Check } from "@/lib/multiloja/payments";
@@ -29,36 +29,38 @@ function Checks({ checks }: { checks: Check[] }) {
 
 export default async function AdminPagamentos() {
   const { ativo, gateways } = await gatewaysOverview();
-  const settings = paymentSettings();
-  const efiSaved = getSetting<EfiSaved>(EFI_SETTINGS_KEY);
-  const cieloSaved = getSetting<CieloSaved>(CIELO_SETTINGS_KEY);
-  const efi = efiConfig();
-  const cielo = cieloConfig();
+  const settings = await paymentSettings();
+  const efiSaved = (await getSetting<EfiSaved>(EFI_SETTINGS_KEY));
+  const cieloSaved = (await getSetting<CieloSaved>(CIELO_SETTINGS_KEY));
+  const efi = await efiConfig();
+  const cielo = await cieloConfig();
   const byName = Object.fromEntries(gateways.map((g) => [g.name, g]));
-  const webhook = pixWebhookUrl();
-  const cieloUrls = cieloNotificationUrls();
+  const webhook = await pixWebhookUrl();
+  const cieloUrls = await cieloNotificationUrls();
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-title">Pagamentos</h1>
-        <p className="mt-1 max-w-3xl text-muted">
-          Escolha o gateway que cobra os pedidos de todas as lojas. A troca vale na hora para as cobranças novas; pedidos antigos continuam sendo consultados e devolvidos no gateway em que foram pagos.
+      <PageHeader
+        group="Configuração"
+        title="Pagamentos"
+        description="Escolha o gateway que cobra os pedidos de todas as lojas. A troca vale na hora para as cobranças novas; pedidos antigos continuam no gateway em que foram pagos."
+      />
+      {(cieloMockActive() || efiMockActive()) && (
+        <p className="rounded-card bg-sun-50 px-4 py-3 text-[13px] font-semibold">
+          Simulador local ligado ({[efiMockActive() && "Efí", cieloMockActive() && "Cielo"].filter(Boolean).join(" e ")}): nenhuma cobrança é real.
         </p>
-        {cieloMockActive() && <p className="mt-2 rounded-control bg-sun-50 px-4 py-2 text-[14px] font-semibold">Cielo ligada ao simulador local (MULTILOJA_CIELO_MOCK_URL): nenhuma cobrança real.</p>}
-        {efiMockActive() && <p className="mt-2 rounded-control bg-sun-50 px-4 py-2 text-[14px] font-semibold">Efí ligada ao simulador local (MULTILOJA_EFI_MOCK_URL): nenhuma cobrança real.</p>}
-      </div>
+      )}
 
       <GatewaySwitcher
         desligado={ativo === "desligado"}
         gateways={gateways.map((g) => ({ name: g.name, label: g.label, methods: g.methods, configured: g.configured, active: g.active, problems: g.checks.filter((c) => !c.ok).length }))}
       />
 
-      <Panel title="Formas de pagamento e taxas" description="O checkout oferece só as formas ligadas aqui que o gateway ativo sabe cobrar." id="meios">
+      <Sheet title="Formas de pagamento e taxas" description="O checkout oferece só as formas ligadas aqui que o gateway ativo sabe cobrar." id="meios">
         <MeiosForm metodos={settings.metodos} taxas={settings.taxas} boletoDias={settings.boletoDias} />
-      </Panel>
+      </Sheet>
 
-      <Panel title="Efí" description="Pix (API Pix com certificado), boleto e cartão (API de Cobranças; o cartão abre a página segura da Efí)." id="efi">
+      <Sheet title="Efí" description="Pix (API Pix com certificado), boleto e cartão (API de Cobranças; o cartão abre a página segura da Efí)." id="efi">
         <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
           <EfiForm
             data={{
@@ -69,16 +71,16 @@ export default async function AdminPagamentos() {
               hasCert: Boolean(efiSaved?.certBase64 || efi?.certBase64 || efi?.certPath),
             }}
           />
-          <div className="space-y-4">
-            <p className="text-[14px] font-bold">Diagnóstico</p>
+          <div className="space-y-4 lg:border-l lg:border-line lg:pl-8">
+            <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted">Diagnóstico</p>
             <Checks checks={byName.efi?.checks ?? []} />
             <p className="break-all text-caption text-muted">Webhook do Pix: {webhook ? webhook.replace(/hmac=[^&]+/, "hmac=•••") : publicUrl() ? "salve a Efí para gerar o segredo" : "configure MULTILOJA_URL_PUBLICA (https)"}</p>
             <EfiTools sandbox={efi?.sandbox === true} canRegister={Boolean(efi && webhook)} />
           </div>
         </div>
-      </Panel>
+      </Sheet>
 
-      <Panel title="Cielo" description="Pix e boleto pela API E-commerce; cartão pelo Link de Pagamento (página segura da Cielo, até 6x)." id="cielo">
+      <Sheet title="Cielo" description="Pix e boleto pela API E-commerce; cartão pelo Link de Pagamento (página segura da Cielo, até 6x)." id="cielo">
         <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
           <CieloForm
             data={{
@@ -90,11 +92,11 @@ export default async function AdminPagamentos() {
               hasClientSecret: Boolean(cieloSaved?.clientSecret || cielo?.clientSecret),
             }}
           />
-          <div className="space-y-3">
-            <p className="text-[14px] font-bold">Diagnóstico</p>
+          <div className="space-y-3 lg:border-l lg:border-line lg:pl-8">
+            <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted">Diagnóstico</p>
             <Checks checks={byName.cielo?.checks ?? []} />
             {cielo && cieloUrls.api && (
-              <div className="space-y-2 rounded-control bg-mist p-4 text-[14px]">
+              <div className="space-y-2 rounded-control bg-page-checkout p-4 text-[13px]">
                 <p className="font-bold">Cadastre no portal da Cielo</p>
                 <p>
                   <strong>API E-commerce</strong> (Gestão API E-commerce → Configurações → URL de notificações): <span className="break-all">{cieloUrls.api}</span>, com o cabeçalho{" "}
@@ -110,7 +112,7 @@ export default async function AdminPagamentos() {
             )}
           </div>
         </div>
-      </Panel>
+      </Sheet>
     </div>
   );
 }
