@@ -49,7 +49,8 @@ function LineRow({ line, grouped }: { line: CartLine; grouped: boolean }) {
   );
 }
 
-export default function CartPageView() {
+/** `resellerHint`: convite ao revendedor da Padrão para entrar na conta (fica de fora nas lojas da multiloja). */
+export default function CartPageView({ resellerHint = true }: { resellerHint?: boolean } = {}) {
   const { lines, groups, subtotal, reseller, pricing, removeBundle } = useCart();
   const customer = useCustomer();
 
@@ -117,7 +118,7 @@ export default function CartPageView() {
             </dd>
           </div>
         </dl>
-        {customer.status === "anonymous" && (
+        {resellerHint && customer.status === "anonymous" && (
           <p className="mt-3 px-1 text-caption text-muted">
             É revendedor?{" "}
             <Link href="/conta/entrar?volta=/carrinho" className="font-semibold text-ink underline underline-offset-2">

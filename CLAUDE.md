@@ -99,6 +99,14 @@ The t-shirt pipeline lives in the folder `src/components/mockup/models/apparel/`
 - **Crie Sua Festa / Monte Seu Kit:** `src/lib/party.ts` and `components/party/`.
 - **Fachadas:** `src/lib/facade.ts` and `components/facade/`.
 
+### Multiloja (stores for influencers and suppliers)
+
+- One install serves every store by host: `src/proxy.ts` rewrites `<sub>.<MULTILOJA_DOMINIO>` (dev: `<sub>.localhost:3100`) to `src/app/(vitrine)/vitrine/[host]/`; `/api` and `/painel` are never rewritten. The store's palette overrides the coral CSS variables (`paletteVars`).
+- Lojista panel: `src/app/(painel)/painel/` (Server Actions in `actions.ts`; the store always comes from the session via `requirePainel()`).
+- Data: `src/lib/multiloja/` — `core.ts` (pure, tested: host parsing, margin/price, plans, palettes), `schema.ts` (migrations), `db.ts` (node:sqlite in `.data/`), `repo.ts` (all SQL), `auth.ts` (scrypt + sealed cookie), `tenant.ts` (store from host, priced products), `files.ts` (uploads).
+- Store price = catalog price × `MULTILOJA_FATOR_BASE` × (1 + margin). Checkout hands the order to the store's WhatsApp until online payment exists.
+- `npm run multiloja:seed` creates the demo store `atelie-demo` (test login inside the script).
+
 ### Layout and design system (user-approved: do not redesign)
 
 - The header is built from `src/lib/menu.ts` and `SiteHeader.tsx`:

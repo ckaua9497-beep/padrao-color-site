@@ -46,3 +46,6 @@ next-env.d.ts
 
 # cache dos gabaritos baixados (npm run sync:templates)
 /.cache/
+
+# banco e imagens da multiloja em desenvolvimento (MULTILOJA_DB / MULTILOJA_ARQUIVOS)
+/.data/
