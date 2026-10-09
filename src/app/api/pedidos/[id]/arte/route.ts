@@ -1,12 +1,14 @@
 import { apiFailure, fail, isSameOrigin, json, limits, overLimit, sessionOr401 } from "@/lib/api/guard";
 import { reenviarArte } from "@/lib/api/padrao";
 import { ART_MAX_MB, artFileProblem, safeFileName } from "@/lib/api/validation";
+import { BunnyError, bunnyConfig, uploadArtFile } from "@/lib/bunny";
 
 /*
  * POST /api/pedidos/[id]/arte (multipart, campo "arquivo", até 25 MB) → POST /reenviararte.
  * [id] = número do PEDIDO (item da compra no GET /pedidos), quando situacao.reenvia_arte = "Sim".
- * Premissa (o PDF não diz se `arte` é base64 ou URL): o arquivo vai em base64 puro (sem "data:") em `arte`,
- * o nome em `nome` e `url` vazio. Se a Padrão pedir URL, trocar aqui por um upload para storage + `url`.
+ * Com o Bunny configurado (como no site da Padrão), o arquivo sobe para lá primeiro e o /reenviararte leva a URL
+ * pública em `url` e o nome gravado em `nome` (`arte` vazio). Sem o Bunny, vale a premissa antiga: o arquivo em
+ * base64 puro (sem "data:") em `arte`, o nome em `nome` e `url` vazio.
  * Atenção na hospedagem: plataformas serverless limitam o corpo da requisição (ex.: 4,5 MB na Vercel).
  */
 
@@ -41,9 +43,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const problem = artFileProblem(name, file.size);
   if (problem) return fail(400, problem);
 
-  const arte = Buffer.from(await file.arrayBuffer()).toString("base64");
+  const bytes = await file.arrayBuffer();
+  let sent = { arte: Buffer.from(bytes).toString("base64"), nome: name, url: "" };
+  const bunny = bunnyConfig();
+  if (bunny) {
+    try {
+      const stored = await uploadArtFile(bunny, { name, bytes });
+      sent = { arte: "", nome: stored.nome, url: stored.url };
+    } catch (error) {
+      console.error("[arte] reenvio, Bunny:", error instanceof BunnyError ? `status ${error.status}` : error instanceof Error ? error.name : "erro");
+      return fail(502, "Não foi possível guardar o arquivo agora. Tente de novo.");
+    }
+  }
   try {
-    await reenviarArte({ idCliente: auth.session.id, idPedido: order, arte, nome: name, url: "" }, auth.session.token);
+    await reenviarArte({ idCliente: auth.session.id, idPedido: order, ...sent }, auth.session.token);
   } catch (error) {
     return apiFailure(error, { session: true, fallback: "Não foi possível enviar a arte agora. Tente de novo." });
   }

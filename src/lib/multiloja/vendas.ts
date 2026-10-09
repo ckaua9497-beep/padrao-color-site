@@ -2,9 +2,12 @@ import "server-only";
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { buildOrderPayload, extractOrderNumber, isLineError, priceLine, type LinePrices, type OrderItemInput, type PricedLine } from "../orders";
+import { productFacts } from "../order-facts";
 import { gerarPedido } from "../api/padrao";
 import { getProductById, type Product } from "../catalog";
 import { orderCode, priceProduct, type PaymentKind } from "./core";
+import { cotarFretePadrao, freteApi } from "../frete-api";
+import { embalagemDe, nomeFrete, pacotesDoPedido, prazoFrete, type OpcaoFrete } from "../frete";
 import { padraoProduction, paymentRates, paymentSettings } from "./config";
 import { quoteOrder, type CheckoutRequest, type OrderQuote } from "./pedido";
 import { recordOrderEvent } from "./analytics";
@@ -70,13 +73,59 @@ export async function priceCart(loja: Loja, inputs: OrderItemInput[]): Promise<P
   return errors.length ? { ok: false, errors } : { ok: true, items: priced };
 }
 
-export async function quoteFor(loja: Loja, items: PricedItem[], method: PaymentKind): Promise<OrderQuote> {
+/** Totais com o custo do frete já cotado (API de frete da Padrão ou, sem ela, o frete fixo da loja). */
+export async function quoteFor(loja: Loja, items: PricedItem[], method: PaymentKind, freteCusto: number): Promise<OrderQuote> {
   return quoteOrder(
     items.map(({ line, base }) => ({ total: line.total, baseTotal: base.total })),
     method,
-    { fixed: loja.freteFixo, freeAbove: loja.freteGratisAcima },
+    { custo: freteCusto, gratisAcima: loja.freteGratisAcima },
     await paymentRates(),
   );
+}
+
+// ---------------------------------------------------------------------------------- frete
+
+export type FreteCotacao =
+  /** Sem a chave da API de frete da Padrão: frete fixo da loja (como antes). */
+  | { modo: "fixo"; custo: number }
+  /** Formas de entrega da cotação da Padrão (mais barata primeiro) e a escolhida. */
+  | { modo: "cotado"; opcoes: OpcaoFrete[]; escolhida: OpcaoFrete; estimado: boolean }
+  | { modo: "sem-cep" }
+  /** `semMedida`: produtos sem embalagem cadastrada na Padrão (não dá para cotar). */
+  | { modo: "erro"; mensagem: string; semMedida: string[] };
+
+/**
+ * Frete do carrinho para o CEP pela API de frete da Padrão (o mesmo cálculo do site dela), com a embalagem de cada
+ * produto cadastrada na Padrão (a caixa que ela despacha) e o id da variação.
+ */
+export async function cotarFrete(loja: Loja, items: PricedItem[], cep: string, servicoId: number | null): Promise<FreteCotacao> {
+  const api = freteApi();
+  if (!api) return { modo: "fixo", custo: loja.freteFixo };
+  const destino = cep.replace(/\D/g, "");
+  if (destino.length !== 8) return { modo: "sem-cep" };
+  const itens = [];
+  const semMedida: string[] = [];
+  let estimado = false;
+  for (const { line, item } of items) {
+    const found = embalagemDe(item.product.variations, line.variation.id ?? null);
+    if (!found) {
+      semMedida.push(item.product.name);
+      continue;
+    }
+    estimado ||= found.estimada;
+    itens.push({ id: String(line.variation.id ?? item.product.id), lotes: line.lots, embalagem: found.embalagem });
+  }
+  if (semMedida.length) return { modo: "erro", mensagem: "Ainda não dá para calcular o frete deste produto pelo site. Finalize pelo WhatsApp da loja.", semMedida };
+  const res = await cotarFretePadrao(api, destino, pacotesDoPedido(itens));
+  if (!res.ok) return { modo: "erro", mensagem: "Não foi possível calcular o frete agora. Tente de novo em instantes.", semMedida: [] };
+  if (!res.opcoes.length) return { modo: "erro", mensagem: "Nenhuma transportadora entrega estes produtos neste CEP.", semMedida: [] };
+  const escolhida = res.opcoes.find((o) => o.id === servicoId) ?? res.opcoes[0];
+  return { modo: "cotado", opcoes: res.opcoes, escolhida, estimado };
+}
+
+/** Custo do frete da cotação (null = ainda não dá para calcular). */
+export function custoDoFrete(frete: FreteCotacao): number | null {
+  return frete.modo === "fixo" ? frete.custo : frete.modo === "cotado" ? frete.escolhida.preco : null;
 }
 
 export type PlaceResult =
@@ -90,10 +139,21 @@ export type TrackingIds = { visitante: string; sessao: string } | null;
 export async function placeOrder(loja: Loja, request: CheckoutRequest, origin: string, tracking: TrackingIds = null): Promise<PlaceResult> {
   const priced = await priceCart(loja, request.items);
   if (!priced.ok) return { ok: false, status: 422, message: priced.errors[0].error, errors: priced.errors };
-  const quote = await quoteFor(loja, priced.items, request.pagamento);
+  // O frete é cotado de novo aqui: o valor que vale é o do servidor, nunca o que veio do navegador.
+  const frete = await cotarFrete(loja, priced.items, request.entrega.cep, request.freteServico);
+  if (frete.modo === "erro") return { ok: false, status: 422, message: frete.mensagem };
+  if (frete.modo === "sem-cep") return { ok: false, status: 422, message: "Informe o CEP de entrega." };
+  const quote = await quoteFor(loja, priced.items, request.pagamento, custoDoFrete(frete) ?? 0);
+  if (frete.modo === "cotado" && request.freteServico !== null && frete.escolhida.id !== request.freteServico) {
+    return { ok: false, status: 409, quote, message: "A forma de entrega escolhida não está mais disponível. Escolha outra." };
+  }
   if (Math.abs(quote.total - request.expectedTotal) > 0.009) {
     return { ok: false, status: 409, quote, message: "O valor do pedido mudou. Confira o novo total antes de continuar." };
   }
+  const envio =
+    frete.modo === "cotado"
+      ? { servico: nomeFrete(frete.escolhida), servicoId: frete.escolhida.id, prazo: prazoFrete(frete.escolhida), custo: quote.freteCusto, gratis: quote.freteGratis }
+      : { servico: null, servicoId: null, prazo: null, custo: quote.freteCusto, gratis: quote.freteGratis };
 
   const codigo = orderCode();
   const token = randomBytes(18).toString("base64url");
@@ -136,6 +196,7 @@ export async function placeOrder(loja: Loja, request: CheckoutRequest, origin: s
       ref: request.ref,
       observacoes: request.observacoes,
       sessao: tracking ? `${tracking.visitante}|${tracking.sessao}` : null,
+      envio,
     },
     itens,
   );
@@ -307,7 +368,7 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
     lines.push(line);
   }
   const payload = {
-    ...buildOrderPayload({ customerId: customerId ?? 0, lines, method: "cartao", delivery: { tipo: "Entrega", endereco: pedido.entrega } }),
+    ...buildOrderPayload({ customerId: customerId ?? 0, lines, method: "cartao", delivery: { tipo: "Entrega", endereco: pedido.entrega }, facts: productFacts }),
     tipo_compra: "Multiloja",
     nome_trabalho: `${pedido.codigo} ${pedido.cliente.nome}`.slice(0, 60),
   };

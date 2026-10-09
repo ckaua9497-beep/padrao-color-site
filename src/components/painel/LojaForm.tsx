@@ -33,7 +33,7 @@ const SOCIAL_HINT: Record<SocialKey, string> = {
   linkedin: "https://linkedin.com/company/sualoja",
 };
 
-export default function LojaForm({ loja, categories, domainSuffix }: { loja: LojaFormData; categories: { slug: string; name: string }[]; domainSuffix: string }) {
+export default function LojaForm({ loja, categories, domainSuffix, freteAutomatico = false }: { loja: LojaFormData; categories: { slug: string; name: string }[]; domainSuffix: string; freteAutomatico?: boolean }) {
   const { state, submit, pending } = useFormAction(salvarLoja);
   const [featured, setFeatured] = useState<string[]>(loja.categoriasDestaque);
   const errors = state?.errors ?? {};
@@ -74,12 +74,32 @@ export default function LojaForm({ loja, categories, domainSuffix }: { loja: Loj
         <Field className="max-w-48" label="Margem (%)" name="margemPadrao" inputMode="decimal" defaultValue={String(loja.margemPadrao)} error={errors.margemPadrao} />
       </Panel>
 
-      <Panel title="Frete" description="Valor cobrado do cliente por pedido. Ele é repassado para a entrega e não entra na sua comissão. Deixe em branco para frete grátis." id="frete">
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="Frete por pedido (R$)" name="freteFixo" inputMode="decimal" defaultValue={money(loja.freteFixo)} placeholder="Grátis" error={errors.freteFixo} />
-          <Field label="Grátis a partir de (R$)" name="freteGratisAcima" inputMode="decimal" defaultValue={money(loja.freteGratisAcima)} placeholder="Opcional" error={errors.freteGratisAcima} hint="Subtotal dos produtos." />
-        </div>
-      </Panel>
+      {freteAutomatico ? (
+        <Panel
+          title="Frete"
+          description="Calculado na hora pela Padrão Color, no CEP do cliente e com a embalagem de cada produto: o mesmo cálculo do site da Padrão. O cliente escolhe a transportadora no checkout, e o frete não entra na sua comissão."
+          id="frete"
+        >
+          <input type="hidden" name="freteFixo" value={money(loja.freteFixo)} />
+          <Field
+            className="max-w-xs"
+            label="Frete grátis a partir de (R$)"
+            name="freteGratisAcima"
+            inputMode="decimal"
+            defaultValue={money(loja.freteGratisAcima)}
+            placeholder="Opcional"
+            error={errors.freteGratisAcima}
+            hint="Acima desse subtotal o cliente não paga frete: o valor do frete sai da sua comissão (só quando ela cobre o frete)."
+          />
+        </Panel>
+      ) : (
+        <Panel title="Frete" description="Valor cobrado do cliente por pedido. Ele é repassado para a entrega e não entra na sua comissão. Deixe em branco para frete grátis." id="frete">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Frete por pedido (R$)" name="freteFixo" inputMode="decimal" defaultValue={money(loja.freteFixo)} placeholder="Grátis" error={errors.freteFixo} />
+            <Field label="Grátis a partir de (R$)" name="freteGratisAcima" inputMode="decimal" defaultValue={money(loja.freteGratisAcima)} placeholder="Opcional" error={errors.freteGratisAcima} hint="Subtotal dos produtos. O frete sai da sua comissão." />
+          </div>
+        </Panel>
+      )}
 
       <Panel title="Categorias em destaque" description={`Escolha até 8. Elas aparecem primeiro no menu da loja (${featured.length}/8).`} id="categorias">
         <div className="flex flex-wrap gap-2">

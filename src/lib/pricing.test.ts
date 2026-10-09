@@ -14,6 +14,7 @@ import {
   sizeSummary,
   sizeTotal,
   speedQuote,
+  unitLimits,
   usesArea,
 } from "./pricing.ts";
 
@@ -108,4 +109,11 @@ test("expresso: só quando muda preço ou prazo", () => {
   const same = quote(variations, { Acabamento: "Viés Azul" }, fallback, 1);
   assert.equal(hasExpress(same), false);
   assert.deepEqual(speedQuote(same, "expresso"), { price: 10, leadDays: 2 });
+});
+
+test("unitLimits: a faixa da variação ou a do produto", () => {
+  assert.deepEqual(unitLimits({ minQty: 1, maxQty: 10 }, { mn: 11, mx: 100 }), { min: 11, max: 100 });
+  assert.deepEqual(unitLimits({ minQty: 1, maxQty: 10 }, {}), { min: 1, max: 10 });
+  assert.deepEqual(unitLimits({ minQty: 5, maxQty: 0 }, null), { min: 5, max: 0 });
+  assert.deepEqual(unitLimits({ minQty: 0 }, { mn: 251 }), { min: 251, max: 0 });
 });

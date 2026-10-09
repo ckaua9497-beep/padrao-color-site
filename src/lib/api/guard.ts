@@ -126,6 +126,10 @@ export const limits = {
   account: createRateLimiter({ max: 10, windowMs: 10 * MINUTE }),
   orders: createRateLimiter({ max: 10, windowMs: 10 * MINUTE }),
   art: createRateLimiter({ max: 10, windowMs: 10 * MINUTE }),
+  // Envio dos arquivos no checkout: um kit pode levar vários (logo, PDFs no gabarito, versos).
+  artUpload: createRateLimiter({ max: 60, windowMs: 10 * MINUTE }),
+  // Consulta de frete na página de produto (API de frete da Padrão).
+  frete: createRateLimiter({ max: 40, windowMs: 10 * MINUTE }),
 };
 
 export function tooMany(retryAfterSec: number): Response {

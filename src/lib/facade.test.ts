@@ -10,20 +10,14 @@ import {
   affineFromTriangles,
   applyAffine,
   applyHomography,
-  aspectCheck,
   boxBlur,
   buildFacadeMaterials,
-  classifyDesign,
   defaultQuad,
-  designFileError,
-  dpiAt,
-  effectiveDpi,
   facadeCartOptions,
   facadeLabel,
   facadeQuote,
   facadeSize,
   fitRect,
-  formatBytes,
   formatMeasureInput,
   formatPixels,
   homography,
@@ -45,7 +39,6 @@ import {
   quadToSquare,
   ratioLabel,
   requiredPixels,
-  resolutionLevel,
   setCorner,
   shadeFactor,
   signedArea,
@@ -323,15 +316,7 @@ test("fitRect: Preencher cobre a caixa, Ajustar fica dentro, ambos centralizados
   sameRect(fitRect(200, 100, 400, 200, "cover"), { x: 0, y: 0, w: 400, h: 200 });
 });
 
-test("aspectCheck: 3:1 numa fachada 4:1 corta 25% (Preencher) ou sobra 25% (Ajustar)", () => {
-  const check = aspectCheck(3000, 1000, 400, 100);
-  near(check.diff, 0.25, 1e-12);
-  assert.equal(check.matches, false);
-  assert.equal(check.cropSide, "topo e base");
-  assert.equal(aspectCheck(4000, 1000, 300, 100).cropSide, "laterais");
-  const same = aspectCheck(4010, 1000, 400, 100);
-  assert.equal(same.matches, true);
-  assert.equal(same.cropSide, null);
+test("ratioLabel", () => {
   assert.equal(ratioLabel(4), "4:1");
   assert.equal(ratioLabel(0.5), "1:2");
   assert.equal(ratioLabel(4 / 3), "1,33:1");
@@ -339,47 +324,19 @@ test("aspectCheck: 3:1 numa fachada 4:1 corta 25% (Preencher) ou sobra 25% (Ajus
 
 // ------------------------------------------------------------------------------------ resolução
 
-test("DPI = pixels ÷ (metros × 39,37)", () => {
-  near(dpiAt(7874, 4), 50, 1e-9);
-  near(dpiAt(3937, 1), 100, 1e-9);
-  assert.equal(dpiAt(1000, 0), 0);
+test("pixels necessários: DPI = pixels ÷ (metros × 39,37)", () => {
   assert.deepEqual(requiredPixels(4, 1, DPI_MIN), { w: 7874, h: 1969 });
   assert.deepEqual(requiredPixels(4, 1.2, DPI_RECOMMENDED), { w: 15748, h: 4725 });
 });
 
-test("effectiveDpi: Preencher usa o eixo mais fraco, Ajustar o mais forte", () => {
-  near(effectiveDpi(1000, 1000, 4, 1, "cover"), 1000 / (4 * 39.37), 1e-9);
-  near(effectiveDpi(1000, 1000, 4, 1, "contain"), 1000 / 39.37, 1e-9);
-  assert.equal(resolutionLevel(120), "otima");
-  assert.equal(resolutionLevel(DPI_RECOMMENDED), "otima");
-  assert.equal(resolutionLevel(DPI_MIN), "boa");
-  assert.equal(resolutionLevel(49.9), "baixa");
-});
-
 // ------------------------------------------------------------------------------------ arquivos
 
-test("classifyDesign: imagem simula, PDF/AI/CDR/EPS/SVG vão depois, o resto é recusado", () => {
-  assert.equal(classifyDesign("fachada.png", "image/png"), "image");
-  assert.equal(classifyDesign("fachada.JPG", ""), "image");
-  assert.equal(classifyDesign("fachada.jpg", "image/jpg"), "image");
-  assert.equal(classifyDesign("fachada.pdf", "application/pdf"), "production");
-  assert.equal(classifyDesign("fachada.cdr", ""), "production");
-  assert.equal(classifyDesign("fachada.ai", "application/postscript"), "production");
-  assert.equal(classifyDesign("logo.svg", "image/svg+xml"), "production");
-  assert.equal(classifyDesign("foto.heic", "image/heic"), "unsupported");
-  assert.equal(classifyDesign("anim.gif", "image/gif"), "unsupported");
-});
-
-test("photoFileError e designFileError", () => {
+test("photoFileError", () => {
   assert.equal(photoFileError({ name: "loja.jpg", type: "image/jpeg", size: 3 * MB }), null);
+  assert.equal(photoFileError({ name: "loja.JPG", type: "", size: MB }), null);
   assert.match(photoFileError({ name: "loja.jpg", type: "image/jpeg", size: (MAX_FILE_MB + 1) * MB }) ?? "", /25 MB/);
   assert.match(photoFileError({ name: "loja.heic", type: "image/heic", size: MB }) ?? "", /HEIC/);
   assert.match(photoFileError({ name: "loja.pdf", type: "application/pdf", size: MB }) ?? "", /JPG, PNG ou WEBP/);
-  assert.equal(designFileError({ name: "arte.cdr", type: "", size: 200 * MB }), null);
-  assert.match(designFileError({ name: "arte.png", type: "image/png", size: 30 * MB }) ?? "", /25 MB/);
-  assert.match(designFileError({ name: "arte.docx", type: "application/msword", size: MB }) ?? "", /PDF, AI, CDR/);
-  assert.equal(formatBytes(2.5 * MB), "2,5 MB");
-  assert.equal(formatBytes(300 * 1024), "300 KB");
   assert.equal(formatPixels(7874, 1969), "7.874 × 1.969 px");
 });
 
@@ -499,15 +456,10 @@ test("facadeCartOptions: medida, material, opções da API e avisos para a produ
     selection: { "2 - Mídia": "Vinil Brilho", "1 - Acabamento": "Bainha e Ilhós", "3 - Impressão": "Solvente" },
     billedArea: 4.8,
     rotated: true,
-    design: { name: "fachada.png", dpi: 62.4, fit: "contain", background: "#ffffff", matches: false },
-    productionFile: "fachada.cdr",
-    artLater: true,
   });
-  assert.deepEqual(Object.keys(options), ["Fachada", "Material", "Acabamento", "Mídia", "Impressão", "Área cobrada", "Produção", "Encaixe", "Resolução", "Simulação", "Arte final"]);
+  assert.deepEqual(Object.keys(options), ["Fachada", "Material", "Acabamento", "Mídia", "Impressão", "Área cobrada", "Produção"]);
   assert.equal(options.Impressão, "Solvente", "a opção da API não pode ser sobrescrita");
   assert.equal(options.Fachada, "4 × 1,2 m");
   assert.equal(options["Área cobrada"], "4,8 m²");
-  assert.equal(options.Resolução, "62 DPI na medida final");
-  assert.equal(options.Encaixe, "Ajustar (fundo #ffffff)");
-  assert.equal(options["Arte final"], "fachada.cdr (enviar depois)");
+  assert.equal(options.Produção, "Impressa girada 90° para caber no material");
 });

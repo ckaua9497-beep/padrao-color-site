@@ -184,7 +184,7 @@ async function renderPiece(job: PieceJob, dpi: number, variant: ArtVariant, labe
   const render: ArtRender = { ...art, sample: false, back: null };
   if (job.frame === "cut") {
     const image = await sourceImage(art.src, cappedPixels(placedBox(art, panel), dpi), preview);
-    paintArt(canvas, variant, render, image, label, { bleed: bleedFractions(panel) });
+    paintArt(canvas, variant, { ...render, aspect: panel.cut.w / panel.cut.h }, image, label, { bleed: bleedFractions(panel) });
     return canvas;
   }
   // "fit": pinta a área do editor na proporção dela e encaixa a composição no painel.
@@ -197,7 +197,7 @@ async function renderPiece(job: PieceJob, dpi: number, variant: ArtVariant, labe
   area.width = areaPx.w;
   area.height = areaPx.h;
   const image = await sourceImage(art.src, cappedPixels(place, dpi), preview);
-  paintArt(area, variant, render, image, label);
+  paintArt(area, variant, { ...render, aspect }, image, label);
   // Estampa sem fundo (DTF) fica transparente em volta; as demais ganham o fundo da arte.
   if (art.background !== "rgba(0,0,0,0)") {
     ctx.fillStyle = art.background || "#ffffff";

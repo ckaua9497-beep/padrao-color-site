@@ -46,6 +46,12 @@ export async function savePrintFile(id: string, blob: Blob, meta: Omit<PrintFile
   }
 }
 
+/** Arquivo da arte que o cliente enviou (original), guardado até o checkout mandar para o Bunny. Devolve o id. */
+export async function saveArtFile(blob: Blob, name: string, product: string): Promise<string | null> {
+  const id = crypto.randomUUID();
+  return (await savePrintFile(id, blob, { name, product, pages: 0, summary: "arquivo enviado pelo cliente" })) ? id : null;
+}
+
 export async function loadPrintFile(id: string): Promise<{ blob: Blob; meta: PrintFileMeta } | null> {
   try {
     const value = await run<{ blob: Blob; meta: PrintFileMeta } | undefined>("readonly", (store) => store.get(id));

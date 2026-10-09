@@ -42,8 +42,21 @@ test("checkout: recusa o que falta ou não confere", () => {
 test("totais: desconto do PIX, frete e comissão", () => {
   const lines = [{ total: 39.42, baseTotal: 28.16 }];
   const zero = { pct: 0, fixed: 0 };
-  const pix = quoteOrder(lines, "pix", { fixed: 0, freeAbove: null }, { pix: zero, boleto: zero, cartao: zero });
-  assert.deepEqual(pix, { subtotal: 39.42, desconto: 1.97, frete: 0, total: 37.45, custoBase: 28.16, taxa: 0, comissao: 9.29 });
-  const card = quoteOrder(lines, "cartao", { fixed: 15, freeAbove: 100 }, { pix: { pct: 1, fixed: 0 }, boleto: zero, cartao: { pct: 5, fixed: 0 } });
-  assert.deepEqual(card, { subtotal: 39.42, desconto: 0, frete: 15, total: 54.42, custoBase: 28.16, taxa: 2.72, comissao: 8.54 });
+  const pix = quoteOrder(lines, "pix", { custo: 0, gratisAcima: null }, { pix: zero, boleto: zero, cartao: zero });
+  assert.deepEqual(pix, { subtotal: 39.42, desconto: 1.97, frete: 0, freteCusto: 0, freteGratis: false, total: 37.45, custoBase: 28.16, taxa: 0, comissao: 9.29 });
+  const card = quoteOrder(lines, "cartao", { custo: 15, gratisAcima: 100 }, { pix: { pct: 1, fixed: 0 }, boleto: zero, cartao: { pct: 5, fixed: 0 } });
+  assert.deepEqual(card, { subtotal: 39.42, desconto: 0, frete: 15, freteCusto: 15, freteGratis: false, total: 54.42, custoBase: 28.16, taxa: 2.72, comissao: 8.54 });
+});
+
+test("frete grátis do lojista: sai da comissão, só quando ela cobre", () => {
+  const zero = { pct: 0, fixed: 0 };
+  const rates = { pix: zero, boleto: zero, cartao: zero };
+  // Subtotal 200 (base 120), frete cotado 25: grátis acima de 150 → cliente paga 200, comissão 200-120-25 = 55.
+  const gratis = quoteOrder([{ total: 200, baseTotal: 120 }], "cartao", { custo: 25, gratisAcima: 150 }, rates);
+  assert.deepEqual([gratis.frete, gratis.freteCusto, gratis.freteGratis, gratis.total, gratis.comissao], [0, 25, true, 200, 55]);
+  // Margem pequena: comissão 160-150 = 10 não cobre o frete de 25 → o cliente paga o frete.
+  const semMargem = quoteOrder([{ total: 160, baseTotal: 150 }], "cartao", { custo: 25, gratisAcima: 150 }, rates);
+  assert.deepEqual([semMargem.frete, semMargem.freteGratis, semMargem.total, semMargem.comissao], [25, false, 185, 10]);
+  // Abaixo do valor: frete normal.
+  assert.equal(quoteOrder([{ total: 100, baseTotal: 60 }], "cartao", { custo: 25, gratisAcima: 150 }, rates).frete, 25);
 });

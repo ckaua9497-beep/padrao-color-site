@@ -4,6 +4,7 @@ import DominioForm from "@/components/painel/DominioForm";
 import LojaForm from "@/components/painel/LojaForm";
 import { getCategories } from "@/lib/catalog";
 import { requirePainel } from "@/lib/multiloja/auth";
+import { freteApi } from "@/lib/frete-api";
 import { dnsTarget } from "@/lib/multiloja/config";
 import { rootDomain } from "@/lib/multiloja/tenant";
 
@@ -33,6 +34,7 @@ export default async function PainelLoja() {
         }}
         categories={getCategories().map((c) => ({ slug: c.slug, name: c.name }))}
         domainSuffix={`.${root}${port ? `:${port}` : ""}`}
+        freteAutomatico={freteApi() !== null}
       />
       <DominioForm dominio={loja.dominio} verificado={loja.dominioVerificado} alvo={dnsTarget()} />
     </div>

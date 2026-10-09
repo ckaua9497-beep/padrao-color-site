@@ -19,14 +19,21 @@ export type FitArea = {
 };
 
 const WRAP_WINDOW: Partial<Record<MockupKind, number>> = { mug: 0.38, tumbler: 0.38, bottle: 0.38 };
+/**
+ * Faixa a partir dessa proporção (largura ÷ altura) dá a volta na peça (caneca 20 × 8,5 cm, copo, squeeze
+ * sublimado) e o logo vai na parte da frente; mais estreita é um adesivo de frente (garrafa de alumínio com DTF
+ * U.V. de 7 × 10 cm), em que o logo usa a área toda.
+ */
+const WRAP_ASPECT = 1.6;
 
 export function fitAreaFor(spec: ArtAreaSpec & { kind: MockupKind }): FitArea {
   const area = artArea(spec);
+  const aspect = artAspect(spec);
   const transparentBase = artFamily(spec.kind) === "apparel" || (spec.kind === "bag" && (spec.variant === "plastic" || spec.variant === "kraft-sack"));
   return {
-    aspect: artAspect(spec),
+    aspect,
     cm: area.widthCm > 0 && area.heightCm > 0 ? { w: area.widthCm, h: area.heightCm } : null,
-    frontWindow: spec.thermal ? THERMAL_WINDOW : WRAP_WINDOW[spec.kind],
+    frontWindow: spec.thermal ? THERMAL_WINDOW : aspect >= WRAP_ASPECT ? WRAP_WINDOW[spec.kind] : undefined,
     transparentBase,
   };
 }

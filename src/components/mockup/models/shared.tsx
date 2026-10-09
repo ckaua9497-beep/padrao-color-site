@@ -116,12 +116,13 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
     // Até a imagem chegar e ser pintada, a textura conta como "esperando" (a foto de catálogo aguarda).
     if (art.src) waitingTextures.add(target);
     const frame = requestAnimationFrame(() => {
-      repaintArt(target, variant, art, image, label, mask);
+      // A proporção da textura é a da área: o template usa ela (o canvas arredonda em pixels).
+      repaintArt(target, variant, art.aspect ? art : { ...art, aspect }, image, label, mask);
       if (!art.src || image) waitingTextures.delete(target);
       invalidate();
     });
     return () => cancelAnimationFrame(frame);
-  }, [target, variant, art, image, label, mask, fontsLoaded, invalidate]);
+  }, [target, variant, art, image, label, mask, fontsLoaded, invalidate, aspect]);
   useEffect(
     () => () => {
       waitingTextures.delete(target);

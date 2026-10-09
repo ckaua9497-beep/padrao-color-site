@@ -90,10 +90,10 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome,
             <dl className="mt-3 space-y-1.5 text-[15px]">
               <Row label="Produtos" value={formatBRL(pedido.subtotal)} />
               {pedido.desconto > 0 && <Row label="Desconto Pix" value={`− ${formatBRL(pedido.desconto)}`} />}
-              <Row label="Frete" value={pedido.frete > 0 ? formatBRL(pedido.frete) : "Grátis"} />
+              <Row label={pedido.envio.servico ? `Frete · ${pedido.envio.servico}` : "Frete"} value={pedido.frete > 0 ? formatBRL(pedido.frete) : "Grátis"} />
               <Row label="Cliente pagou" value={formatBRL(pedido.total)} strong />
               <Row label="Custo Padrão Color" value={`− ${formatBRL(pedido.custoBase)}`} />
-              {pedido.frete > 0 && <Row label="Frete (repasse)" value={`− ${formatBRL(pedido.frete)}`} />}
+              {pedido.envio.custo > 0 && <Row label={pedido.envio.gratis ? "Frete dado pela loja (repasse)" : "Frete (repasse)"} value={`− ${formatBRL(pedido.envio.custo)}`} />}
               <Row label="Taxa do pagamento" value={`− ${formatBRL(pedido.taxaPagamento)}`} />
               <Row label="Comissão do lojista" value={formatBRL(pedido.comissao)} strong />
             </dl>
@@ -117,6 +117,12 @@ export default function OrderDetail({ pedido, itens, eventos, actions, lojaNome,
               {e.bairro ? `${e.bairro} · ` : ""}
               {e.cidade}/{e.estado} · CEP {formatCep(e.cep)}
             </p>
+            {pedido.envio.servico && (
+              <p className="mt-3 rounded-control bg-mist p-3 text-[14px]">
+                Envio: <strong>{pedido.envio.servico}</strong> (serviço {pedido.envio.servicoId}){pedido.envio.prazo && <> · chega em {pedido.envio.prazo} depois de pronto</>}
+                {pedido.envio.gratis && <span className="block text-caption text-muted">Frete grátis para o cliente: o custo saiu da comissão do lojista.</span>}
+              </p>
+            )}
             {pedido.observacoes && <p className="mt-3 rounded-control bg-mist p-3 text-[14px]">Obs.: {pedido.observacoes}</p>}
             {pedido.ref && <p className="mt-3 text-caption text-muted">Veio pelo link de divulgação “{pedido.ref}”.</p>}
             <a href={contact} target="_blank" rel="noreferrer" className="mt-4 inline-flex h-10 items-center rounded-full border border-line-strong px-4 text-[14px] font-bold hover:border-ink">

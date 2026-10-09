@@ -72,6 +72,9 @@ export type Pedido = {
   padraoPedido: string | null;
   /** Rastreamento anônimo: "visitante|sessão" de quem fez o pedido. */
   sessao: string | null;
+  /** Frete: transportadora ("Correios SEDEX"), id do serviço na cotação da Padrão, prazo de transporte, custo real e se o
+   * lojista deu o frete (o cliente pagou 0 e o custo saiu da comissão). Null nos pedidos de frete fixo da loja. */
+  envio: { servico: string | null; servicoId: number | null; prazo: string | null; custo: number; gratis: boolean };
   criadoEm: string;
   atualizadoEm: string;
 };
@@ -127,6 +130,13 @@ function toPedido(row: Row): Pedido {
     observacoes: str(row.observacoes),
     padraoPedido: strOrNull(row.padrao_pedido),
     sessao: strOrNull(row.sessao),
+    envio: {
+      servico: strOrNull(row.frete_servico),
+      servicoId: row.frete_servico_id == null ? null : num(row.frete_servico_id),
+      prazo: strOrNull(row.frete_prazo),
+      custo: row.frete_custo == null ? num(row.frete) : num(row.frete_custo),
+      gratis: num(row.frete_gratis) === 1,
+    },
     criadoEm: str(row.criado_em),
     atualizadoEm: str(row.atualizado_em),
   };
@@ -165,8 +175,9 @@ export async function createPedido(pedido: NewPedido, itens: NewPedidoItem[]): P
   return transaction(async (sql) => {
     const created = await sql.get<{ id: number }>(
       `INSERT INTO pedidos (loja_id, codigo, token, cliente_nome, cliente_email, cliente_telefone, cliente_documento, entrega, forma_pagamento,
-        subtotal, desconto, frete, total, custo_base, taxa_pagamento, comissao, pagamento_provedor, ref, observacoes, sessao)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        subtotal, desconto, frete, total, custo_base, taxa_pagamento, comissao, pagamento_provedor, ref, observacoes, sessao,
+        frete_servico, frete_servico_id, frete_prazo, frete_custo, frete_gratis)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [
         pedido.lojaId,
         pedido.codigo,
@@ -188,6 +199,11 @@ export async function createPedido(pedido: NewPedido, itens: NewPedidoItem[]): P
         pedido.ref,
         pedido.observacoes,
         pedido.sessao,
+        pedido.envio.servico,
+        pedido.envio.servicoId,
+        pedido.envio.prazo,
+        pedido.envio.custo,
+        pedido.envio.gratis ? 1 : 0,
       ],
     );
     const pedidoId = Number(created?.id);

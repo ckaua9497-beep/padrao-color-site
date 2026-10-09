@@ -30,16 +30,24 @@ import {
 import { STORE } from "@/lib/store";
 import { ItemTags, ResellerNote } from "./CartDrawer";
 import { CartThumb } from "./CartThumb";
-import { quantityText, toOrderItem, useCart } from "./CartProvider";
+import { pendingArtFiles, uploadCartArt, type UploadProgress } from "./art-upload";
+import { itemArtFiles, quantityText, toOrderItem, useCart, type CartItem } from "./CartProvider";
 import { PrintFileLink } from "@/components/product/gabarito/PrintFileLink";
 import { keepPrintFiles } from "@/components/product/gabarito/print-store";
 
 /*
  * Checkout: 1 Identificação (sessão: entrar ou criar conta, porque o POST /gerarpedido exige idCliente),
- * 2 Entrega (endereço do cadastro, outro endereço ou retirada), 3 Pagamento. O servidor recalcula os preços
- * (balcão ou revenda) e monta o payload (src/lib/orders.ts). Com PADRAO_ORDERS_ENABLED desligado é uma
+ * 2 Entrega (endereço do cadastro, outro endereço ou retirada), 3 Pagamento. Ao finalizar, os arquivos da arte que
+ * estão no navegador sobem para o Bunny (art-upload.ts) e as URLs vão no pedido (arte.anexos). O servidor recalcula
+ * os preços (balcão ou revenda) e monta o payload (src/lib/orders.ts). Com PADRAO_ORDERS_ENABLED desligado é uma
  * SIMULAÇÃO: mostra o que seria enviado e não cria nada na Padrão Color.
  */
+
+/** O item com as URLs dos seus arquivos que acabaram de subir para o Bunny. */
+function withUploads(item: CartItem, uploaded: Record<string, { url: string; nome: string }>): CartItem {
+  const mine = itemArtFiles(item).filter((file) => uploaded[file.id]);
+  return mine.length ? { ...item, uploaded: { ...item.uploaded, ...Object.fromEntries(mine.map((file) => [file.id, uploaded[file.id]])) } } : item;
+}
 
 type AccountSummary = { customerId: number; document: string; address: DeliveryAddress | null; balance: number | null; blocked: number | null };
 type QuoteLine = { key: string; unitPrice: number; total: number; reseller: boolean };
@@ -203,7 +211,17 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
             <dt className="text-caption text-muted">tipo_compra</dt>
             <dd className="font-semibold">{payload.tipo_compra}</dd>
           </div>
-          <div className="sm:col-span-2">
+          <div>
+            <dt className="text-caption text-muted">data e hora</dt>
+            <dd className="font-semibold">
+              {payload.data} · {payload.hora}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-caption text-muted">previsao</dt>
+            <dd className="font-semibold">{payload.previsao ?? "—"}</dd>
+          </div>
+          <div className="sm:col-span-2 lg:col-span-4">
             <dt className="text-caption text-muted">nome_trabalho</dt>
             <dd className="font-semibold">{payload.nome_trabalho}</dd>
           </div>
@@ -214,34 +232,51 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
             <thead className="text-caption text-muted">
               <tr>
                 <th className="py-2 pr-3 font-semibold">Produto</th>
-                <th className="py-2 pr-3 font-semibold">idProduto / idGrupo</th>
+                <th className="py-2 pr-3 font-semibold">id / groupId</th>
                 <th className="py-2 pr-3 font-semibold">Quantidade</th>
-                <th className="py-2 pr-3 font-semibold">Valor unit.</th>
-                <th className="py-2 font-semibold">Total</th>
+                <th className="py-2 pr-3 font-semibold">price</th>
+                <th className="py-2 font-semibold">precoTotal</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
               {payload.produtos.map((product, index) => (
-                <tr key={`${product.idProduto}-${index}`}>
-                  <td className="py-2.5 pr-3">
-                    <span className="font-semibold">{product.descricao}</span>
+                <tr key={`${product.id}-${index}`}>
+                  <td className="py-2.5 pr-3 align-top">
+                    <span className="font-semibold">{product.productName}</span>
                     <span className="block text-caption text-muted">
-                      {[product.nome_trabalho !== product.descricao ? product.nome_trabalho : "", product.expresso ? "expresso" : "", product.largura ? `${product.largura}×${product.altura} cm (${product.area} m²)` : "", product.kit?.nome ?? "", product.arte ? `arte: ${product.arte}` : "arte: enviar depois"]
+                      {[
+                        product.nome_trabalho !== product.productName ? product.nome_trabalho : "",
+                        `${product.tipoProducao}${product.productionTime ? ` · ${product.productionTime} d.u.` : ""}`,
+                        product.largura ? `${product.largura}×${product.altura} cm (${product.area} m²)` : "",
+                        product.kit?.nome ?? "",
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                     </span>
+                    {product.arte.anexos.length ? (
+                      <ul className="mt-1 grid gap-0.5 text-caption">
+                        {product.arte.anexos.map((anexo) => (
+                          <li key={anexo.url}>
+                            <a href={anexo.url} target="_blank" rel="noreferrer" className="font-semibold text-ink underline underline-offset-2">
+                              {anexo.nome}
+                            </a>{" "}
+                            <span className="text-muted">· {anexo.tipoArquivo}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="block text-caption text-muted">arte: sem arquivo (enviar depois)</span>
+                    )}
                   </td>
-                  <td className="py-2.5 pr-3">
-                    {product.idProduto} / {product.idGrupo}
+                  <td className="py-2.5 pr-3 align-top">
+                    {product.id} / {product.groupId}
                   </td>
-                  <td className="py-2.5 pr-3">
-                    {product.quantidade.toLocaleString("pt-BR")} un.
-                    <span className="block text-caption text-muted">
-                      {product.lotes} × {product.quantidadeLote.toLocaleString("pt-BR")}
-                    </span>
+                  <td className="py-2.5 pr-3 align-top">
+                    {product.quantidade.toLocaleString("pt-BR")}
+                    {product.unidades !== product.quantidade && <span className="block text-caption text-muted">{product.unidades.toLocaleString("pt-BR")} un.</span>}
                   </td>
-                  <td className="py-2.5 pr-3">{formatBRL(product.valorUnitario)}</td>
-                  <td className="py-2.5 font-semibold">{formatBRL(product.valorTotal)}</td>
+                  <td className="py-2.5 pr-3 align-top">{formatBRL(product.price)}</td>
+                  <td className="py-2.5 align-top font-semibold">{formatBRL(product.precoTotal)}</td>
                 </tr>
               ))}
             </tbody>
@@ -319,7 +354,7 @@ function OrderResult({ result, onCancelled }: { result: Extract<Result, { mode: 
 }
 
 export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean }) {
-  const { lines, subtotal, reseller, pricing, clear } = useCart();
+  const { lines, subtotal, reseller, pricing, clear, setUploaded } = useCart();
   const customer = useCustomer();
   const logged = customer.status === "customer" || customer.status === "reseller";
   const [authTab, setAuthTab] = useState<"entrar" | "criar">("entrar");
@@ -335,6 +370,9 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const [quote, setQuote] = useState<Quote | null>(null);
   const [checkOrders, setCheckOrders] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Envio dos arquivos da arte para o Bunny (antes do pedido) e o aviso de arquivo que ficou para depois.
+  const [sending, setSending] = useState<UploadProgress | null>(null);
+  const [artNotice, setArtNotice] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   // CEP da última busca: resposta atrasada de um CEP anterior é descartada.
   const cepAsked = useRef("");
@@ -430,8 +468,27 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     setError(null);
     setItemErrors([]);
     setCheckOrders(false);
+    // 1. Os arquivos da arte (PDF no gabarito e os enviados pelo cliente) sobem para o Bunny, uma vez cada.
+    let items = lines.map((line) => line.item);
+    if (pendingArtFiles(items).length) {
+      setArtNotice(null);
+      const outcome = await uploadCartArt(items, setSending);
+      setSending(null);
+      if (Object.keys(outcome.uploaded).length) {
+        setUploaded(outcome.uploaded);
+        items = items.map((item) => withUploads(item, outcome.uploaded));
+      }
+      if (!outcome.ok) {
+        setBusy(false);
+        setError(outcome.error);
+        return;
+      }
+      if (outcome.disabled) setArtNotice("O envio de arquivos está desligado agora: a equipe pede a arte depois do pedido.");
+      else if (outcome.missing.length) setArtNotice(`Não encontramos neste navegador: ${outcome.missing.join(", ")}. A equipe pede esses arquivos depois do pedido.`);
+    }
+    // 2. O pedido, com as URLs dos arquivos em cada item.
     const reply = await postJson<OrderReply>("/api/pedidos", {
-      items: lines.map((line) => toOrderItem(line.item, line.unitPrice)),
+      items: lines.map((line, index) => toOrderItem(items[index], line.unitPrice)),
       payment,
       delivery,
       expectedTotal,
@@ -572,7 +629,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
               {STORE.address} · {STORE.hours}
             </Option>
           </fieldset>
-          <p className="mt-3 text-caption text-muted">O frete é combinado com o atendimento depois do pedido (a API ainda não calcula frete).</p>
+          <p className="mt-3 text-caption text-muted">O frete é combinado com o atendimento depois do pedido.</p>
           {error && step === 2 && <FormAlert className="mt-4">{error}</FormAlert>}
           <Button variant="buy" size="md" block className="mt-5" onClick={confirmDelivery}>
             Continuar
@@ -643,9 +700,20 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
               Abrir Meus pedidos
             </Button>
           )}
+          {artNotice && (
+            <p role="status" className="mt-3 rounded-thumb bg-mist p-3 text-caption text-ink/80">
+              {artNotice}
+            </p>
+          )}
           {!quote && (
             <Button variant="buy" size="md" block className="mt-4" loading={busy} disabled={pricing} onClick={() => submit(totals.total)}>
-              {pricing ? "Atualizando preços…" : ordersEnabled ? `Finalizar pedido · ${formatBRL(totals.total)}` : `Simular pedido · ${formatBRL(totals.total)}`}
+              {sending
+                ? `Enviando os arquivos da arte (${Math.min(sending.done + 1, sending.total)} de ${sending.total})…`
+                : pricing
+                  ? "Atualizando preços…"
+                  : ordersEnabled
+                    ? `Finalizar pedido · ${formatBRL(totals.total)}`
+                    : `Simular pedido · ${formatBRL(totals.total)}`}
             </Button>
           )}
         </Step>

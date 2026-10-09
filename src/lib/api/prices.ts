@@ -45,6 +45,12 @@ export function quantityLimits(product: Product): { minQty: number; maxQty: numb
   return { minQty: Math.max(1, product.minQty ?? 1), maxQty: Math.max(0, product.maxQty ?? 0) };
 }
 
+/** Faixas próprias das variações (Caderno "De 11 até 100"): id → [mínimo, máximo] em unidades. */
+export function variationQuantityLimits(product: Product): Record<string, [number, number]> | undefined {
+  const entries = product.variations.filter((v) => v.mn !== undefined || v.mx !== undefined).map((v): [string, [number, number]] => [String(v.id), [v.mn ?? product.minQty ?? 1, v.mx ?? product.maxQty ?? 0]]);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 async function resellerTable(groupId: number, account: PriceAccount, cacheOnly = false): Promise<Variation[]> {
   const key = `${account.id}:${groupId}`;
   const hit = tables.get(key);

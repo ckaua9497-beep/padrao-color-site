@@ -1,6 +1,6 @@
 import type { CustomSize, Product, Variation } from "./catalog";
 import type { AreaQuote, Selection } from "./pricing.ts";
-import { areaQuote, cleanOptionLabel, optionKeys, quote } from "./pricing.ts";
+import { areaQuote, cleanOptionLabel, optionKeys, quote, unitLimits } from "./pricing.ts";
 
 /*
  * Festas e kits (checklist "Festas e kits").
@@ -1164,13 +1164,15 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /**
- * Limites da quantidade de pedidos. Produto vendido por unidade: mínimo e máximo da API (até MAX_QTY).
- * Vendido em pacote (setQty > 1): a quantidade conta pacotes, de 1 a MAX_QTY.
+ * Limites da quantidade de pedidos. Produto vendido por unidade: mínimo e máximo da faixa da variação (Caderno
+ * "De 11 até 100") ou do produto, até `ceiling` (MAX_QTY na festa; o Monte Seu Kit vai até 999, como o
+ * carrinho). Vendido em pacote (setQty > 1): a quantidade conta pacotes, de 1 a MAX_QTY.
  */
-export function qtyLimits(product: Pick<PartyProduct, "minQty" | "maxQty">, setQty: number): { min: number; max: number } {
+export function qtyLimits(product: Pick<PartyProduct, "minQty" | "maxQty">, setQty: number, ceiling = MAX_QTY, variation?: Pick<Variation, "mn" | "mx"> | null): { min: number; max: number } {
   if (setQty > 1) return { min: 1, max: MAX_QTY };
-  const min = clamp(Math.round(product.minQty) || 1, 1, MAX_QTY);
-  const max = clamp(Math.round(product.maxQty) || MAX_QTY, min, MAX_QTY);
+  const units = unitLimits(product, variation);
+  const min = clamp(units.min, 1, ceiling);
+  const max = clamp(units.max || ceiling, min, ceiling);
   return { min, max };
 }
 
@@ -1204,9 +1206,10 @@ function maxLead(days: (number | null)[]): number | null {
 
 /**
  * Preço do item: variação do catálogo (`quote`) e, nos produtos por m², `areaQuote` com largura × altura.
- * Cada peça do conjunto vira uma linha; o total multiplica pela quantidade de pedidos.
+ * Cada peça do conjunto vira uma linha; o total multiplica pela quantidade de pedidos. `ceiling`: teto da
+ * quantidade de pedidos (qtyLimits).
  */
-export function priceItem(item: PartyItem, config: ItemConfig): PricedItem {
+export function priceItem(item: Pick<PartyItem, "product" | "parts" | "preset" | "choice">, config: ItemConfig, ceiling = MAX_QTY): PricedItem {
   const { product } = item;
   const keys = optionKeys(product.options);
   const fallback = { price: product.price, qty: product.priceQty, leadDays: product.leadDays };
@@ -1224,7 +1227,7 @@ export function priceItem(item: PartyItem, config: ItemConfig): PricedItem {
   });
 
   const setQty = product.customSize ? 1 : (drafts[0]?.q.qty ?? 1);
-  const limits = qtyLimits(product, setQty);
+  const limits = qtyLimits(product, setQty, ceiling, drafts[0]?.q.variation);
   const qty = clamp(Math.round(config.qty) || limits.min, limits.min, limits.max);
 
   const lines: PricedLine[] = drafts.map(({ spec, selection, q, area }) => {
@@ -1260,7 +1263,7 @@ export function priceItem(item: PartyItem, config: ItemConfig): PricedItem {
 }
 
 /** Soma de itens já calculados: total, maior prazo e se algum preço é "a partir de". */
-export function sumPriced(priced: PricedItem[]): { total: number; leadDays: number | null; open: boolean; lines: number } {
+export function sumPriced(priced: Pick<PricedItem, "total" | "leadDays" | "open" | "lines">[]): { total: number; leadDays: number | null; open: boolean; lines: number } {
   return {
     total: round2(priced.reduce((sum, p) => sum + p.total, 0)),
     leadDays: maxLead(priced.map((p) => p.leadDays)),

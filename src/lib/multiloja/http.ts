@@ -29,6 +29,8 @@ export const vitrineLimits = {
   arte: createRateLimiter({ max: 40, windowMs: 10 * MINUTE }),
   visita: createRateLimiter({ max: 30, windowMs: MINUTE }),
   status: createRateLimiter({ max: 120, windowMs: MINUTE }),
+  /** Cotação do checkout (cota o frete na API da Padrão quando o CEP muda). */
+  cotacao: createRateLimiter({ max: 60, windowMs: MINUTE }),
 };
 
 /** Conta uma tentativa por IP (sem IP confiável, não limita). true = passou do limite. */

@@ -109,6 +109,35 @@ export function studioBackdrop(dark: boolean, glow: readonly string[] = []): Bac
   };
 }
 
+/**
+ * Fim de tarde, para o foco na arte (a placa da fachada com os refletores acesos): céu azul-escuro com o
+ * horizonte ainda claro atrás da peça e uma poça de luz quente no chão.
+ */
+export function duskBackdrop(): Backdrop {
+  return {
+    base: { color: "#121722" },
+    layers: [
+      {
+        at: [50, 42],
+        radius: [88, 78],
+        stops: [
+          [0, { color: "#3b4762" }],
+          [0.5, { color: "#242c3d" }],
+          [1, { color: "#121722", alpha: 0 }],
+        ],
+      },
+      {
+        at: [50, 80],
+        radius: [56, 16],
+        stops: [
+          [0, { color: "#ffe2b8", alpha: 0.12 }],
+          [1, { color: "#ffe2b8", alpha: 0 }],
+        ],
+      },
+    ],
+  };
+}
+
 const pct = (value: number) => `${Math.round(value * 1000) / 10}%`;
 // Com fallback: um token ausente invalidaria o `background` inteiro (fundo transparente), não só a camada.
 const cssRef = (color: string) => (color.startsWith("#") ? color : `var(--color-${color}, ${TOKEN_FALLBACK[color] ?? "transparent"})`);

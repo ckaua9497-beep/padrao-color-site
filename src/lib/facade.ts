@@ -22,14 +22,11 @@ export const EDIT_MAX_SIDE = 2400;
 /** Abaixo disso a foto ainda serve, mas a simulação perde nitidez. */
 export const MIN_PHOTO_SIDE = 800;
 
-/** Formatos que abrem no simulador (foto da loja e design). */
+/** Formatos da foto da loja (a arte vai pelo editor, que também abre SVG e PDF). */
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
-/** Arquivos de produção: não abrem no simulador e seguem depois do pedido (WhatsApp ou reenvio de arte). */
+/** Arquivos de produção em vetor (tabela de arquivos aceitos): AI, CDR e EPS vão junto do pedido, como foram enviados. */
 export const PRODUCTION_EXTENSIONS = ["pdf", "ai", "cdr", "eps", "svg"] as const;
-const PRODUCTION_TYPES = ["application/pdf", "application/postscript", "application/illustrator", "image/svg+xml", "application/vnd.corel-draw", "application/cdr"];
-
-export type DesignKind = "image" | "production" | "unsupported";
 
 export function fileExtension(name: string): string {
   const match = /\.([a-z0-9]+)$/i.exec(name.trim());
@@ -45,12 +42,6 @@ export function isImageFile(name: string, type: string): boolean {
   return LOOSE_TYPES.includes(type) && IMAGE_EXTENSIONS.includes(fileExtension(name));
 }
 
-export function classifyDesign(name: string, type: string): DesignKind {
-  if (isImageFile(name, type)) return "image";
-  if ((PRODUCTION_EXTENSIONS as readonly string[]).includes(fileExtension(name)) || PRODUCTION_TYPES.includes(type)) return "production";
-  return "unsupported";
-}
-
 type FileInfo = { name: string; type: string; size: number };
 
 const isHeic = (file: FileInfo) => /hei[cf]/i.test(file.type) || /^hei[cf]$/.test(fileExtension(file.name));
@@ -62,22 +53,6 @@ export function photoFileError(file: FileInfo): string | null {
   }
   if (file.size > MAX_FILE_MB * MB) return `“${file.name}” tem mais de ${MAX_FILE_MB} MB. Envie uma foto menor.`;
   return null;
-}
-
-/** Erro do design; arquivo de produção (PDF, AI, CDR…) não é erro: só não abre no simulador. */
-export function designFileError(file: FileInfo): string | null {
-  const kind = classifyDesign(file.name, file.type);
-  if (kind === "unsupported") {
-    if (isHeic(file)) return `“${file.name}” está em HEIC. Exporte o design em PNG ou JPG.`;
-    return `“${file.name}” não é aceito. Para simular, use PNG, JPG ou WEBP; para produção, PDF, AI, CDR, EPS ou SVG.`;
-  }
-  if (kind === "image" && file.size > MAX_FILE_MB * MB) return `“${file.name}” tem mais de ${MAX_FILE_MB} MB. Envie uma versão menor para simular e mande o arquivo final depois.`;
-  return null;
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes >= MB) return `${decimal(bytes / MB, 1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 export function formatPixels(width: number, height: number): string {
@@ -141,32 +116,9 @@ export const DPI_MIN = 50;
 /** Recomendado: nitidez boa também de perto. */
 export const DPI_RECOMMENDED = 100;
 
-export type ResolutionLevel = "otima" | "boa" | "baixa";
-
-/** DPI = pixels ÷ (metros × 39,37). */
-export function dpiAt(pixels: number, metres: number): number {
-  return metres > 0 && pixels > 0 ? pixels / (metres * INCHES_PER_METRE) : 0;
-}
-
 export type FitMode = "cover" | "contain";
 
-/**
- * DPI que a arte terá impressa na fachada. "Preencher" (cover) amplia até cobrir os dois lados:
- * vale o eixo mais fraco. "Ajustar" (contain) amplia até encostar no primeiro lado: vale o mais forte.
- */
-export function effectiveDpi(designW: number, designH: number, widthM: number, heightM: number, fit: FitMode): number {
-  const x = dpiAt(designW, widthM);
-  const y = dpiAt(designH, heightM);
-  return fit === "cover" ? Math.min(x, y) : Math.max(x, y);
-}
-
-export function resolutionLevel(dpi: number): ResolutionLevel {
-  if (dpi >= DPI_RECOMMENDED) return "otima";
-  if (dpi >= DPI_MIN) return "boa";
-  return "baixa";
-}
-
-/** Pixels necessários para a medida (em metros) numa resolução. */
+/** Pixels necessários para a medida (em metros) numa resolução: DPI = pixels ÷ (metros × 39,37). */
 export function requiredPixels(widthM: number, heightM: number, dpi: number): { w: number; h: number } {
   // A folga evita que 7874,000000001 vire 7875.
   return { w: Math.ceil(widthM * INCHES_PER_METRE * dpi - 1e-6), h: Math.ceil(heightM * INCHES_PER_METRE * dpi - 1e-6) };
@@ -183,29 +135,6 @@ export const EXAMPLE_SIZES: readonly [number, number][] = [
 ];
 
 // ------------------------------------------------------------------------------------ proporção
-
-/** Diferença de proporção tolerada entre a arte e a fachada (2%). */
-export const ASPECT_TOLERANCE = 0.02;
-
-export type AspectCheck = {
-  /** Largura ÷ altura da arte e da fachada. */
-  design: number;
-  facade: number;
-  /** 0 = proporções iguais; 0,25 = um quarto de diferença. */
-  diff: number;
-  matches: boolean;
-  /** No "Preencher", o lado da arte que perde um pedaço (null quando as proporções batem). */
-  cropSide: "laterais" | "topo e base" | null;
-};
-
-/** Mesmo valor nos dois encaixes: fração da arte cortada (Preencher) ou da fachada com fundo (Ajustar). */
-export function aspectCheck(designW: number, designH: number, facadeW: number, facadeH: number): AspectCheck {
-  const design = designW / designH;
-  const facade = facadeW / facadeH;
-  const diff = 1 - Math.min(design, facade) / Math.max(design, facade);
-  const matches = diff <= ASPECT_TOLERANCE;
-  return { design, facade, diff, matches, cropSide: matches ? null : design > facade ? "laterais" : "topo e base" };
-}
 
 /** "3:1", "1,33:1" */
 export function ratioLabel(ratio: number): string {
@@ -728,14 +657,12 @@ export type CartOptionsInput = {
   selection: Selection;
   billedArea: number;
   rotated: boolean;
-  /** Arte de imagem usada na simulação. */
-  design: { name: string; dpi: number | null; fit: FitMode; background: string; matches: boolean } | null;
-  /** Arquivo de produção (PDF, AI, CDR…) que segue depois do pedido. */
-  productionFile: string | null;
-  artLater: boolean;
 };
 
-/** Opções do item no carrinho: medida e material primeiro, depois o que a produção precisa saber. */
+/**
+ * Opções do item no carrinho: medida e material primeiro, depois o que a produção precisa saber. O resumo da
+ * arte (texto, estilo, cores) vem do editor (artSummary) e entra depois destas.
+ */
 export function facadeCartOptions(input: CartOptionsInput): Record<string, string> {
   const options: Record<string, string> = { Fachada: facadeLabel(input.widthCm, input.heightCm), Material: input.material };
   // optionKeys põe as chaves numeradas da API ("1 - Acabamento", "2 - Mídia") na ordem certa.
@@ -750,11 +677,5 @@ export function facadeCartOptions(input: CartOptionsInput): Record<string, strin
   };
   note("Área cobrada", formatArea(input.billedArea));
   if (input.rotated) note("Produção", "Impressa girada 90° para caber no material");
-  if (input.design) {
-    if (!input.design.matches) note("Encaixe", input.design.fit === "cover" ? "Preencher (corta o excedente)" : `Ajustar (fundo ${input.design.background})`);
-    if (input.design.dpi !== null) note("Resolução", `${Math.round(input.design.dpi)} DPI na medida final`);
-    if (input.artLater) note("Simulação", input.design.name);
-  }
-  if (input.productionFile) note("Arte final", `${input.productionFile} (enviar depois)`);
   return options;
 }

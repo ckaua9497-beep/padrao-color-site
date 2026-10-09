@@ -24,6 +24,16 @@ export type Variation = {
   /** Prazo expresso em dias úteis. */
   de?: number | null;
   v: Record<string, string>;
+  /** Embalagem de envio (frete): [peso kg, largura, altura, comprimento cm, lotes por caixa]. */
+  em?: [number, number, number, number, number];
+  /** Embalagem incompleta na Padrão (sem `em`): [peso kg, largura, altura, comprimento cm], 0 no que falta. Não cota. */
+  ei?: [number, number, number, number];
+  /**
+   * Faixa de quantidade da variação, quando difere da do produto (ex.: Caderno "De 11 até 100"): mínimo e
+   * máximo de unidades. Sem eles, valem o minQty/maxQty do produto. Ver unitLimits (pricing.ts).
+   */
+  mn?: number;
+  mx?: number;
 };
 
 export type InfoBlock = { title: string; text: string };

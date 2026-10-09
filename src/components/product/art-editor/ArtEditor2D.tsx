@@ -166,8 +166,10 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
       surface,
       frontWindow,
       sample,
+      // O palco tem a proporção da área (em pixels ela sai arredondada): o template monta igual ao 3D.
+      aspect: safeAspect,
     }),
-    [art, fabric, kind, ledColors, surface, frontWindow, sample],
+    [art, fabric, kind, ledColors, surface, frontWindow, sample, safeAspect],
   );
 
   useEffect(() => {

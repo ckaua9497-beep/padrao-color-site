@@ -10,20 +10,20 @@ import { formatBRL, spectrumAt } from "@/lib/format";
 import { STORE } from "@/lib/store";
 
 export const metadata: Metadata = {
-  title: "Fachadas: simule a fachada na foto da sua loja",
+  title: "Fachadas: crie a arte e veja a fachada em 3D",
   description:
-    "Envie a foto da sua loja, marque onde a fachada entra e veja o seu design aplicado em perspectiva. Lona, adesivo e placas com preço por m², calculado na hora.",
+    "Crie a arte da fachada no editor ou envie a sua e veja na hora numa fachada de loja em 3D ou na foto da sua loja, em perspectiva. Lona, adesivo e placas com preço por m², calculado na hora.",
   openGraph: {
     title: "Simulador de fachadas | Padrão Color",
-    description: "Veja o design da fachada aplicado na foto da sua loja, em perspectiva, e calcule o preço por m².",
+    description: "Crie ou envie a arte da fachada, veja em 3D ou na foto da sua loja e calcule o preço por m².",
   },
 };
 
 const STEPS = [
-  { Icon: IconStore, title: "Fotografe a fachada", text: `De frente ou um pouco de lado, com a fachada inteira. Envie até ${MAX_PHOTOS} fotos e compare.` },
-  { Icon: IconCorners, title: "Marque os quatro cantos", text: "Arraste os cantos até as bordas: o design entra em perspectiva, com a luz e a sombra da foto." },
-  { Icon: IconImage, title: "Envie o design", text: "PNG, JPG ou WEBP para simular. O simulador confere a resolução na medida real." },
-  { Icon: IconRuler, title: "Escolha o material", text: "Lona, adesivo ou placa, com preço por m². O arquivo final vai depois do pedido." },
+  { Icon: IconCorners, title: "Informe a medida", text: "Largura e altura da placa: o mockup 3D já mostra a fachada da loja nessa proporção." },
+  { Icon: IconImage, title: "Crie ou envie a arte", text: "Escreva o nome da loja e escolha estilo, fonte e cores no editor, ou envie o seu arquivo (PNG, JPG, SVG ou PDF)." },
+  { Icon: IconStore, title: "Veja na fachada", text: `Gire a loja em 3D ou envie até ${MAX_PHOTOS} fotos da sua fachada e marque os quatro cantos para ver em perspectiva.` },
+  { Icon: IconRuler, title: "Escolha o material", text: "Lona, adesivo ou placa, com preço por m². O arquivo da arte vai junto do pedido." },
 ];
 
 export default function FacadesPage() {
@@ -32,23 +32,27 @@ export default function FacadesPage() {
   const example = requiredPixels(4, 1, DPI_MIN);
 
   const highlights = [
-    { Icon: IconLock, title: "Fotos e design ficam no seu navegador", text: "Nada é enviado durante a simulação" },
+    { Icon: IconLock, title: "Arte e fotos ficam no seu navegador", text: "Nada é enviado durante a simulação" },
     { Icon: IconRuler, title: cheapest ? `A partir de ${formatBRL(cheapest)} o m²` : "Preço por m²", text: "Lona, adesivo e placas, calculado na hora" },
-    { Icon: IconDownload, title: "Baixe a simulação em PNG", text: "Para mostrar ao sócio ou ao condomínio" },
+    { Icon: IconDownload, title: "Baixe a imagem em PNG", text: "Do 3D ou da foto, para mostrar ao sócio ou ao condomínio" },
   ];
 
   const faq = [
     {
-      q: "A foto e o design são enviados para o site?",
-      a: "Não. O simulador roda no seu navegador: as fotos da loja e o design não saem do seu aparelho. O arquivo final vai depois do pedido, pelo WhatsApp ou pelo reenvio de arte.",
+      q: "Posso criar a fachada sem ter a arte pronta?",
+      a: "Pode. No passo 2, escreva o nome da loja e um texto secundário (telefone, @perfil) e escolha um dos estilos prontos, a fonte e as cores: a placa do mockup 3D muda na hora. Também dá para enviar o seu logo e posicionar no editor. A equipe confere o arquivo antes de imprimir.",
+    },
+    {
+      q: "A arte e as fotos são enviadas para o site?",
+      a: "Durante a simulação, não: o editor, o mockup 3D e a simulação na foto rodam no seu navegador, e as fotos da loja nunca saem do seu aparelho. O arquivo da arte só vai quando você finaliza a compra, junto do pedido, para a equipe conferir antes de imprimir.",
     },
     {
       q: "Que resolução o design precisa ter?",
       a: `Na medida final, pelo menos ${DPI_MIN} DPI (fachada vista a mais de 3 m) e, de preferência, ${DPI_RECOMMENDED} DPI. Uma fachada de 4 × 1 m pede no mínimo ${formatPixels(example.w, example.h)}. Arquivos em vetor (PDF, AI, CDR) não têm esse limite.`,
     },
     {
-      q: "E se o design tiver outra proporção?",
-      a: "O simulador mostra a diferença e você escolhe: Preencher ocupa a fachada toda e corta o excedente; Ajustar mostra o design inteiro e completa a sobra com uma cor de fundo.",
+      q: "E se a minha arte tiver outra proporção?",
+      a: "O editor encaixa o arquivo na placa sozinho: logo inteiro e centralizado, sobre a cor da borda dele; foto preenchendo a área. Depois você escolhe entre Preencher a área e Imagem inteira, arrasta, aumenta e troca a cor de fundo.",
     },
     {
       q: "Como o preço é calculado?",
@@ -60,7 +64,7 @@ export default function FacadesPage() {
     },
     {
       q: "A simulação é igual à fachada pronta?",
-      a: "É uma prévia para decidir: perspectiva, luz e sombra são aproximadas e as cores mudam de tela para tela. A impressão segue o arquivo final, que a equipe confere antes de imprimir.",
+      a: "O mockup 3D e a simulação na foto são prévias para decidir: a loja do 3D é ilustrativa, a perspectiva, a luz e a sombra são aproximadas e as cores mudam de tela para tela. A impressão segue o arquivo final, que a equipe confere antes de imprimir.",
     },
   ];
 
@@ -77,16 +81,16 @@ export default function FacadesPage() {
         <header className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:items-end">
           <div>
             <p className="text-sm font-bold uppercase tracking-[0.2em] text-coral-700">Simulador de fachadas</p>
-            <h1 className="mt-3 text-display">Veja a fachada nova na foto da sua loja</h1>
+            <h1 className="mt-3 text-display">Crie a fachada e veja na loja antes de imprimir</h1>
             <p className="mt-4 max-w-2xl text-lead text-muted">
-              Envie uma foto da frente da loja, marque os quatro cantos da fachada e veja o seu design aplicado em perspectiva, com a luz da foto. O preço sai na hora, por m² do
-              material.
+              Monte a arte no editor (nome, estilo, fonte e cores) ou envie a sua, e veja na hora numa fachada de loja em 3D. Se quiser, aplique na foto da sua loja, em
+              perspectiva. O preço sai na hora, por m² do material.
             </p>
           </div>
-          <ul className="grid gap-3">
+          <ul className="grid gap-2 sm:gap-3">
             {highlights.map(({ Icon, title, text }, i) => (
-              <li key={title} className="flex items-center gap-3 rounded-card bg-mist p-4">
-                <span className="grid size-11 shrink-0 place-items-center rounded-full" style={{ background: spectrumAt(i + 1).soft }}>
+              <li key={title} className="flex items-center gap-3 rounded-card bg-mist p-3 sm:p-4">
+                <span className="grid size-9 shrink-0 place-items-center rounded-full sm:size-11" style={{ background: spectrumAt(i + 1).soft }}>
                   <Icon className="size-5" />
                 </span>
                 <span className="text-caption leading-tight">

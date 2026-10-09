@@ -389,13 +389,6 @@ export function isPaymentKind(value: unknown): value is PaymentKind {
   return typeof value === "string" && (PAYMENT_KINDS as readonly string[]).includes(value);
 }
 
-/** Frete da loja: valor fixo, grátis a partir de um subtotal. */
-export function shippingFor(subtotal: number, fixed: number, freeAbove: number | null): number {
-  if (!(fixed > 0)) return 0;
-  if (freeAbove !== null && freeAbove > 0 && subtotal >= freeAbove) return 0;
-  return roundCents(fixed);
-}
-
 /** Taxa de um meio de pagamento: % do valor cobrado + valor fixo por transação (boleto costuma ser só fixo). */
 export type FeeRule = { pct: number; fixed: number };
 export type PaymentRates = Record<PaymentKind, FeeRule>;

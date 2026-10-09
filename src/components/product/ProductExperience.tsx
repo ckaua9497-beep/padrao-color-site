@@ -9,6 +9,7 @@ import type { CaptureFn } from "@/components/mockup/MockupViewer";
 import { DEFAULT_ART, artFamily, hasArtContent, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
+import { keepArtFiles, uploadedFileOf } from "./art-source";
 import { artSummary } from "./art-summary";
 import { useCart } from "@/components/cart/CartProvider";
 import { IconClock, IconCube, IconTruck } from "@/components/icons";
@@ -22,6 +23,7 @@ import { cx } from "@/components/ui/cx";
 import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, imageUrl, leadLabel, quantityLabel } from "@/lib/format";
+import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
 import { formatSize, mockupSpec } from "@/lib/mockup";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
 import { describePanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
@@ -40,6 +42,7 @@ import {
   sizeSummary,
   sizeTotal,
   speedQuote,
+  unitLimits,
   usesArea,
   type Selection,
   type SizeCounts,
@@ -149,6 +152,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const [attempted, setAttempted] = useState(false);
   const [art, setArt] = useState<ArtSettings>(DEFAULT_ART);
   const [artName, setArtName] = useState<string | null>(null);
+  // Arquivo sem prévia (AI, CDR, PDF que o navegador não abre): vai para a produção como foi enviado.
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [artLater, setArtLater] = useState(false);
   const [artMissing, setArtMissing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -277,8 +282,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
   // Quantidade fora da grade: unidades (preço por unidade, com o mínimo da API) ou pacotes ("por 1.000 un.").
   const perUnit = !areaMode && price.qty <= 1;
-  const minQty = perUnit ? Math.max(1, product.minQty ?? 1) : 1;
-  const maxQty = perUnit ? Math.max(minQty, Math.min(product.maxQty || 999, 999)) : 99;
+  // A faixa da variação escolhida (Caderno "De 11 até 100" = 11 a 100) vale no lugar da do produto.
+  const tier = unitLimits(product, price.variation);
+  const minQty = perUnit ? tier.min : 1;
+  const maxQty = perUnit ? Math.max(minQty, Math.min(tier.max || 999, 999)) : 99;
   const quantity = Math.min(maxQty, Math.max(minQty, qty));
 
   // Preço de uma peça (m²) ou de um conjunto da tabela; o total multiplica pela quantidade ou pelas peças da grade.
@@ -346,6 +353,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     // Sem prévia (AI, CDR, TIFF…): vai anexado ao pedido; o 3D segue com a arte de exemplo.
     const attach = (message: string | null) => {
       setArtName(file.name);
+      setAttachedFile(file);
       setArt((a) => ({ ...a, src: null, templateFit: null }));
       setArtLater(false);
       setArtMissing(false);
@@ -372,6 +380,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
         return frontSide?.frame ? fitToTemplate(fresh, frontSide, { transparentBase, frontWindow: gabarito?.fitWindow }) : autoFitArt(fresh, fitArea);
       });
       setArtName(file.name);
+      setAttachedFile(null);
       setArtMissing(false);
       setTab("3d");
     } catch (error) {
@@ -425,12 +434,24 @@ export default function ProductExperience({ product }: { product: ClientProduct 
         printFile = null;
       }
     }
+    // Arquivos que o cliente enviou (frente e verso): ficam no navegador até o checkout mandar para o Bunny.
+    const artFiles =
+      spec.blank || artLater
+        ? []
+        : await keepArtFiles(
+            [
+              { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" },
+              { file: uploadedFileOf(art.back?.src), kind: "verso" },
+            ],
+            product.name,
+          );
     add({
       slug: product.slug,
       name: product.name,
       image: product.image,
       preview: thumb,
       printFile,
+      artFiles: artFiles.length ? artFiles : null,
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
@@ -653,7 +674,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           />
         )}
 
-        <CepLookup leadDays={chosen.leadDays} />
+        <CepLookup leadDays={chosen.leadDays} groupId={product.groupId} variationId={price.variation?.id} quantity={apparel ? units : quantity} />
       </div>
 
       {preview && (
@@ -675,9 +696,17 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   );
 }
 
-function CepLookup({ leadDays }: { leadDays: number | null }) {
+type CepResult =
+  | { ok: true; place: string; opcoes: OpcaoFrete[] | null; semMedida: boolean }
+  | { ok: false; error: string };
+
+/**
+ * "Calcular entrega": a cidade do CEP (ViaCEP) e as formas de entrega da API de frete da Padrão (/api/frete), com a
+ * embalagem da variação escolhida e a quantidade. É uma estimativa: o frete do pedido é combinado no checkout.
+ */
+function CepLookup({ leadDays, groupId, variationId, quantity }: { leadDays: number | null; groupId?: number; variationId?: number; quantity: number }) {
   const [cep, setCep] = useState("");
-  const [result, setResult] = useState<{ ok: true; place: string } | { ok: false; error: string } | null>(null);
+  const [result, setResult] = useState<CepResult | null>(null);
   const [loading, setLoading] = useState(false);
 
   const lookup = async () => {
@@ -688,20 +717,40 @@ function CepLookup({ leadDays }: { leadDays: number | null }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
-      const data = await res.json();
-      if (data.erro) setResult({ ok: false, error: "CEP não encontrado." });
-      else setResult({ ok: true, place: `${data.localidade}/${data.uf}` });
-    } catch {
-      setResult({ ok: false, error: "Não foi possível consultar o CEP agora." });
+      const [place, freight] = await Promise.all([
+        fetch(`https://viacep.com.br/ws/${digits}/json/`)
+          .then((res) => res.json() as Promise<{ erro?: unknown; localidade?: string; uf?: string }>)
+          .catch(() => null),
+        groupId
+          ? fetch("/api/frete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cep: digits, groupId, variationId, quantity }),
+            })
+              .then(async (res) => ({ ok: res.ok, data: (await res.json().catch(() => ({}))) as { opcoes?: OpcaoFrete[]; semMedida?: boolean } }))
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (!place || place.erro) {
+        setResult({ ok: false, error: place ? "CEP não encontrado." : "Não foi possível consultar o CEP agora." });
+        return;
+      }
+      setResult({ ok: true, place: `${place.localidade}/${place.uf}`, opcoes: freight?.ok ? (freight.data.opcoes ?? []) : null, semMedida: Boolean(freight?.data.semMedida) });
     } finally {
       setLoading(false);
     }
   };
 
+  const production = leadLabel(leadDays) ?? "Produção conforme o produto";
   const message = result
     ? result.ok
-      ? `Entrega para ${result.place}. ${leadLabel(leadDays) ?? "Produção conforme o produto"}; o frete é calculado na finalização da compra.`
+      ? result.opcoes?.length
+        ? `Entrega para ${result.place}. ${production}; o prazo de cada forma de entrega conta depois que o pedido fica pronto.`
+        : result.semMedida
+          ? `Entrega para ${result.place}. ${production}; o frete deste produto é combinado com o atendimento.`
+          : result.opcoes
+            ? `Nenhuma transportadora entrega este produto em ${result.place}. Fale com o atendimento.`
+            : `Entrega para ${result.place}. ${production}; o frete é combinado na finalização do pedido.`
       : result.error
     : null;
 
@@ -735,6 +784,19 @@ function CepLookup({ leadDays }: { leadDays: number | null }) {
         <p role={result?.ok ? "status" : "alert"} className={cx("mt-2 text-sm", result?.ok ? "text-ink/80" : "font-semibold text-coral-700")}>
           {message}
         </p>
+      )}
+      {result?.ok && result.opcoes && result.opcoes.length > 0 && (
+        <ul className="mt-3 divide-y divide-line rounded-control border border-line bg-white sm:max-w-md">
+          {result.opcoes.map((option) => (
+            <li key={option.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+              <span className="min-w-0">
+                <span className="block font-semibold">{nomeFrete(option)}</span>
+                <span className="text-caption text-muted">{prazoFrete(option)}</span>
+              </span>
+              <span className="shrink-0 font-bold tabular-nums">{formatBRL(option.preco)}</span>
+            </li>
+          ))}
+        </ul>
       )}
       <a href="https://buscacepinter.correios.com.br/app/endereco/index.php" target="_blank" rel="noreferrer" className="mt-1 inline-block text-caption text-muted underline underline-offset-2">
         Não sei meu CEP

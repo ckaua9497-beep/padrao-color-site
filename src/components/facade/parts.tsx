@@ -8,12 +8,17 @@ import { IconAlert } from "./icons";
 /** Título numerado de cada passo do simulador. */
 export function StepTitle({ n, id, hint, children }: { n: number; id?: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <h3 id={id} className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[17px] font-bold">
+    <h3 id={id} className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[17px] font-bold">
       <span aria-hidden className="grid size-6 place-items-center rounded-full bg-ink text-[12px] text-white">
         {n}
       </span>
       {children}
-      {hint && <span className="text-caption font-normal text-muted">· {hint}</span>}
+      {hint && (
+        <span className="w-full pl-8 text-caption font-normal text-muted sm:w-auto sm:pl-0">
+          <span aria-hidden className="hidden sm:inline">· </span>
+          {hint}
+        </span>
+      )}
     </h3>
   );
 }

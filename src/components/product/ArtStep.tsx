@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { IconCheck, IconUpload } from "@/components/icons";
 import {
   ART_BACKGROUNDS,
@@ -55,7 +55,8 @@ type Props = {
   /** Grade de tamanhos e medidas da camisa (manequim proporcional). */
   sizes?: string[] | null;
   sizeChart?: SizeChartRow[] | null;
-  step: number;
+  /** Número do passo na página; sem ele (editor de um item do kit), o título vem sem número. */
+  step?: number;
   family: ArtFamily;
   /** Produto vendido sem impressão: a arte serve só para simular, não é exigida. */
   blank?: boolean;
@@ -86,6 +87,10 @@ type Props = {
   gabarito?: Gabarito | null;
   /** Slug do produto (nome do PDF de impressão). */
   slug?: string;
+  /** Clique num estilo (na fachada, a câmera vai de frente para a placa e os refletores acendem). */
+  onStylePick?: (style: ArtStyle) => void;
+  /** Título no lugar do "Sua arte" padrão (a fachada usa o mesmo título numerado dos outros passos). */
+  heading?: ReactNode;
 };
 
 type Side = "front" | "back";
@@ -114,7 +119,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "" }: Props) {
+export function ArtStep({ step, family, blank = false, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -167,6 +172,7 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
   const pickStyle = (value: ArtStyle) => {
     const suggested = ART_STYLES.find((s) => s.value === value)?.font ?? DEFAULT_ART.font;
     onSideArt((a) => ({ ...a, style: value, font: fontTouched || neon ? a.font : suggested }));
+    onStylePick?.(value);
   };
 
   // Área de arte do mockup: o tratador encaixa a imagem nela quando a peça não tem gabarito.
@@ -250,11 +256,13 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
 
   return (
     <li id="passo-arte" className="scroll-mt-32">
-      <p className="mb-3 flex items-center gap-2 text-[15px] font-bold">
-        <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>
-        {blank ? "Simule a sua arte" : "Sua arte"}
-        <span className="text-caption font-normal text-muted">{blank ? "· o produto é vendido sem impressão" : "· aparece no mockup 3D"}</span>
-      </p>
+      {heading ?? (
+        <p className="mb-3 flex items-center gap-2 text-[15px] font-bold">
+          {step !== undefined && <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>}
+          {blank ? "Simule a sua arte" : "Sua arte"}
+          <span className="text-caption font-normal text-muted">{blank ? "· o produto é vendido sem impressão" : "· aparece no mockup 3D"}</span>
+        </p>
+      )}
 
       {thermal && (
         <p className="mb-3 rounded-control bg-cyan-50 px-3 py-2 text-caption font-semibold text-ink">
@@ -704,7 +712,7 @@ export function StylePicker({ art, family, kind, aspect, ledColors, label, extra
     <div ref={group} role="radiogroup" aria-label="Estilo da arte" className={cx("grid gap-2", compact ? "grid-cols-3 sm:grid-cols-6" : "grid-cols-3")}>
       {ART_STYLES.map((style, index) => {
         const active = style.value === selected;
-        const preview: ArtRender = { ...art, ...extra, back: null, region: null, style: style.value, font: fontFor(style.value), kind, ledColors };
+        const preview: ArtRender = { ...art, ...extra, back: null, region: null, style: style.value, font: fontFor(style.value), kind, ledColors, aspect };
         return (
           <button
             key={style.value}

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import type { ArtFileKind, UploadedArtFile } from "@/lib/art-files";
 import { currentCustomer, customerVariations, useCustomer, useGroupPrices } from "@/lib/customer";
 import { quantityLabel } from "@/lib/format";
 import { bundleTitle, isLineError, priceLine, type OrderItemInput } from "@/lib/orders";
@@ -38,7 +39,13 @@ export type CartItem = {
   priceTier?: "balcao" | "revenda";
   /** Arte encaixada no gabarito oficial (PDF no tamanho real), guardada no navegador (IndexedDB) por id. */
   printFile?: { id: string; name: string } | null;
+  /** Arquivos da arte que o cliente enviou (frente e verso), guardados no navegador (IndexedDB) por id. */
+  artFiles?: CartArtFile[] | null;
+  /** Arquivos que já subiram para o Bunny no checkout (id do IndexedDB → URL pública): não sobem de novo. */
+  uploaded?: Record<string, { url: string; nome: string }>;
 };
+
+export type CartArtFile = { id: string; name: string; kind: Exclude<ArtFileKind, "pdf"> };
 
 /** Item com o preço do cliente de agora (balcão ou revenda), que pode diferir do salvo ao adicionar. */
 export type CartLine = {
@@ -80,6 +87,8 @@ type CartContextValue = {
   setQuantity: (key: string, quantity: number) => void;
   /** Mínimo/máximo da quantidade do item (limites do produto no catálogo). */
   rangeOf: (item: CartItem) => QuantityRange;
+  /** Guarda as URLs dos arquivos que subiram para o Bunny (id do IndexedDB → URL) nos itens que usam cada um. */
+  setUploaded: (files: Record<string, { url: string; nome: string }>) => void;
   clear: () => void;
 };
 
@@ -115,9 +124,14 @@ function write(next: CartItem[]) {
   listeners.forEach((listener) => listener());
 }
 
-/** Ids dos PDFs no gabarito das linhas do carrinho (o resto sai do IndexedDB). */
+/** Arquivos do item que vão para o Bunny no checkout: o PDF no gabarito e os enviados pelo cliente. */
+export function itemArtFiles(item: Pick<CartItem, "printFile" | "artFiles">): { id: string; name: string; kind: ArtFileKind }[] {
+  return [...(item.printFile ? [{ id: item.printFile.id, name: item.printFile.name, kind: "pdf" as const }] : []), ...(item.artFiles ?? [])];
+}
+
+/** Ids dos arquivos guardados das linhas do carrinho (PDF no gabarito e arquivos enviados; o resto sai do IndexedDB). */
 function printFileIds(list: CartItem[]): string[] {
-  return list.flatMap((item) => (item.printFile ? [item.printFile.id] : []));
+  return list.flatMap((item) => itemArtFiles(item).map((file) => file.id));
 }
 
 function subscribe(listener: () => void) {
@@ -136,7 +150,8 @@ function subscribe(listener: () => void) {
 
 // ---------------------------------------------------------------------------------- limites de quantidade
 
-type QtyLimits = { minQty: number; maxQty: number };
+/** Limites do produto e, quando a variação tem faixa própria ("De 11 até 100"), os dela (id → [mín., máx.]). */
+type QtyLimits = { minQty: number; maxQty: number; variations?: Record<string, [number, number]> };
 
 const NO_LIMITS: ReadonlyMap<number, QtyLimits> = new Map();
 let limits: ReadonlyMap<number, QtyLimits> = NO_LIMITS;
@@ -179,11 +194,20 @@ export function quantityRange(item: CartItem, productLimits?: QtyLimits): Quanti
   if (item.options?.Tamanhos) return { min: item.quantity, max: item.quantity, locked: true };
   const perUnit = !item.widthCm && (item.setQty || 1) <= 1;
   if (!perUnit) return { min: 1, max: 99, locked: false };
-  const min = Math.max(1, productLimits?.minQty ?? 1);
-  return { min, max: Math.max(min, Math.min(productLimits?.maxQty || 999, 999)), locked: false };
+  const own = item.variationId !== undefined ? productLimits?.variations?.[String(item.variationId)] : undefined;
+  const min = Math.max(1, own?.[0] ?? productLimits?.minQty ?? 1);
+  return { min, max: Math.max(min, Math.min((own?.[1] ?? productLimits?.maxQty) || 999, 999)), locked: false };
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/** Arquivos do item que já estão no Bunny, no formato do pedido. */
+export function uploadedFilesOf(item: Pick<CartItem, "printFile" | "artFiles" | "uploaded">): UploadedArtFile[] {
+  return itemArtFiles(item).flatMap((file) => {
+    const done = item.uploaded?.[file.id];
+    return done ? [{ url: done.url, nome: done.nome, kind: file.kind }] : [];
+  });
+}
 
 /** Item do carrinho no formato do pedido (sem miniaturas); `unitPrice` = o preço que o cliente está vendo. */
 export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderItemInput {
@@ -201,6 +225,7 @@ export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderIt
     artName: item.artName,
     bundle: item.bundle ?? null,
     unitPrice,
+    files: uploadedFilesOf(item),
   };
 }
 
@@ -288,6 +313,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
     prunePrintFilesExcept([]);
   }, []);
 
+  const setUploaded = useCallback((files: Record<string, { url: string; nome: string }>) => {
+    const ids = Object.keys(files);
+    if (!ids.length) return;
+    write(
+      read().map((item) => {
+        const mine = itemArtFiles(item).filter((file) => files[file.id]);
+        if (!mine.length) return item;
+        return { ...item, uploaded: { ...item.uploaded, ...Object.fromEntries(mine.map((file) => [file.id, files[file.id]])) } };
+      }),
+    );
+  }, []);
+
   const { category, priceTable } = customer;
   const lines = useMemo<CartLine[]>(
     () =>
@@ -314,8 +351,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const count = items.length;
     const subtotal = round2(lines.reduce((sum, line) => sum + line.total, 0));
     const pricing = lines.some((line) => line.pending);
-    return { items, lines, groups: groupLines(lines), count, subtotal, reseller: resellerCustomer, pricing, open, setOpen, add, remove, removeBundle, setQuantity, rangeOf, clear };
-  }, [items, lines, resellerCustomer, open, add, remove, removeBundle, setQuantity, rangeOf, clear]);
+    return { items, lines, groups: groupLines(lines), count, subtotal, reseller: resellerCustomer, pricing, open, setOpen, add, remove, removeBundle, setQuantity, rangeOf, setUploaded, clear };
+  }, [items, lines, resellerCustomer, open, add, remove, removeBundle, setQuantity, rangeOf, setUploaded, clear]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

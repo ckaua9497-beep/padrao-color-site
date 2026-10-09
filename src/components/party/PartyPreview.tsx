@@ -12,20 +12,32 @@ import type { PartyItem, PartyPalette, Size } from "@/lib/party";
 import type { Selection } from "@/lib/pricing";
 
 type Props = {
-  item: PartyItem | null;
+  item: Pick<PartyItem, "title" | "product"> | null;
   selection: Selection | null;
   /** Medida digitada (produtos por m²): o 3D acompanha. */
   size: Size | null;
   art: ArtSettings;
   palette: PartyPalette;
   id?: string;
+  /** Nome da região e legenda (o Monte Seu Kit fala da marca, não da festa). */
+  label?: string;
+  note?: string;
 };
 
 /**
  * Prévia única da página (um canvas WebGL por vez): o item em foco com o nome, a frase e as cores da festa,
  * em 3D ou na foto do catálogo sobre a paleta.
  */
-export default function PartyPreview({ item, selection, size, art, palette, id }: Props) {
+export default function PartyPreview({
+  item,
+  selection,
+  size,
+  art,
+  palette,
+  id,
+  label = "Prévia da festa",
+  note = "Prévia ilustrativa com o nome, a frase e as cores da festa. A arte final de cada item é combinada com a nossa equipe antes da impressão.",
+}: Props) {
   const [mode, setMode] = useState<"3d" | "foto">("3d");
   const spec = useMemo(() => {
     if (!item) return null;
@@ -36,7 +48,7 @@ export default function PartyPreview({ item, selection, size, art, palette, id }
   }, [item, selection, size]);
 
   return (
-    <section id={id} aria-label="Prévia da festa" className="scroll-mt-32">
+    <section id={id} aria-label={label} className="scroll-mt-32">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="min-w-0 text-sm font-bold">
           Prévia <span className="font-normal text-muted">· {item ? item.title : "escolha um item"}</span>
@@ -63,12 +75,12 @@ export default function PartyPreview({ item, selection, size, art, palette, id }
       ) : (
         <PhotoPreview item={item} art={art} palette={palette} />
       )}
-      <p className="mt-2 text-caption text-muted">Prévia ilustrativa com o nome, a frase e as cores da festa. A arte final de cada item é combinada com a nossa equipe antes da impressão.</p>
+      <p className="mt-2 text-caption text-muted">{note}</p>
     </section>
   );
 }
 
-function PhotoPreview({ item, art, palette }: { item: PartyItem | null; art: ArtSettings; palette: PartyPalette }) {
+function PhotoPreview({ item, art, palette }: { item: Pick<PartyItem, "product"> | null; art: ArtSettings; palette: PartyPalette }) {
   const [first, second] = palette.colors;
   return (
     <div className="relative aspect-square w-full overflow-hidden rounded-card" style={{ background: `linear-gradient(150deg, ${first} 0%, ${second ?? first} 100%)` }}>

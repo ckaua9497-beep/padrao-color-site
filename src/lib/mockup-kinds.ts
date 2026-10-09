@@ -36,6 +36,7 @@ export const MOCKUP_KINDS = [
   "totem",
   "flag",
   "hardware",
+  "storefront",
   // Bebidas
   "mug",
   "tumbler",
@@ -88,6 +89,11 @@ export type KindInfo = {
   /** O modelo desenha cotas de medida. */
   dims: boolean;
   scene: "light" | "dark";
+  /**
+   * Peça vista só de frente (a fachada): sem giro automático e órbita limitada em volta da frente.
+   * `range`: giro máximo para cada lado; `minPolar`/`maxPolar`: ângulo da câmera a partir do alto (radianos).
+   */
+  orbit?: { range: number; minPolar: number; maxPolar: number };
 };
 
 const k = (label: string, defaultSize: [number, number, number], dims: boolean, sizeIsArtArea = false, scene: KindInfo["scene"] = "light"): KindInfo => ({
@@ -97,6 +103,12 @@ const k = (label: string, defaultSize: [number, number, number], dims: boolean, 
   dims,
   scene,
 });
+
+/**
+ * Tipos usados só por uma página própria, sem produto do catálogo: a fachada de loja do simulador de
+ * fachadas (/fachadas). Ficam de fora da conferência "todo tipo tem produto".
+ */
+export const PAGE_KINDS: readonly MockupKind[] = ["storefront"];
 
 // Todo tipo recebe arte: produtos vendidos sem impressão (blank) mostram a arte como simulação.
 export const KIND_INFO: Record<MockupKind, KindInfo> = {
@@ -133,6 +145,8 @@ export const KIND_INFO: Record<MockupKind, KindInfo> = {
   totem: k("Totem de chão", [70, 170, 30], true),
   flag: k("Bandeira / wind banner", [70, 240, 0.05], false),
   hardware: k("Base e haste", [70, 240, 0.05], false),
+  // Medida = a placa da fachada (3:1); o prédio cresce em volta dela.
+  storefront: { ...k("Fachada de loja", [360, 120, 6], true), orbit: { range: 0.7, minPolar: 1.02, maxPolar: 1.66 } },
 
   mug: k("Caneca", [20, 8.5, 8], false, true),
   tumbler: k("Copo", [22, 10, 7], false, true),

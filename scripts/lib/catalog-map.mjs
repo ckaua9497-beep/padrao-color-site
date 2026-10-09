@@ -80,6 +80,41 @@ export function parseImageSize(buf) {
  * `featured`: o grupo está nos "Nossos Destaques" da vitrine. `site`: domínio do site oficial (sourceUrl).
  * `source`: origem do produto quando não é a API da Padrão ("site" = API própria, /api/novos).
  */
+/**
+ * Embalagem de envio da variação (frete pela API de frete da Padrão): [peso kg, largura, altura, comprimento cm, lotes por
+ * caixa]. Só com todas as medidas positivas; sem ela, o frete do produto não pode ser cotado.
+ */
+export function packaging(emb) {
+  if (!emb || typeof emb !== "object") return null;
+  const values = [num(emb.peso), num(emb.largura), num(emb.altura), num(emb.comprimento), num(emb.quantidade) || 1];
+  return values.every((v) => Number.isFinite(v) && v > 0) ? values : null;
+}
+
+/**
+ * Embalagem incompleta na Padrão (algo cadastrado, algo zerado; ex.: neon com caixa e peso 0, agenda com peso e caixa
+ * 0): [peso kg, largura, altura, comprimento cm], com 0 no que falta. Não cota (o checkout manda para o WhatsApp).
+ */
+export function partialPackaging(emb) {
+  if (!emb || typeof emb !== "object" || packaging(emb)) return null;
+  const values = [num(emb.peso), num(emb.largura), num(emb.altura), num(emb.comprimento)].map((v) => (v > 0 ? v : 0));
+  return values.some((v) => v > 0) ? values : null;
+}
+
+/** Mínimo e máximo de unidades da linha da API (qtde_minima/qtde_maxima; sem máximo = 999.999). */
+export function rowLimits(row) {
+  return { min: num(row?.qtde_minima) || 1, max: num(row?.qtde_maxima) || 999_999 };
+}
+
+/**
+ * Faixa de quantidade da variação (ex.: Caderno "De 11 até 100" = 11 a 100 unidades), só quando difere da do
+ * produto (a da primeira linha): `mn`/`mx`. O pedido, o carrinho e a página de produto respeitam a da variação.
+ */
+export function variationLimits(row, first) {
+  const own = rowLimits(row);
+  const base = rowLimits(first);
+  return { ...(own.min !== base.min ? { mn: own.min } : {}), ...(own.max !== base.max ? { mx: own.max } : {}) };
+}
+
 export function mapGroup(grupo, rows, { featured = false, site = "https://padraocolor.com.br", source } = {}) {
   const options = {};
   for (const row of rows) {
@@ -98,6 +133,9 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
     d: row.prazo?.economico ?? null,
     de: row.prazo?.expresso ?? null,
     v: row.variacoes ?? {},
+    ...(packaging(row.embalagem) ? { em: packaging(row.embalagem) } : {}),
+    ...(partialPackaging(row.embalagem) ? { ei: partialPackaging(row.embalagem) } : {}),
+    ...variationLimits(row, rows[0]),
   }));
 
   const priced = variations.filter((v) => v.p > 0);
@@ -153,8 +191,8 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
     web2print: rows.some((r) => sim(r.customizacao?.web2print)),
     artCreationPrice: criacao.length ? Math.min(...criacao) : null,
     attachments: [...new Set(rows.flatMap((r) => (r.tipos_anexo ?? []).map((a) => a.nome)))],
-    minQty: num(first?.qtde_minima) || 1,
-    maxQty: num(first?.qtde_maxima) || 999_999,
+    minQty: rowLimits(first).min,
+    maxQty: rowLimits(first).max,
     ...(source ? { source } : {}),
   };
 }

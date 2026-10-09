@@ -5,7 +5,9 @@ import { apiFailure, fail, json, limits, overLimit, readJsonBody, SESSION_EXPIRE
 import { gerarPedido, getCliente } from "@/lib/api/padrao";
 import { groupPrices, linePricesFor, type PriceAccount } from "@/lib/api/prices";
 import type { ApiCliente } from "@/lib/api/types";
+import { artBase } from "@/lib/bunny";
 import { getProduct } from "@/lib/catalog";
+import { productFacts } from "@/lib/order-facts";
 import {
   addressFromApi,
   buildOrderPayload,
@@ -55,7 +57,8 @@ export async function POST(request: Request) {
   const auth = await sessionOr401();
   if (!auth.ok) return auth.response;
   const session = auth.session;
-  const parsed = parseOrderRequest(body.data);
+  // Arquivos da arte: só os da pasta pública do Bunny entram no pedido (arte.anexos).
+  const parsed = parseOrderRequest(body.data, { artBase: artBase() });
   if (!parsed.ok) return fail(400, parsed.error);
   const blocked = overLimit(limits.orders, `pedido:${session.id}`);
   if (blocked) return blocked;
@@ -105,7 +108,7 @@ export async function POST(request: Request) {
   const deliveryInfo = orderDelivery(delivery, registered);
   if (!deliveryInfo) return fail(400, "Seu cadastro não tem endereço de entrega completo. Informe outro endereço ou escolha a retirada.");
 
-  const payload = buildOrderPayload({ customerId: session.id, lines, method: payment, delivery: deliveryInfo });
+  const payload = buildOrderPayload({ customerId: session.id, lines, method: payment, delivery: deliveryInfo, facts: productFacts });
   // Rastreamento (site da Padrão = loja 0): pedido e itens, ligados à sessão anônima de quem comprou.
   const visitante = request.headers.get("x-pc-visitante");
   const sessaoRastreio = request.headers.get("x-pc-sessao");

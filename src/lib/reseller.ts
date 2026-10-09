@@ -149,6 +149,9 @@ export function variationsFromApi(rows: ApiProduto[] | null | undefined): Variat
         d: typeof row.prazo?.economico === "number" ? row.prazo.economico : null,
         de: typeof row.prazo?.expresso === "number" ? row.prazo.expresso : null,
         v: row.variacoes && typeof row.variacoes === "object" ? row.variacoes : {},
+        // Faixa de quantidade da linha (a tabela de revenda vem completa da API).
+        ...(num(row.qtde_minima) > 0 ? { mn: num(row.qtde_minima) } : {}),
+        ...(num(row.qtde_maxima) > 0 ? { mx: num(row.qtde_maxima) } : {}),
       };
     });
 }

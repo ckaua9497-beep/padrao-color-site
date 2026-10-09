@@ -10,12 +10,16 @@ import { SOFT_SPREAD } from "./textures.ts";
 
 const point = new THREE.Vector3();
 
-/** Caixa das malhas do modelo, ignorando cotas e rótulos (userData.noBounds). */
+/**
+ * Caixa das malhas do modelo, ignorando cotas e rótulos (userData.noBounds, que também somem da sombra e do
+ * snapshot) e o que fica fora do enquadramento mas aparece na imagem (userData.noFrame: o interior da loja,
+ * visto pelo vidro da fachada).
+ */
 export function measureBox(root: THREE.Object3D): THREE.Box3 {
   const box = new THREE.Box3();
   root.updateWorldMatrix(true, true);
   const visit = (object: THREE.Object3D) => {
-    if (object.userData.noBounds) return;
+    if (object.userData.noBounds || object.userData.noFrame) return;
     const mesh = object as THREE.Mesh;
     const position = mesh.isMesh ? mesh.geometry?.getAttribute("position") : undefined;
     if (position) {

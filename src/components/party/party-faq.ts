@@ -2,7 +2,7 @@
 export const PARTY_FAQ = [
   {
     q: "Qual a diferença entre Crie Sua Festa e Monte Seu Kit?",
-    a: "No Crie Sua Festa você escolhe item por item, entre todos os produtos de festa, na quantidade que quiser. No Monte Seu Kit a composição já vem pronta para cada ocasião: você escreve os textos e ajusta quantidades e medidas, mas não troca os itens.",
+    a: "No Crie Sua Festa você escolhe item por item, entre todos os produtos de festa, na quantidade que quiser. Os kits de festa prontos do Monte Seu Kit já vêm com a composição para cada ocasião: você escreve os textos e ajusta quantidades e medidas. Para kits de empresa, eventos ou presentes, use o assistente “Monte o seu kit”, que sugere os produtos e deixa trocar qualquer item.",
   },
   {
     q: "Como fica a arte dos itens?",

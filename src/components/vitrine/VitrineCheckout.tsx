@@ -12,13 +12,14 @@ import { formatCep, formatDocument, formatPhone, onlyDigits } from "@/lib/api/va
 import { formatBRL } from "@/lib/format";
 import { PIX_DISCOUNT, pixPrice } from "@/lib/pricing";
 import type { OrderQuote } from "@/lib/multiloja/pedido";
+import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
 import type { PaymentKind } from "@/lib/multiloja/core";
 import { readRef } from "./RefTracker";
 import { track, trackingHeaders } from "@/lib/tracking";
 
 /*
- * Fechamento do pedido na loja do lojista: dados, entrega, pagamento (Pix com desconto ou cartão) e resumo
- * com os totais calculados pelo servidor (frete da loja incluído). Ao confirmar, o pedido é criado, as artes
+ * Fechamento do pedido na loja do lojista: dados, entrega (frete cotado pela API de frete da Padrão pelo CEP, com a embalagem
+ * de cada produto), pagamento (Pix com desconto, boleto ou cartão) e resumo com os totais calculados pelo servidor. Ao confirmar, o pedido é criado, as artes
  * montadas no site (PDF no gabarito, guardado no navegador) sobem junto e o cliente vai para a página do pedido.
  * Sem pagamento online configurado, o pedido segue pronto para o WhatsApp da loja.
  */
@@ -34,6 +35,13 @@ const METHOD_INFO: Record<Method, { label: string; hint: string }> = {
 
 const EMPTY_ADDRESS = { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "" };
 
+/** Frete na cotação do servidor: formas de entrega da Padrão, frete fixo da loja, CEP faltando ou problema. */
+type FreteInfo =
+  | { modo: "cotado"; opcoes: OpcaoFrete[]; escolhida: number; estimado: boolean }
+  | { modo: "erro"; mensagem: string; semMedida: string[] }
+  | { modo: "fixo" }
+  | { modo: "sem-cep" };
+
 export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
   const router = useRouter();
   const { lines, subtotal, clear } = useCart();
@@ -48,6 +56,11 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
   const [step, setStep] = useState<"form" | "enviando" | "artes">("form");
   const [cepStatus, setCepStatus] = useState<"" | "buscando" | "erro">("");
+  const [frete, setFrete] = useState<FreteInfo | null>(null);
+  const [freteServico, setFreteServico] = useState<number | null>(null);
+  const [cotando, setCotando] = useState(false);
+  const [requote, setRequote] = useState(0);
+  const cepDigits = onlyDigits(entrega.cep).length === 8 ? onlyDigits(entrega.cep) : "";
 
   const items = useMemo(() => lines.map(({ item, unitPrice }) => toOrderItem(item, unitPrice)), [lines]);
 
@@ -57,21 +70,26 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
   }, []);
   const itemsKey = JSON.stringify(items);
 
-  // Cotação do servidor: preço da loja, desconto do Pix, frete. Refaz quando o carrinho ou a forma mudam.
+  // Cotação do servidor: preço da loja, desconto do Pix e frete (API de frete da Padrão, pelo CEP). Refaz quando o carrinho,
+  // a forma de pagamento, o CEP ou a forma de entrega mudam.
   useEffect(() => {
     const cartItems = JSON.parse(itemsKey) as unknown[];
     if (!cartItems.length) return;
     const controller = new AbortController();
+    const timer = window.setTimeout(() => setCotando(true), 150);
     fetch("/api/multiloja/pedido?cotar=1", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: cartItems, pagamento: method }),
+      body: JSON.stringify({ items: cartItems, pagamento: method, cep: cepDigits, freteServico }),
       signal: controller.signal,
     })
       .then((r) => r.json())
-      .then((data: { ok?: boolean; quote?: OrderQuote; online?: boolean; metodos?: Method[]; metodo?: Method; errors?: { key: string; error: string }[] }) => {
+      .then((data: { ok?: boolean; quote?: OrderQuote; frete?: FreteInfo; online?: boolean; metodos?: Method[]; metodo?: Method; errors?: { key: string; error: string }[] }) => {
         if (data.ok && data.quote) {
           setQuote(data.quote);
+          setFrete(data.frete ?? null);
+          // A mais barata vem escolhida; a escolha do cliente é mantida enquanto ela existir.
+          if (data.frete?.modo === "cotado" && data.frete.escolhida !== freteServico) setFreteServico(data.frete.escolhida);
           setOnline(Boolean(data.online));
           setMethods(data.metodos ?? []);
           // O servidor ajusta a forma quando a escolhida não está disponível.
@@ -79,9 +97,16 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
           setLineErrors([]);
         } else setLineErrors(data.errors ?? []);
       })
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [itemsKey, method]);
+      .catch(() => undefined)
+      .finally(() => {
+        window.clearTimeout(timer);
+        if (!controller.signal.aborted) setCotando(false);
+      });
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [itemsKey, method, cepDigits, freteServico, requote]);
 
   if (lines.length === 0 && step === "form") {
     return (
@@ -139,12 +164,13 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
     const response = await fetch("/api/multiloja/pedido", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...trackingHeaders() },
-      body: JSON.stringify({ items, cliente, entrega, pagamento: method, expectedTotal: quote.total, ref: readRef(), observacoes: notes }),
+      body: JSON.stringify({ items, cliente, entrega, pagamento: method, expectedTotal: quote.total, freteServico: frete?.modo === "cotado" ? freteServico : null, ref: readRef(), observacoes: notes }),
     }).catch(() => null);
     const data = (await response?.json().catch(() => null)) as { ok?: boolean; error?: string; field?: string; quote?: OrderQuote; codigo?: string; token?: string; url?: string } | null;
 
     if (response?.status === 409 && data?.quote) {
       setQuote(data.quote);
+      setRequote((n) => n + 1);
       setStep("form");
       setError({ message: data.error ?? "O valor mudou. Confira e confirme de novo." });
       return;
@@ -225,6 +251,40 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
             <TextField label="Cidade" value={entrega.cidade} onChange={setAddr("cidade")} autoComplete="address-level2" maxLength={80} />
             <TextField label="UF" value={entrega.estado} onChange={(v) => setAddr("estado")(v.toUpperCase().slice(0, 2))} autoComplete="address-level1" maxLength={2} />
           </div>
+          {frete?.modo !== "fixo" && (
+            <fieldset className="space-y-3 border-t border-line pt-5" aria-busy={cotando || undefined}>
+              <legend className="mb-3 text-[15px] font-bold">Forma de envio</legend>
+              {!cepDigits ? (
+                <p className="text-[15px] text-muted">Digite o CEP para ver as formas de entrega e o valor do frete.</p>
+              ) : frete?.modo === "erro" ? (
+                <div role="alert" className="rounded-control bg-coral-50 px-4 py-3 text-[15px]">
+                  <p className="font-semibold text-coral-700">{frete.mensagem}</p>
+                  {frete.semMedida.length > 0 && <p className="mt-1 text-sm text-ink/80">Sem medida de envio cadastrada: {frete.semMedida.join(", ")}.</p>}
+                  {whatsapp && (
+                    <a href={`https://wa.me/55${whatsapp}?text=${encodeURIComponent(whatsappText())}`} target="_blank" rel="noreferrer" className="mt-2 inline-block font-bold underline underline-offset-2">
+                      Fechar o pedido pelo WhatsApp
+                    </a>
+                  )}
+                </div>
+              ) : frete?.modo === "cotado" ? (
+                <div role="radiogroup" aria-label="Forma de envio" className="grid gap-2">
+                  {frete.opcoes.map((o) => (
+                    <label key={o.id} className="flex cursor-pointer items-center gap-3 rounded-control border border-line p-4 has-[:checked]:border-ink has-[:checked]:ring-2 has-[:checked]:ring-ink">
+                      <input type="radio" name="frete" value={o.id} checked={freteServico === o.id} onChange={() => setFreteServico(o.id)} className="accent-ink" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-bold">{nomeFrete(o)}</span>
+                        <span className="text-caption text-muted">Chega em {prazoFrete(o)} depois que o pedido fica pronto</span>
+                      </span>
+                      <span className="font-bold tabular-nums">{quote?.freteGratis && freteServico === o.id ? "Grátis" : formatBRL(o.preco)}</span>
+                    </label>
+                  ))}
+                  <p className="text-caption text-muted">Frete calculado pela Padrão Color com a embalagem de cada produto.</p>
+                </div>
+              ) : (
+                <p className="text-[15px] text-muted">Calculando o frete…</p>
+              )}
+            </fieldset>
+          )}
         </section>
 
         <section className="space-y-4 rounded-card border border-line-strong bg-white p-6" aria-labelledby="pagamento">
@@ -285,9 +345,12 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
               <dd>− {formatBRL(quote.desconto)}</dd>
             </div>
           )}
-          <div className="flex justify-between">
-            <dt className="text-muted">Frete</dt>
-            <dd>{quote ? (quote.frete > 0 ? formatBRL(quote.frete) : "Grátis") : "…"}</dd>
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted">
+              Frete
+              {frete?.modo === "cotado" && <span className="block text-caption">{nomeFrete(frete.opcoes.find((o) => o.id === freteServico) ?? frete.opcoes[0])}</span>}
+            </dt>
+            <dd>{!quote || cotando ? "…" : frete?.modo === "sem-cep" ? "Informe o CEP" : frete?.modo === "erro" ? "—" : quote.frete > 0 ? formatBRL(quote.frete) : "Grátis"}</dd>
           </div>
           <div className="flex items-baseline justify-between border-t border-line pt-3">
             <dt className="font-bold">Total</dt>
@@ -299,7 +362,7 @@ export default function VitrineCheckout({ storeName, whatsapp, email }: Props) {
             {error.message}
           </p>
         )}
-        <Button type="submit" size="lg" block loading={busy} disabled={busy || lineErrors.length > 0 || (online !== false && !quote)}>
+        <Button type="submit" size="lg" block loading={busy} disabled={busy || lineErrors.length > 0 || (online !== false && (!quote || cotando || frete?.modo === "erro" || frete?.modo === "sem-cep"))}>
           {online === false ? (whatsapp ? "Enviar pedido pelo WhatsApp" : "Enviar pedido por e-mail") : method === "pix" ? "Gerar Pix" : method === "boleto" ? "Gerar boleto" : "Ir para o pagamento"}
         </Button>
         <p className={cx("text-caption text-muted", step === "artes" && "font-semibold text-ink")} aria-live="polite">

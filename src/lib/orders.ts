@@ -1,28 +1,31 @@
 import type { ApiEndereco } from "./api/types";
 import type { CustomSize, Variation } from "./catalog";
+import { orderAttachments, parseUploadedFiles, type ArtAttachment, type UploadedArtFile } from "./art-files.ts";
 import { areaQuote, cleanOptionLabel, PIX_DISCOUNT, pixPrice } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
 
 /*
  * Pedido do site para a API (POST /gerarpedido) — mapeamento explícito, tipado e isolado.
  *
- * O PDF só mostra o envelope {idCliente, produtos, pagamento, tipo_compra, nome_trabalho, precoTotal} e remete
- * a um "contrato de pedido fornecido para a integração" que não recebemos. Tudo o que é premissa está aqui,
- * para trocar num lugar só quando o contrato chegar:
- * - produtos[]: um por item do carrinho. idProduto = ID da variação (o "produto" da API), idGrupo = grupo;
- *   quantidade = unidades (lotes × unidades do lote: 2 × "1000 cartões" = 2000); lotes e quantidadeLote vão
- *   separados; valorUnitario = preço de UM lote; valorTotal = valorUnitario × lotes.
- * - Medida livre (m²): largura/altura em cm e area = m² cobrados (respeita a área mínima). A API não calcula
- *   m²: o valor já vem multiplicado pela área.
- * - expresso: true quando o cliente escolheu o prazo expresso (preço "pe" da variação); prazo em dias úteis.
- * - opcoes: as escolhas do produto e o resumo da arte (texto, estilo, fonte…), como no carrinho.
- * - arte: nome do arquivo; o arquivo segue depois por POST /reenviararte. null = "enviar depois".
- * - kit: nome do kit/festa que adicionou o item (Monte Seu Kit / Crie Sua Festa), ou null.
- * - pagamento: {tipo (rótulo no estilo do GET /pedidos, ex. "PIX"), forma, parcelas, valor, desconto}.
- * - entrega: campo a mais (o GET /pedidos devolve entrega_retirada por item; confirmar no contrato).
- * - tipo_compra = "Site" (o GET /pedidos mostra envio "Site" nos pedidos feitos pelo site).
- * - nome_trabalho = texto da arte do primeiro item (ou o nome do produto) + "+ N itens".
- * - precoTotal = soma dos itens no preço do cliente (balcão ou revenda) menos o desconto do PIX.
+ * O PDF só mostra o envelope {idCliente, produtos, pagamento, tipo_compra, nome_trabalho, precoTotal} e remete a um
+ * "contrato de pedido fornecido para a integração". Os produtos seguem o exemplo de pedido que a Padrão mandou
+ * (pedido do site atual): id (variação), groupId, groupCategoryId, productName, productImage, productType,
+ * quantidade (lotes), price (um lote), precoTotal, variations (as opções da variação, com o rótulo limpo), package
+ * (embalagem da variação), tipoProducao ("expresso"/"economico"), productionTime (dias úteis), nomeTrabalho,
+ * nome_trabalho, descricao, desc_trabalho, arte {tipo, preco, anexos[{url, nome, tipoArquivo}]}, tratamentoArquivo
+ * e precoTotalAcabamentos. No envelope: data e hora (Brasília), previsao (o maior prazo em dias úteis, sem fim de
+ * semana nem feriado nacional), idCliente, pagamento {tipo, valor, status} e entrega.
+ * Premissas a confirmar com a Padrão (trocar aqui):
+ * - arte.tipo = 1 sempre (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda depois).
+ * - anexos: os arquivos do Bunny (art-files.ts), com o tipo de anexo que o grupo aceita na API (tipos_anexo).
+ * - tipoProducao "economico" no prazo normal (o exemplo só mostra "expresso"); productType 0; tratamentoArquivo
+ *   "Padrão" e acabamentos 0 (o site não vende esses serviços).
+ * - entrega: o exemplo traz a loja de retirada ({id, nome}); o site manda {tipo, endereco} até a lista de lojas e o
+ *   formato da entrega com endereço chegarem.
+ * - Extras do site que o exemplo não tem: unidades (lotes × unidades do lote), largura/altura/area (m²) e kit.
+ * - pagamento.status 0 = aguardando; forma, parcelas e desconto vão junto.
+ * - tipo_compra = "Site"; nome_trabalho = texto da arte do primeiro item (ou o nome) + "+ N itens"; precoTotal =
+ *   soma dos itens no preço do cliente (balcão ou revenda) menos o desconto do PIX.
  * O servidor recalcula tudo a partir da variação: o preço que vem do navegador só serve para comparar.
  */
 
@@ -53,6 +56,8 @@ export type OrderItemInput = {
   bundle?: { id: string; name: string } | null;
   /** Preço de um lote que o cliente viu: só para comparar com o do servidor. */
   unitPrice: number;
+  /** Arquivos da arte já no Bunny (URL pública da pasta de uploads): vão em arte.anexos. */
+  files?: UploadedArtFile[];
 };
 
 /** Preços do cliente para um grupo: variações já com o desconto da categoria de revenda, se houver. */
@@ -132,10 +137,12 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
   }
   unitPrice = round2(unitPrice);
   const lotSize = variation.q || 1;
-  // Vendido por unidade (não por lote nem por m²): respeita o mínimo e o máximo do produto.
+  // Vendido por unidade (não por lote nem por m²): respeita o mínimo e o máximo da faixa da variação
+  // (Caderno "De 11 até 100") ou, sem faixa própria, os do produto.
   const units = input.quantity * lotSize;
   if (!size && lotSize <= 1 && prices.limits) {
-    const { minQty, maxQty } = prices.limits;
+    const minQty = variation.mn ?? prices.limits.minQty;
+    const maxQty = variation.mx ?? prices.limits.maxQty;
     if (minQty > 1 && units < minQty) return fail(`Quantidade mínima: ${minQty.toLocaleString("pt-BR")} unidades.`);
     if (maxQty > 0 && units > maxQty) return fail(`Quantidade máxima: ${maxQty.toLocaleString("pt-BR")} unidades. Para mais, escolha a versão para lotes maiores.`);
   }
@@ -232,73 +239,207 @@ export function orderDelivery(choice: DeliveryChoice, registered: DeliveryAddres
   return registered && !addressProblem(registered) ? { tipo: "Entrega", endereco: registered } : null;
 }
 
+// ---------------------------------------------------------------------------------- datas
+
+/** Data e hora de Brasília: o pedido leva data "DD/MM/AAAA" e hora "HH:MM:SS". */
+export function brasiliaClock(now: Date): { iso: string; data: string; hora: string } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      .formatToParts(now)
+      .map((part) => [part.type, part.value]),
+  );
+  const hour = parts.hour === "24" ? "00" : parts.hour;
+  return { iso: `${parts.year}-${parts.month}-${parts.day}`, data: `${parts.day}/${parts.month}/${parts.year}`, hora: `${hour}:${parts.minute}:${parts.second}` };
+}
+
+const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+
+/** Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher), em UTC. */
+function easter(year: number): number {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return Date.UTC(year, month - 1, day);
+}
+
+/** Feriados nacionais (AAAA-MM-DD): os fixos e a Sexta-feira Santa. */
+export function nationalHolidays(year: number): string[] {
+  const fixed = ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"].map((day) => `${year}-${day}`);
+  return [...fixed, isoDay(easter(year) - 2 * 86_400_000)];
+}
+
+/** AAAA-MM-DD + `days` dias úteis (sem sábado, domingo nem feriado). */
+export function addBusinessDays(iso: string, days: number, holidays: ReadonlySet<string>): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  let t = Date.UTC(y, m - 1, d);
+  let left = Math.max(0, Math.round(days));
+  while (left > 0) {
+    t += 86_400_000;
+    const weekday = new Date(t).getUTCDay();
+    if (weekday !== 0 && weekday !== 6 && !holidays.has(isoDay(t))) left -= 1;
+  }
+  return isoDay(t);
+}
+
+const brDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+
+/** Previsão do pedido: o maior prazo de produção dos itens, em dias úteis a partir de hoje (Brasília). */
+export function orderForecast(today: string, leadDays: (number | null)[]): string | null {
+  const days = leadDays.filter((value): value is number => typeof value === "number" && value > 0);
+  if (!days.length) return null;
+  const year = Number(today.slice(0, 4));
+  const holidays = new Set([...nationalHolidays(year), ...nationalHolidays(year + 1)]);
+  return brDate(addBusinessDays(today, Math.max(...days), holidays));
+}
+
 // ---------------------------------------------------------------------------------- payload
 
+/** Dados do catálogo que o pedido leva de cada item (o servidor busca pelo slug e pela variação). */
+export type ProductFacts = {
+  image: string;
+  categoryId: number | null;
+  /** Embalagem da variação: [peso kg, largura, altura, comprimento cm, lotes por caixa]. */
+  packaging: readonly [number, number, number, number, number] | null;
+  /** Tipos de anexo que o grupo aceita na API ("Arquivo Único", "Impressão Frente"…). */
+  attachments: readonly string[];
+};
+
+export type OrderPackage = { peso: number; altura: number; largura: number; comprimento: number };
+
+export type OrderArt = { tipo: number; preco: number; anexos: ArtAttachment[] };
+
 export type OrderProduct = {
-  idProduto: number;
-  idGrupo: number;
-  descricao: string;
-  nome_trabalho: string;
-  /** Unidades: lotes × quantidadeLote. */
+  /** Produto da API (a variação escolhida). */
+  id: number;
+  groupId: number;
+  groupCategoryId: number | null;
+  productName: string;
+  productImage: string;
+  productType: number;
+  /** Lotes da variação (2 × "1000 cartões" = 2); peças no m² e na grade de vestuário. */
   quantidade: number;
-  lotes: number;
-  quantidadeLote: number;
+  /** Preço de um lote (já com medida, prazo e a tabela do cliente). */
+  price: number;
+  precoTotal: number;
+  /** Opções da variação com o rótulo limpo ("Formato": "9x5 cm"). */
+  variations: Record<string, string>;
+  descricao: string;
+  nomeTrabalho: string;
+  nome_trabalho: string;
+  /** A arte e o que o site acrescenta ao item (texto, estilo, tamanhos, medida, kit). */
+  desc_trabalho: string;
+  tipoProducao: "expresso" | "economico";
+  /** Prazo de produção em dias úteis. */
+  productionTime: number | null;
+  package: OrderPackage | null;
+  arte: OrderArt;
+  tratamentoArquivo: { tipo: string; preco: number };
+  precoTotalAcabamentos: number;
+  /** Unidades (lotes × unidades do lote). */
+  unidades: number;
   /** Medida livre, em cm, e área cobrada em m². */
   largura?: number;
   altura?: number;
   area?: number;
-  expresso: boolean;
-  prazo: number | null;
-  valorUnitario: number;
-  valorTotal: number;
-  opcoes: Record<string, string>;
-  arte: string | null;
   /** Kit/festa que trouxe o item: id do site e título ("Crie Sua Festa — Aniversário"). */
   kit: { id: string; nome: string } | null;
 };
 
-export type OrderPayment = { tipo: string; forma: PaymentMethod; parcelas: number; valor: number; desconto: number };
+export type OrderPayment = { tipo: string; valor: number; status: number; forma: PaymentMethod; parcelas: number; desconto: number };
 
 export type OrderPayload = {
+  data: string;
+  hora: string;
+  previsao: string | null;
   idCliente: number;
   produtos: OrderProduct[];
   pagamento: OrderPayment;
+  entrega: OrderDelivery;
   tipo_compra: string;
   nome_trabalho: string;
   precoTotal: number;
-  entrega: OrderDelivery;
 };
 
-export function toOrderProduct(line: PricedLine): OrderProduct {
+const NO_FACTS: ProductFacts = { image: "", categoryId: null, packaging: null, attachments: [] };
+
+/** Rótulo limpo da opção ("02 - Formato:" → "Formato"). */
+const optionLabel = (key: string) => cleanOptionLabel(key).replace(/:$/, "").trim();
+
+/** O que o item leva além das opções da variação: a linha da arte e as opções do site (texto, kit, tamanhos…). */
+function workDescription(line: PricedLine, variationLabels: Set<string>): string {
+  const art = line.input.artName ? `Arte: ${line.input.artName}` : "Arte: enviar depois";
+  const extras = Object.entries(line.input.options)
+    .filter(([key]) => !variationLabels.has(optionLabel(key)))
+    .map(([key, value]) => `${key}: ${value}`);
+  return clip([art, ...extras].join(" · "), 1000);
+}
+
+export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS): OrderProduct {
+  const variations = Object.fromEntries(Object.entries(line.variation.v).map(([key, value]) => [optionLabel(key), value]));
+  const job = itemJobName(line.input);
+  const box = facts.packaging;
   return {
-    idProduto: line.variation.id,
-    idGrupo: line.groupId,
-    descricao: line.name,
-    nome_trabalho: itemJobName(line.input),
-    quantidade: line.units,
-    lotes: line.lots,
-    quantidadeLote: line.lotSize,
+    id: line.variation.id,
+    groupId: line.groupId,
+    groupCategoryId: facts.categoryId,
+    productName: line.name,
+    productImage: facts.image,
+    productType: 0,
+    quantidade: line.lots,
+    price: line.unitPrice,
+    precoTotal: line.total,
+    variations,
+    descricao: "",
+    nomeTrabalho: job,
+    nome_trabalho: job,
+    desc_trabalho: workDescription(line, new Set(Object.keys(variations))),
+    tipoProducao: line.express ? "expresso" : "economico",
+    productionTime: line.leadDays,
+    package: box ? { peso: box[0], altura: box[2], largura: box[1], comprimento: box[3] } : null,
+    arte: { tipo: 1, preco: 0, anexos: orderAttachments(line.input.files ?? [], facts.attachments) },
+    tratamentoArquivo: { tipo: "Padrão", preco: 0 },
+    precoTotalAcabamentos: 0,
+    unidades: line.units,
     ...(line.size ? { largura: line.size.widthCm, altura: line.size.heightCm, area: line.size.billedAreaM2 } : {}),
-    expresso: line.express,
-    prazo: line.leadDays,
-    valorUnitario: line.unitPrice,
-    valorTotal: line.total,
-    opcoes: line.input.options,
-    arte: line.input.artName,
     kit: line.input.bundle ? { id: line.input.bundle.id, nome: bundleTitle(line.input.bundle, line.input.options) } : null,
   };
 }
 
-export function buildOrderPayload({ customerId, lines, method, delivery }: { customerId: number; lines: PricedLine[]; method: PaymentMethod; delivery: OrderDelivery }): OrderPayload {
+type PayloadInput = {
+  customerId: number;
+  lines: PricedLine[];
+  method: PaymentMethod;
+  delivery: OrderDelivery;
+  /** Foto, categoria, embalagem e tipos de anexo de cada item (catálogo). */
+  facts?: (line: PricedLine) => ProductFacts | null;
+  now?: Date;
+};
+
+export function buildOrderPayload({ customerId, lines, method, delivery, facts, now = new Date() }: PayloadInput): OrderPayload {
   const totals = orderTotals(lines, method);
+  const clock = brasiliaClock(now);
   return {
+    data: clock.data,
+    hora: clock.hora,
+    previsao: orderForecast(clock.iso, lines.map((line) => line.leadDays)),
     idCliente: customerId,
-    produtos: lines.map(toOrderProduct),
-    pagamento: { tipo: PAYMENT_METHODS[method].apiType, forma: method, parcelas: 1, valor: totals.total, desconto: totals.discount },
+    produtos: lines.map((line) => toOrderProduct(line, facts?.(line) ?? NO_FACTS)),
+    pagamento: { tipo: PAYMENT_METHODS[method].apiType, valor: totals.total, status: 0, forma: method, parcelas: 1, desconto: totals.discount },
+    entrega: delivery,
     tipo_compra: PURCHASE_TYPE,
     nome_trabalho: orderJobName(lines),
     precoTotal: totals.total,
-    entrega: delivery,
   };
 }
 
@@ -325,8 +466,11 @@ function measure(value: unknown): number | undefined | null {
   return Number.isFinite(n) && n > 0 && n <= 100_000 ? n : null;
 }
 
-/** Um item do carrinho vindo do navegador (validado campo a campo); null = inválido. */
-export function parseItem(raw: unknown): OrderItemInput | null {
+/**
+ * Um item do carrinho vindo do navegador (validado campo a campo); null = inválido. `artBase`: pasta pública do
+ * Bunny ("https://…b-cdn.net/uploads-clientes/"); só arquivos dela entram no pedido.
+ */
+export function parseItem(raw: unknown, artBase = ""): OrderItemInput | null {
   if (!isRecord(raw)) return null;
   const key = text(raw.key, 64);
   const name = text(raw.name, 200);
@@ -360,6 +504,7 @@ export function parseItem(raw: unknown): OrderItemInput | null {
     artName: text(raw.artName, 200) || null,
     bundle: bundleId && bundleName ? { id: bundleId, name: bundleName } : null,
     unitPrice,
+    files: parseUploadedFiles(raw.files, artBase),
   };
 }
 
@@ -380,12 +525,12 @@ function parseDelivery(raw: unknown): DeliveryChoice | null {
   return addressProblem(address) ? null : { kind: "outro", address };
 }
 
-/** Valida o corpo do POST /api/pedidos (nada do navegador é confiável). */
-export function parseOrderRequest(raw: unknown): { ok: true; value: OrderRequest } | { ok: false; error: string } {
+/** Valida o corpo do POST /api/pedidos (nada do navegador é confiável). `artBase`: ver parseItem. */
+export function parseOrderRequest(raw: unknown, { artBase = "" }: { artBase?: string } = {}): { ok: true; value: OrderRequest } | { ok: false; error: string } {
   if (!isRecord(raw)) return { ok: false, error: "Pedido inválido." };
   if (!Array.isArray(raw.items) || raw.items.length === 0) return { ok: false, error: "Seu carrinho está vazio." };
   if (raw.items.length > MAX_ORDER_ITEMS) return { ok: false, error: `O pedido pode ter até ${MAX_ORDER_ITEMS} itens.` };
-  const items = raw.items.map(parseItem);
+  const items = raw.items.map((item) => parseItem(item, artBase));
   if (items.some((item) => item === null)) return { ok: false, error: "Há um item inválido no carrinho. Remova e adicione de novo." };
   if (new Set(items.map((item) => item!.key)).size !== items.length) return { ok: false, error: "Há itens repetidos no carrinho." };
   const payment = raw.payment;

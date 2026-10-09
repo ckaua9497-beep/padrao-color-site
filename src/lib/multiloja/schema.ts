@@ -212,4 +212,9 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE lojas ADD COLUMN tema text, ADD COLUMN tema_rascunho text, ADD COLUMN tema_publicado_em text;
   `,
+  // 3: frete cotado (API de frete da Padrão): transportadora escolhida, prazo de transporte, custo e se o lojista deu o frete.
+  `
+  ALTER TABLE pedidos ADD COLUMN frete_servico text, ADD COLUMN frete_servico_id integer, ADD COLUMN frete_prazo text,
+    ADD COLUMN frete_custo double precision, ADD COLUMN frete_gratis integer NOT NULL DEFAULT 0;
+  `,
 ];

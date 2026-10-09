@@ -11,7 +11,6 @@ import {
   linkSlugError,
   orderCode,
   paymentFee,
-  shippingFor,
   customDomainError,
   grossProfit,
   marginError,
@@ -117,9 +116,6 @@ test("telefone e redes sociais", () => {
 test("pedido: código, frete, taxa e comissão", () => {
   assert.match(orderCode(), /^ML-[2-9A-HJKMNP-Z]{6}$/);
   assert.equal(orderCode(() => new Uint8Array([0, 1, 2, 3, 4, 5])), "ML-234567");
-  assert.equal(shippingFor(100, 0, null), 0);
-  assert.equal(shippingFor(100, 19.9, null), 19.9);
-  assert.equal(shippingFor(150, 19.9, 150), 0);
   const rates = { pix: { pct: 1.19, fixed: 0 }, boleto: { pct: 0, fixed: 3.45 }, cartao: { pct: 4.99, fixed: 0.39 } };
   assert.equal(paymentFee(100, "pix", rates), 1.19);
   assert.equal(paymentFee(100, "boleto", rates), 3.45);

@@ -14,8 +14,8 @@ import { imageUrl } from "@/lib/format";
 import type { ArtSettings } from "./art";
 import { MockupModel } from "./models";
 import { sizeLabels } from "./models/shared";
-import { MockupSkeleton, backdropCss, paintBackdrop, studioBackdrop, type Backdrop } from "./MockupSkeleton";
-import { AnimateContext, SceneContext, canUseWebGL, useFullscreenSupport, useInViewport, useIsFullscreen, useMediaQuery, type SceneMode } from "./viewer-hooks";
+import { MockupSkeleton, backdropCss, duskBackdrop, paintBackdrop, studioBackdrop, type Backdrop } from "./MockupSkeleton";
+import { AnimateContext, SceneContext, canUseWebGL, useAnimate, useFullscreenSupport, useInViewport, useIsFullscreen, useMediaQuery, type SceneMode } from "./viewer-hooks";
 import { PRESETS, environmentFor, roomBackdropColor, roomsFor, type RoomEnvironment, type RoomId } from "./environments/presets";
 import { RoomLights, RoomScene } from "./environments/Room";
 import { RoomDims } from "./environments/RoomDims";
@@ -45,6 +45,12 @@ type ViewerProps = {
    * "Ver verso" do viewer continua valendo até a página mudar o valor de novo.
    */
   side?: ViewerSide;
+  /**
+   * Foco na arte (a placa da fachada): > 0 leva a câmera de frente para a parte do modelo marcada com
+   * `userData.focus`, escurece o estúdio como no fim de tarde e acende as luzes do modelo; um número novo refaz
+   * a aproximação (cada clique num estilo) e 0 volta à vista inicial.
+   */
+  focus?: number;
   className?: string;
 };
 
@@ -59,6 +65,20 @@ const RESUME_AFTER_MS = 4000;
 const SPIN_SPEED = 0.9;
 const RESET_SECONDS = 0.6;
 const INTRO_SECONDS = 0.9;
+/** Aproximação até a arte em foco (a placa da fachada) e a volta para a vista inicial. */
+const FOCUS_SECONDS = 1.15;
+const UNFOCUS_SECONDS = 0.9;
+/** Com uma arte em foco no modelo, o zoom chega até esta fração da distância de frente para ela. */
+const FOCUS_MIN_ZOOM = 0.55;
+/** Fim de tarde do foco: fundo, velocidade da transição e quanto sobra de cada luz do estúdio. */
+const DUSK_BACKDROP = duskBackdrop();
+const DUSK_CSS = backdropCss(DUSK_BACKDROP);
+const DUSK_RATE = 3.2;
+const DUSK_ENVIRONMENT = 0.3;
+const DUSK_LIGHTS = 0.24;
+const DUSK_SKY = 0.4;
+/** Luzes diretas do estúdio (key, fill, rim alto e rim baixo), na ordem do grupo que gira com a câmera. */
+const RIG_INTENSITY = [1.5, 0.42, 1, 0.4] as const;
 /** Entrada: a câmera parte mais longe, girada para a direita e um pouco mais alta, e pousa na vista inicial. */
 const INTRO_ORBIT = { azimuth: 0.62, polar: -0.14, zoom: 1.38 };
 const RIG_NAME = "studio-rig";
@@ -101,9 +121,10 @@ type Framing = {
 /**
  * Ângulo inicial pedido pelo modelo: `userData.view = { elevation, azimuth }` (radianos) em qualquer grupo
  * do modelo. Peças que ficam deitadas (cama, toalha de mesa, quebra-cabeça) sobem a câmera em vez de
- * inclinar a peça, e a sombra de contato continua certa.
+ * inclinar a peça, e a sombra de contato continua certa. `distance` multiplica a distância do enquadramento
+ * (< 1 aproxima): a fachada, larga e rasa, cabe bem mais perto que a esfera em volta dela.
  */
-export type ViewHint = { elevation?: number; azimuth?: number };
+export type ViewHint = { elevation?: number; azimuth?: number; distance?: number };
 
 function viewHint(root: THREE.Object3D): ViewHint {
   let hint: ViewHint | null = null;
@@ -150,12 +171,12 @@ function fitDistance(radius: number, camera: THREE.PerspectiveCamera, margin = F
   return (Math.max(radius, 1e-3) / Math.sin(Math.min(vertical, horizontal) / 2)) * margin;
 }
 
-function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera, home: THREE.Vector3): Framing {
+function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera, home: THREE.Vector3, scale = 1): Framing {
   const sphere = box.getBoundingSphere(new THREE.Sphere());
   const size = box.getSize(new THREE.Vector3());
   return {
     center: sphere.center,
-    distance: fitDistance(sphere.radius, camera),
+    distance: fitDistance(sphere.radius, camera) * scale,
     home,
     radius: Math.max(sphere.radius, 1e-3),
     footprint: Math.max(size.x, size.z, 1e-3),
@@ -163,6 +184,49 @@ function frameBox(box: THREE.Box3, camera: THREE.PerspectiveCamera, home: THREE.
     margin: FIT_MARGIN,
     zoom: STUDIO_ZOOM,
     capture: null,
+    fixed: false,
+  };
+}
+
+/** Parte do modelo marcada para o foco: `userData.focus` = true ou { elevation, margin }. */
+type FocusHint = { elevation?: number; margin?: number };
+
+function focusTarget(root: THREE.Object3D): { object: THREE.Object3D; hint: FocusHint } | null {
+  let found: { object: THREE.Object3D; hint: FocusHint } | null = null;
+  root.traverse((object) => {
+    const value = object.userData.focus as FocusHint | boolean | undefined;
+    if (!found && value) found = { object, hint: value === true ? {} : value };
+  });
+  return found;
+}
+
+/**
+ * Vista de frente para a parte em foco: a caixa dela cabe na largura e na altura da tela (não na esfera, que
+ * sobra numa placa larga e rasa). Dá para recuar até o máximo da vista inicial (`store`).
+ */
+function frameFocus(root: THREE.Object3D, camera: THREE.PerspectiveCamera, store: Framing): Framing | null {
+  const target = focusTarget(root);
+  if (!target) return null;
+  const box = measureBox(target.object);
+  if (box.isEmpty()) return null;
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const vertical = THREE.MathUtils.degToRad(camera.fov);
+  const aspect = camera.aspect > 0 && Number.isFinite(camera.aspect) ? camera.aspect : 1;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
+  const margin = target.hint.margin ?? 1.12;
+  const distance = Math.max(size.x / 2 / Math.tan(horizontal / 2), size.y / 2 / Math.tan(vertical / 2)) * margin + size.z / 2;
+  const home = homeDirection({ elevation: target.hint.elevation ?? 0.03, azimuth: 0 });
+  return {
+    center,
+    distance,
+    home,
+    radius: Math.max(size.length() / 2, 1e-3),
+    footprint: Math.max(size.x, size.z, 1e-3),
+    height: Math.max(size.y, 1e-3),
+    margin,
+    zoom: [FOCUS_MIN_ZOOM, Math.max(1, (store.distance * store.zoom[1]) / distance)],
+    capture: home.clone(),
     fixed: false,
   };
 }
@@ -467,17 +531,18 @@ type CaptureProps = {
   captureRef?: MutableRefObject<CaptureFn | null>;
   shotRef: MutableRefObject<ShotFn | null>;
   framingRef: MutableRefObject<Framing | null>;
+  /** No foco na arte, a foto do carrinho é a arte de frente (a placa acesa), não a peça inteira. */
+  focusFramingRef: MutableRefObject<Framing | null>;
   backdrop: Backdrop;
 };
 
-function Capture({ captureRef, shotRef, framingRef, backdrop }: CaptureProps) {
+function Capture({ captureRef, shotRef, framingRef, focusFramingRef, backdrop }: CaptureProps) {
   const get = useThree((state) => state.get);
   useEffect(() => {
-    const shot: ShotFn = (format) => snapshot(get(), { fixedAngle: format === "jpeg", framing: framingRef.current, backdrop, format });
+    const framing = () => focusFramingRef.current ?? framingRef.current;
+    const shot: ShotFn = (format) => snapshot(get(), { fixedAngle: format === "jpeg", framing: framing(), backdrop, format });
     const capture: CaptureFn = (options) =>
-      options?.transparent
-        ? snapshot(get(), { fixedAngle: true, framing: framingRef.current, backdrop: null, format: "png", turn: options.turn })
-        : shot("jpeg");
+      options?.transparent ? snapshot(get(), { fixedAngle: true, framing: framing(), backdrop: null, format: "png", turn: options.turn }) : shot("jpeg");
     shotRef.current = shot;
     const previous = captureRef ? captureRef.current : null;
     if (captureRef) captureRef.current = capture;
@@ -485,7 +550,7 @@ function Capture({ captureRef, shotRef, framingRef, backdrop }: CaptureProps) {
       if (shotRef.current === shot) shotRef.current = null;
       if (captureRef && captureRef.current === capture) captureRef.current = previous;
     };
-  }, [get, captureRef, shotRef, framingRef, backdrop]);
+  }, [get, captureRef, shotRef, framingRef, focusFramingRef, backdrop]);
   return null;
 }
 
@@ -539,12 +604,16 @@ type StageProps = {
   onSceneReady: (key: string) => void;
   /** Verso à mostra (almofada virando): a sombra de contato acompanha o movimento. */
   back: boolean;
+  /** Foco na arte (> 0) e o pedido atual: um número novo refaz a aproximação; 0 volta à vista inicial. */
+  focus: number;
+  /** Enquadramento da arte em foco (null fora do foco), compartilhado com o snapshot. */
+  focusFramingRef: MutableRefObject<Framing | null>;
 };
 
 /** Mudança de raio ou centro (× raio) a partir da qual a câmera reenquadra a peça. */
 const REFRAME_TOLERANCE = 0.025;
 
-function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetToken, reducedMotion, ready, onReady, framingRef, env, roomDims, onSceneReady, back }: StageProps) {
+function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetToken, reducedMotion, ready, onReady, framingRef, env, roomDims, onSceneReady, back, focus, focusFramingRef }: StageProps) {
   const group = useRef<THREE.Group>(null);
   const roomRef = useRef<THREE.Group>(null);
   const dimsRef = useRef<THREE.Group>(null);
@@ -565,6 +634,12 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
   const tween = useRef<Tween | null>(null);
   const handledReset = useRef(resetToken);
   const introDone = useRef(false);
+  // Foco atual para o enquadramento abaixo (que não roda a cada troca de foco) e o último pedido atendido.
+  const focusRef = useRef(focus);
+  const handledFocus = useRef(0);
+  useLayoutEffect(() => {
+    focusRef.current = focus;
+  }, [focus]);
 
   // Estúdio: apoia a peça no chão (y = 0), centraliza em x/z e enquadra a câmera na vista inicial.
   // Ambiente: tira o 3/4 da peça, escala e move a sala em volta dela e enquadra peça + móvel de escala.
@@ -618,8 +693,15 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
       if (raw.isEmpty()) return;
       const center = raw.getCenter(new THREE.Vector3());
       root.position.set(-center.x, -raw.min.y, -center.z);
-      next = frameBox(measureBox(root), camera, homeDirection(viewHint(root)));
+      const hint = viewHint(root);
+      next = frameBox(measureBox(root), camera, homeDirection(hint), THREE.MathUtils.clamp(hint.distance ?? 1, 0.5, 1.5));
     }
+    // Modelo com uma arte em foco (a fachada): o zoom chega perto dela, e em foco a câmera fica de frente para ela.
+    const focusFrame = env ? null : frameFocus(root, camera, next);
+    if (focusFrame) next.zoom = [Math.min(next.zoom[0], (focusFrame.distance * FOCUS_MIN_ZOOM) / next.distance), next.zoom[1]];
+    const focusing = focusRef.current > 0 && focusFrame !== null;
+    focusFramingRef.current = focusing ? focusFrame : null;
+    const goal = focusing ? focusFrame : next;
     const frameKey = `${modelKey}|${sceneKey}`;
     const previous = framingRef.current;
     const sameModel = previous !== null && framedKey.current === frameKey;
@@ -639,7 +721,7 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     if (sameModel && !resized) {
       // Cor, acabamento ou outra opção que não muda o tamanho: a câmera fica onde o cliente deixou.
       if (controls) {
-        controls.target.copy(next.center);
+        controls.target.copy(goal.center);
         controls.minDistance = next.distance * next.zoom[0];
         controls.maxDistance = next.distance * next.zoom[1];
         controls.update();
@@ -649,24 +731,24 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     }
     // Outra medida/forma com a peça já na tela: desliza até a nova vista em vez de saltar.
     const glide = previous !== null && controls !== null && !reducedMotion && !sceneChanged;
-    const fromOffset = camera.position.clone().sub(controls?.target ?? next.center);
-    const homePos = next.center.clone().addScaledVector(next.home, next.distance);
+    const fromOffset = camera.position.clone().sub(controls?.target ?? goal.center);
+    const homePos = goal.center.clone().addScaledVector(goal.home, goal.distance);
     if (glide && previous) {
-      camera.position.copy(next.center).addScaledVector(fromOffset, next.distance / previous.distance);
-      tween.current = makeTween(camera.position, next.center, homePos, next.center, RESET_SECONDS, 3);
+      camera.position.copy(goal.center).addScaledVector(fromOffset, next.distance / previous.distance);
+      tween.current = makeTween(camera.position, goal.center, homePos, goal.center, RESET_SECONDS, 3);
     } else {
       camera.position.copy(homePos);
       tween.current = null;
     }
-    camera.lookAt(next.center);
+    camera.lookAt(goal.center);
     if (controls) {
-      controls.target.copy(next.center);
+      controls.target.copy(goal.center);
       controls.minDistance = next.distance * next.zoom[0];
       controls.maxDistance = next.distance * next.zoom[1];
       controls.update();
     }
     invalidate();
-  }, [modelKey, shadowKey, sceneKey, env, spec, hasControls, reducedMotion, framingRef, get, invalidate]);
+  }, [modelKey, shadowKey, sceneKey, env, spec, hasControls, reducedMotion, framingRef, focusFramingRef, get, invalidate]);
 
   // Cena nova (sala ou volta ao estúdio) depois da primeira: compila os materiais novos com o canvas
   // apagado e só então avisa para ele voltar.
@@ -740,6 +822,9 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     const target = controls?.target ?? goal.center;
     camera.position.sub(target).multiplyScalar(scale).add(target);
     goal.distance = distance;
+    // Em foco, a arte é reenquadrada para a tela nova (a foto do carrinho usa este enquadramento).
+    const root = group.current;
+    if (focusFramingRef.current && root) focusFramingRef.current = frameFocus(root, camera, goal);
     camera.near = distance / 50;
     camera.far = distance * 20;
     camera.updateProjectionMatrix();
@@ -754,13 +839,13 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
       controls.update();
     }
     invalidate();
-  }, [width, height, framingRef, get, invalidate]);
+  }, [width, height, framingRef, focusFramingRef, get, invalidate]);
 
-  // "Centralizar" volta à vista inicial.
+  // "Centralizar" volta à vista inicial (em foco, à arte de frente).
   useEffect(() => {
     if (resetToken === handledReset.current) return;
     handledReset.current = resetToken;
-    const goal = framingRef.current;
+    const goal = focusFramingRef.current ?? framingRef.current;
     const { camera } = get();
     const controls = get().controls as unknown as OrbitControlsImpl | null;
     if (!goal || !controls) return;
@@ -775,7 +860,33 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
     }
     tween.current = makeTween(camera.position, controls.target, toPos, goal.center, RESET_SECONDS, 3);
     invalidate();
-  }, [resetToken, reducedMotion, framingRef, get, invalidate]);
+  }, [resetToken, reducedMotion, framingRef, focusFramingRef, get, invalidate]);
+
+  // Foco na arte: cada pedido novo (clique num estilo) leva a câmera de frente para a parte em foco, em órbita
+  // (aproxima e endireita ao mesmo tempo); 0 volta à vista inicial. Na primeira aparição em foco, esta ida
+  // substitui a entrada.
+  useEffect(() => {
+    if (!ready || focus === handledFocus.current) return;
+    handledFocus.current = focus;
+    const root = group.current;
+    const store = framingRef.current;
+    const camera = get().camera as THREE.PerspectiveCamera;
+    const controls = get().controls as unknown as OrbitControlsImpl | null;
+    if (!root || !store || !controls) return;
+    const frame = focus > 0 && !env ? frameFocus(root, camera, store) : null;
+    focusFramingRef.current = frame;
+    const goal = frame ?? store;
+    const toPos = goal.center.clone().addScaledVector(goal.home, goal.distance);
+    if (reducedMotion) {
+      tween.current = null;
+      camera.position.copy(toPos);
+      controls.target.copy(goal.center);
+      controls.update();
+    } else {
+      tween.current = makeTween(camera.position, controls.target, toPos, goal.center, frame ? FOCUS_SECONDS : UNFOCUS_SECONDS, 3);
+    }
+    invalidate();
+  }, [focus, ready, env, reducedMotion, framingRef, focusFramingRef, get, invalidate]);
 
   // Quem arrasta assume a câmera: a entrada ou o "centralizar" param na hora.
   useEffect(() => {
@@ -837,23 +948,43 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
  * esquerda, fill frio e baixo à direita, rim atrás recortando a silhueta, mais um teto e uma faixa frontal
  * longa que vira o reflexo horizontal clássico em peças brilhantes. No neon, o ambiente pega as cores do LED.
  */
-const StudioLights = memo(function StudioLights({ dark, glowA, glowB }: { dark: boolean; glowA: string; glowB: string }) {
+const StudioLights = memo(function StudioLights({ dark, glowA, glowB, dusk }: { dark: boolean; glowA: string; glowB: string; dusk: boolean }) {
   const rig = useRef<THREE.Group>(null);
-  useFrame((state) => {
+  const sky = useRef<THREE.HemisphereLight>(null);
+  // 0 = dia, 1 = fim de tarde (foco na arte): as luzes do estúdio caem em ~1 s e voltam do mesmo jeito.
+  const evening = useRef(dusk ? 1 : 0);
+  const animate = useAnimate();
+  const invalidate = useThree((state) => state.invalidate);
+  const k = dark ? 0.26 : 1;
+  const skyBase = dark ? 0.1 : 0.5;
+  const environmentBase = dark ? 0.45 : 0.9;
+  useEffect(() => {
+    invalidate();
+  }, [dusk, invalidate]);
+  useFrame((state, delta) => {
     const controls = state.controls as unknown as OrbitControlsImpl | null;
     orientStudio(state.scene, rig.current, cameraAzimuth(state.camera, controls?.target ?? null));
+    const target = dusk ? 1 : 0;
+    const level = animate ? evening.current + (target - evening.current) * (1 - Math.exp(-Math.min(delta, 0.1) * DUSK_RATE)) : target;
+    evening.current = Math.abs(target - level) < 0.002 ? target : level;
+    if (evening.current !== target) state.invalidate();
+    const e = evening.current;
+    if (sky.current) sky.current.intensity = skyBase * (1 - e * (1 - DUSK_SKY));
+    rig.current?.children.forEach((light, i) => {
+      if (light instanceof THREE.DirectionalLight) light.intensity = (RIG_INTENSITY[i] ?? 0) * k * (1 - e * (1 - DUSK_LIGHTS));
+    });
+    state.scene.environmentIntensity = environmentBase * (1 - e * (1 - DUSK_ENVIRONMENT));
   });
-  const k = dark ? 0.26 : 1;
   return (
     <>
-      <hemisphereLight color="#fffaf2" groundColor="#d8d4cf" intensity={dark ? 0.1 : 0.5} />
+      <hemisphereLight ref={sky} color="#fffaf2" groundColor="#d8d4cf" intensity={skyBase} />
       <group ref={rig} name={RIG_NAME}>
-        <directionalLight position={[-3.2, 4.6, 4.2]} intensity={1.5 * k} color="#fff5ea" />
-        <directionalLight position={[4.2, 1.4, 3]} intensity={0.42 * k} color="#eef3ff" />
-        <directionalLight position={[1.6, 4, -5]} intensity={1.0 * k} />
-        <directionalLight position={[-3.6, 1.6, -4]} intensity={0.4 * k} />
+        <directionalLight position={[-3.2, 4.6, 4.2]} intensity={RIG_INTENSITY[0] * k} color="#fff5ea" />
+        <directionalLight position={[4.2, 1.4, 3]} intensity={RIG_INTENSITY[1] * k} color="#eef3ff" />
+        <directionalLight position={[1.6, 4, -5]} intensity={RIG_INTENSITY[2] * k} />
+        <directionalLight position={[-3.6, 1.6, -4]} intensity={RIG_INTENSITY[3] * k} />
       </group>
-      <Environment resolution={256} environmentIntensity={dark ? 0.45 : 0.9}>
+      <Environment resolution={256} environmentIntensity={environmentBase}>
         {/* Key: softbox grande e quente. */}
         <Lightformer form="rect" intensity={2.4 * k} position={[-4.5, 4.5, 4.5]} scale={[4.5, 6, 1]} color="#fff4e6" />
         {/* Fill: rebatedor frio e mais fraco. */}
@@ -931,10 +1062,11 @@ function roomOf(choice: SceneChoice, rooms: RoomId[]): RoomId | null {
 /** Cotas no ambiente: só onde a peça tem frente plana para medir (parede, papel, chão, tampo). */
 const DIM_SPOTS = new Set(["wall", "paper", "window", "towel", "top", "floor", "stand"]);
 
-export default function MockupViewer({ spec, art, label, captureRef, fallbackImage, side, className = "" }: ViewerProps) {
+export default function MockupViewer({ spec, art, label, captureRef, fallbackImage, side, focus = 0, className = "" }: ViewerProps) {
   const surface = useRef<HTMLDivElement>(null);
   const shot = useRef<ShotFn | null>(null);
   const framingRef = useRef<Framing | null>(null);
+  const focusFramingRef = useRef<Framing | null>(null);
   const visible = useInViewport(surface);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const coarse = useMediaQuery("(pointer: coarse)");
@@ -971,8 +1103,11 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   const inRoom = chosenRoom !== null;
   const showDims = dims && info.dims;
   const roomDims = showDims && env !== null && DIM_SPOTS.has(env.placement.spot);
-  // Na sala a peça fica parada (a luz e o móvel não giram); a órbita é limitada.
-  const autoRotate = ready && visible && !paused && !interacting && !reducedMotion && !env;
+  // Na sala a peça fica parada (a luz e o móvel não giram); a órbita é limitada. A fachada também (KIND_INFO.orbit).
+  const orbit = info.orbit;
+  // Foco na arte: a câmera fica de frente para ela (sem giro), com o estúdio no fim de tarde.
+  const focusOn = focus > 0 && !env;
+  const autoRotate = ready && visible && !paused && !interacting && !reducedMotion && !env && !orbit && !focusOn;
   const modelKey = `${spec.kind}-${spec.variant ?? ""}-${spec.widthCm}-${spec.heightCm}-${spec.depthCm}-${spec.shape}-${spec.sleeveless}-${spec.grommets}`;
   const shadowKey = useMemo(() => JSON.stringify(spec), [spec]);
   const canFlip = BACK_VIEW_KINDS.has(spec.kind);
@@ -988,7 +1123,10 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   const leds = ledKey ? ledKey.split(",") : DEFAULT_GLOW;
   const glowA = leds[0] ?? DEFAULT_GLOW[0];
   const glowB = leds[1] ?? glowA;
-  const sceneMode = useMemo<SceneMode>(() => ({ room: env ? env.placement.surface : null, back: showBack, motion: !reducedMotion }), [env, showBack, reducedMotion]);
+  const sceneMode = useMemo<SceneMode>(
+    () => ({ room: env ? env.placement.surface : null, back: showBack, motion: !reducedMotion, focus: focusOn }),
+    [env, showBack, reducedMotion, focusOn],
+  );
 
   const onInteractStart = useCallback(() => {
     if (idleTimer.current) window.clearTimeout(idleTimer.current);
@@ -1091,6 +1229,12 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
       className={`relative isolate overflow-hidden rounded-card [&:fullscreen]:rounded-none ${dark ? "bg-night" : "bg-mist"} ${className}`}
       style={{ background }}
     >
+      {/* Foco na arte: o fundo vira fim de tarde (por baixo do canvas transparente). */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 transition-opacity duration-700 motion-reduce:transition-none"
+        style={{ background: DUSK_CSS, opacity: focusOn ? 1 : 0 }}
+      />
       {failed ? (
         <ViewerFallback image={fallbackImage} label={label} onRetry={supported ? retry : undefined} />
       ) : (
@@ -1124,25 +1268,27 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
                   roomDims={roomDims}
                   onSceneReady={onSceneReady}
                   back={showBack}
+                  focus={focus}
+                  focusFramingRef={focusFramingRef}
                 />
               </SceneContext.Provider>
               {/* Depois do palco: a luz do estúdio segue a câmera já movida neste quadro; a da sala é fixa. */}
-              {env ? <RoomLights night={env.night} wall={roomBackdropColor(env)} /> : <StudioLights dark={dark} glowA={glowA} glowB={glowB} />}
+              {env ? <RoomLights night={env.night} wall={roomBackdropColor(env)} /> : <StudioLights dark={dark} glowA={glowA} glowB={glowB} dusk={focusOn} />}
               <OrbitControls
                 makeDefault
                 enablePan={false}
                 enableZoom={coarse || armed}
                 autoRotate={autoRotate}
-                minPolarAngle={view ? view.minPolar : 0.35}
-                maxPolarAngle={view ? view.maxPolar : Math.PI / 1.85}
-                minAzimuthAngle={view ? view.azimuth - view.range : -Infinity}
-                maxAzimuthAngle={view ? view.azimuth + view.range : Infinity}
+                minPolarAngle={view ? view.minPolar : (orbit?.minPolar ?? 0.35)}
+                maxPolarAngle={view ? view.maxPolar : (orbit?.maxPolar ?? Math.PI / 1.85)}
+                minAzimuthAngle={view ? view.azimuth - view.range : orbit ? -orbit.range : -Infinity}
+                maxAzimuthAngle={view ? view.azimuth + view.range : orbit ? orbit.range : Infinity}
                 onStart={onInteractStart}
                 onEnd={onInteractEnd}
               />
               <SpinClock active={autoRotate} />
               <TouchPolicy />
-              <Capture captureRef={captureRef} shotRef={shot} framingRef={framingRef} backdrop={backdrop} />
+              <Capture captureRef={captureRef} shotRef={shot} framingRef={framingRef} focusFramingRef={focusFramingRef} backdrop={focusOn ? DUSK_BACKDROP : backdrop} />
             </AnimateContext.Provider>
           </Canvas>
         </MockupBoundary>
@@ -1253,8 +1399,8 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
             aria-label="Controles do mockup 3D"
             className={`absolute bottom-3 right-3 flex items-center gap-0.5 rounded-full p-1 shadow-float backdrop-blur-xl motion-safe:animate-fade-up ${glass}`}
           >
-            {/* Com reduced motion (ou no ambiente) a peça não gira sozinha: o botão não teria efeito. */}
-            {!reducedMotion && !env && (
+            {/* Com reduced motion (no ambiente ou na fachada) a peça não gira sozinha: o botão não teria efeito. */}
+            {!reducedMotion && !env && !orbit && (
               <ViewerButton dark={dark} label={paused ? "Girar sozinho" : "Pausar rotação"} onClick={() => setPaused((v) => !v)}>
                 {paused ? (
                   <>

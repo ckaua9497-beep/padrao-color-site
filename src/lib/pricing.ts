@@ -2,6 +2,16 @@ import type { CustomSize, Variation } from "./catalog";
 
 export type Selection = Record<string, string>;
 
+/**
+ * Mínimo e máximo de unidades: a faixa da variação (Caderno "De 11 até 100" → 11 a 100), ou a do produto.
+ * `max` 0 = sem máximo.
+ */
+export function unitLimits(product: { minQty?: number | null; maxQty?: number | null }, variation?: { mn?: number; mx?: number } | null): { min: number; max: number } {
+  const min = Math.max(1, Math.round(variation?.mn ?? product.minQty ?? 1) || 1);
+  const max = Math.max(0, Math.round(variation?.mx ?? product.maxQty ?? 0) || 0);
+  return { min, max: max > 0 ? Math.max(min, max) : 0 };
+}
+
 export type Quote = {
   /** Preço no prazo econômico (por m² quando o produto tem medida livre). */
   price: number;

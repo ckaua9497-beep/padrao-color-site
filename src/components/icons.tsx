@@ -173,6 +173,56 @@ export const IconStorefront = (p: IconProps) => (
   </svg>
 );
 
+/* Monte Seu Kit (objetivos do assistente). */
+
+export const IconUsers = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <circle cx="9" cy="8" r="3.2" />
+    <path d="M3.5 19.5c.6-3.4 2.8-5.3 5.5-5.3s4.9 1.9 5.5 5.3" />
+    <path d="M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.6c1.6.7 2.6 2.3 3 4.9" />
+  </svg>
+);
+
+export const IconBadge = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="5" y="6" width="14" height="15" rx="2" />
+    <path d="M9.5 3h5v4.5h-5z" />
+    <circle cx="12" cy="12" r="2.2" />
+    <path d="M8.5 17.5c.6-1.6 1.8-2.4 3.5-2.4s2.9.8 3.5 2.4" />
+  </svg>
+);
+
+export const IconTag = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.6 6.6a1.5 1.5 0 0 1-2.1 0z" />
+    <circle cx="8" cy="8" r="1.4" />
+  </svg>
+);
+
+export const IconHeart = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M12 20s-7.5-4.4-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.6-7.5 10-7.5 10z" />
+  </svg>
+);
+
+/* Personalização dos itens do kit. */
+
+export const IconBrush = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M20.3 3.7a1.8 1.8 0 0 1 0 2.6l-7.6 7.6-2.6-2.6 7.6-7.6a1.8 1.8 0 0 1 2.6 0z" />
+    <path d="M10.1 11.3c-2.3-.2-4.1 1.5-4.1 3.9 0 1.6-.9 2.9-2.5 3.6 1.4.9 3 1.2 4.6 1.2 3.2 0 5.3-2.1 4.6-5.1" />
+  </svg>
+);
+
+export const IconGrid = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="4" y="4" width="7" height="7" rx="1.5" />
+    <rect x="13" y="4" width="7" height="7" rx="1.5" />
+    <rect x="4" y="13" width="7" height="7" rx="1.5" />
+    <rect x="13" y="13" width="7" height="7" rx="1.5" />
+  </svg>
+);
+
 /* Admin da multiloja (menu lateral). */
 
 export const IconGauge = (p: IconProps) => (

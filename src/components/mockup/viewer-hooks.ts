@@ -76,9 +76,14 @@ export type SceneMode = {
   back: boolean;
   /** Animações curtas (virar a almofada) podem rodar; falso com reduced motion. */
   motion: boolean;
+  /**
+   * Foco na arte (a placa da fachada de perto): o estúdio escurece como no fim de tarde e o modelo acende as
+   * luzes dele (os refletores da placa).
+   */
+  focus: boolean;
 };
 
-const STUDIO_MODE: SceneMode = { room: null, back: false, motion: true };
+const STUDIO_MODE: SceneMode = { room: null, back: false, motion: true, focus: false };
 
 /** Fica dentro do Canvas, como o AnimateContext. */
 export const SceneContext = createContext<SceneMode>(STUDIO_MODE);

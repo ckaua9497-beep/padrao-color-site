@@ -636,6 +636,15 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   };
 }
 
+/**
+ * Spec de um tipo sem produto do catálogo (PAGE_KINDS: a fachada de loja de /fachadas), na medida dada em cm:
+ * os padrões de mockupSpec para um produto sem opções, com o tipo, a medida e a profundidade do tipo.
+ */
+export function sceneSpec(kind: MockupKind, widthCm: number, heightCm: number): MockupSpec {
+  const base = mockupSpec({ name: KIND_INFO[kind].label, options: {} }, {});
+  return { ...base, kind, source: "override", blank: false, variant: null, widthCm, heightCm, depthCm: KIND_INFO[kind].defaultSize[2], shape: "rect", label: formatSize(widthCm, heightCm) };
+}
+
 export function formatSize(w: number, h: number): string {
   const fmt = (v: number) =>
     v >= 100

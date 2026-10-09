@@ -42,21 +42,24 @@ export function lineDetails(item: PartyItem, line: PricedLine, size: PricedItem[
 type CartContext = {
   /** Opções da festa ou do kit (Festa, Tema, Texto da arte…), depois das opções do produto. */
   options: Record<string, string>;
-  artName: string;
+  /** Linha "Arte: …" (null = enviar depois). */
+  artName: string | null;
   bundle: { id: string; name: string };
   /** Grade de tamanhos digitada (camisetas). */
   sizes?: string;
+  /** Foto 3D do item com a arte (miniatura do carrinho). */
+  preview?: string | null;
 };
 
 /** Itens do carrinho de um item da festa ou do kit: um por peça do conjunto, com a variação e a medida. */
-export function cartLines(item: PartyItem, priced: PricedItem, context: CartContext): Omit<CartItem, "key">[] {
+export function cartLines(item: Pick<PartyItem, "product">, priced: PricedItem, context: CartContext): Omit<CartItem, "key">[] {
   const { product } = item;
   const sizes = context.sizes?.trim();
   return priced.lines.map((line) => ({
     slug: product.slug,
     name: product.name,
     image: product.image,
-    preview: null,
+    preview: context.preview ?? null,
     options: {
       ...Object.fromEntries(selectionSummary(product.options, line.selection)),
       ...(priced.size && line.area ? { Medida: measureLabel(priced.size) } : {}),

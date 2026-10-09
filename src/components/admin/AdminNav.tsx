@@ -35,7 +35,12 @@ const GROUPS: { label: string; items: Item[] }[] = [
       { href: "/admin/analises", label: "Análises", icon: IconChart },
     ],
   },
-  { label: "Configuração", items: [{ href: "/admin/pagamentos", label: "Pagamentos", icon: IconCard }] },
+  {
+    label: "Configuração",
+    items: [
+      { href: "/admin/pagamentos", label: "Pagamentos", icon: IconCard },
+    ],
+  },
 ];
 
 function isActive(pathname: string, href: string) {

@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import {
-  ASPECT_TOLERANCE,
   DPI_MIN,
   DPI_RECOMMENDED,
   EDIT_MAX_SIDE,
@@ -34,28 +33,25 @@ const CARDS: { Icon: typeof IconStore; title: string; lead: string; rules: Rule[
   },
   {
     Icon: IconImage,
-    title: "Design para simular",
-    lead: "Aparece na foto e serve de arte final quando tem resolução.",
+    title: "Arte da fachada",
+    lead: "Criada no editor ou enviada pronta. Aparece no 3D e na foto, e serve de arte final quando tem resolução.",
     rules: [
-      { term: "Formatos", detail: `PNG, JPG ou WEBP, até ${MAX_FILE_MB} MB` },
+      { term: "Editor", detail: "Nome da loja, texto secundário, estilos prontos, fontes e cores; arraste e aumente cada parte na placa" },
+      { term: "Formatos", detail: `PNG, JPG, WEBP, SVG ou PDF (a primeira página), até ${MAX_FILE_MB} MB` },
       {
         term: "Resolução",
-        detail: `Na medida final: mínimo ${DPI_MIN} DPI (fachada vista a mais de 3 m), recomendado ${DPI_RECOMMENDED} DPI`,
+        detail: `Na medida final: mínimo ${DPI_MIN} DPI (fachada vista a mais de 3 m), recomendado ${DPI_RECOMMENDED} DPI. DPI = pixels ÷ (metros × 39,37)`,
       },
-      { term: "Cálculo", detail: "DPI = pixels ÷ (metros × 39,37)" },
-      {
-        term: "Proporção",
-        detail: `A mesma da fachada (até ${Math.round(ASPECT_TOLERANCE * 100)}% de diferença). Fora disso, escolha Preencher (corta o excedente) ou Ajustar (completa com cor de fundo)`,
-      },
+      { term: "Proporção", detail: "O editor encaixa o arquivo na placa: logo inteiro e centralizado, foto preenchendo. Depois é só ajustar" },
     ],
   },
   {
     Icon: IconFile,
     title: "Arquivo final de produção",
-    lead: "Quando o design é vetor ou maior que 25 MB.",
+    lead: "Quando a arte é vetor (AI, CDR, EPS) ou maior que 25 MB.",
     rules: [
       { term: "Formatos", detail: `${production} (vetor não perde qualidade), ou imagem dentro das regras ao lado` },
-      { term: "Envio", detail: "Depois do pedido, pelo WhatsApp ou pelo reenvio de arte. O simulador não abre esses arquivos" },
+      { term: "Envio", detail: "Junto do pedido, quando você finaliza a compra. O editor abre PDF e SVG; AI, CDR e EPS vão como foram enviados. Também dá para reenviar em Meus pedidos" },
       { term: "Medida", detail: "No tamanho final ou em escala (1:10), sempre com a proporção da fachada" },
       { term: "Preparação", detail: "Cores em CMYK, textos em curvas, imagens incorporadas e 5 cm sem texto nas bordas (ilhós, dobra e moldura)" },
     ],
@@ -71,7 +67,7 @@ export function FacadeSpecs() {
         Foto, design e arquivo final
       </h2>
       <p className="mt-3 max-w-3xl text-lead text-muted">
-        O simulador confere estas regras na hora: formato, tamanho, resolução na medida da fachada e proporção.
+        O simulador confere estas regras na hora (formato, tamanho e resolução na medida da fachada) e o editor encaixa a arte na placa.
       </p>
 
       <ul className="mt-8 grid gap-4 md:grid-cols-3">

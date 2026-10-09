@@ -10,6 +10,7 @@ import { MatModel, CoasterModel } from "./tabletop";
 import { BoxModel } from "./boxes";
 import { NeonModel, BannerModel, LightboxModel, RollupModel } from "./signage";
 import { FlagModel, HardwareModel } from "./flags";
+import { StorefrontModel } from "./storefront";
 import { ApronModel, BandanaModel, CapModel, TshirtModel } from "./textile";
 import { ClothModel, CushionModel, PetBedModel } from "./homegoods";
 import { BagModel } from "./totes";
@@ -52,6 +53,7 @@ const MODELS: Record<MockupKind, ComponentType<ModelProps>> = {
   totem: TotemModel,
   flag: FlagModel,
   hardware: HardwareModel,
+  storefront: StorefrontModel,
   mug: MugModel,
   tumbler: TumblerModel,
   bottle: BottleModel,

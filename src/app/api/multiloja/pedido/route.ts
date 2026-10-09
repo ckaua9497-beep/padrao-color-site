@@ -3,7 +3,7 @@ import { limited, lojaDaRequisicao, requestOrigin, vitrineLimits } from "@/lib/m
 import { parseCheckout } from "@/lib/multiloja/pedido";
 import { activeProvider, availableMethods } from "@/lib/multiloja/payments";
 import { isPaymentKind } from "@/lib/multiloja/core";
-import { placeOrder, priceCart, quoteFor } from "@/lib/multiloja/vendas";
+import { cotarFrete, custoDoFrete, placeOrder, priceCart, quoteFor } from "@/lib/multiloja/vendas";
 import { MAX_ORDER_ITEMS, parseItem, type OrderItemInput } from "@/lib/orders";
 import { isTrackingId } from "@/lib/multiloja/eventos";
 
@@ -22,15 +22,32 @@ export async function POST(request: Request) {
   const onlyQuote = new URL(request.url).searchParams.get("cotar") === "1";
 
   if (onlyQuote) {
-    // A cotação só precisa dos itens e da forma de pagamento: os dados do cliente ainda podem estar em branco.
-    const raw = body.data as { items?: unknown; pagamento?: unknown };
-    const list = Array.isArray(raw.items) && raw.items.length > 0 && raw.items.length <= MAX_ORDER_ITEMS ? raw.items.map(parseItem) : [];
+    // A cotação só precisa dos itens, da forma de pagamento e do CEP (para o frete): o resto pode estar em branco.
+    const raw = body.data as { items?: unknown; pagamento?: unknown; cep?: unknown; freteServico?: unknown };
+    const list = Array.isArray(raw.items) && raw.items.length > 0 && raw.items.length <= MAX_ORDER_ITEMS ? raw.items.map((item: unknown) => parseItem(item)) : [];
     if (list.length === 0 || list.some((item) => item === null)) return fail(400, "Carrinho inválido.");
+    if (limited(vitrineLimits.cotacao, request, `cotacao:${loja.id}`)) return fail(429, "Muitas cotações seguidas. Espere um pouco e tente de novo.");
     const priced = await priceCart(loja, list as OrderItemInput[]);
     if (!priced.ok) return json({ ok: false, errors: priced.errors }, 422);
     const metodos = await availableMethods();
     const method = isPaymentKind(raw.pagamento) && metodos.includes(raw.pagamento) ? raw.pagamento : (metodos[0] ?? "pix");
-    return json({ ok: true, quote: await quoteFor(loja, priced.items, method), online: await activeProvider() !== null && metodos.length > 0, metodos, metodo: method });
+    const servico = typeof raw.freteServico === "number" && Number.isInteger(raw.freteServico) ? raw.freteServico : null;
+    const frete = await cotarFrete(loja, priced.items, typeof raw.cep === "string" ? raw.cep : "", servico);
+    const custo = custoDoFrete(frete);
+    return json({
+      ok: true,
+      quote: await quoteFor(loja, priced.items, method, custo ?? 0),
+      // Para o checkout: formas de entrega e a escolhida, ou o que falta (CEP) / o problema (produto sem medida).
+      frete:
+        frete.modo === "cotado"
+          ? { modo: frete.modo, opcoes: frete.opcoes, escolhida: frete.escolhida.id, estimado: frete.estimado }
+          : frete.modo === "erro"
+            ? { modo: frete.modo, mensagem: frete.mensagem, semMedida: frete.semMedida }
+            : { modo: frete.modo },
+      online: (await activeProvider()) !== null && metodos.length > 0,
+      metodos,
+      metodo: method,
+    });
   }
 
   if (!parsed.ok) return fail(400, parsed.error, parsed.field ? { field: parsed.field } : undefined);

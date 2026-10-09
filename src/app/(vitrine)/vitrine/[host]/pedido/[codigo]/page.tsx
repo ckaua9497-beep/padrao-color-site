@@ -162,8 +162,11 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
                 <dd>− {formatBRL(pedido.desconto)}</dd>
               </div>
             )}
-            <div className="flex justify-between">
-              <dt className="text-muted">Frete</dt>
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted">
+                Frete
+                {pedido.envio.servico && <span className="block text-caption">{pedido.envio.servico}</span>}
+              </dt>
               <dd>{pedido.frete > 0 ? formatBRL(pedido.frete) : "Grátis"}</dd>
             </div>
             <div className="flex justify-between border-t border-line pt-3 text-lg font-black">
@@ -186,6 +189,12 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
               {e.cidade}/{e.estado} · CEP {formatCep(e.cep)}
             </p>
             <p className="mt-2 text-caption text-muted">CPF/CNPJ {formatDocument(pedido.cliente.documento)}</p>
+            {pedido.envio.servico && (
+              <p className="mt-3 text-[15px]">
+                <strong>{pedido.envio.servico}</strong>
+                {pedido.envio.prazo && <span className="block text-caption text-muted">Chega em {pedido.envio.prazo} depois que o pedido fica pronto.</span>}
+              </p>
+            )}
           </div>
           <div className="rounded-card bg-white p-6 shadow-card">
             <h2 className="text-lg font-bold">Dúvidas?</h2>

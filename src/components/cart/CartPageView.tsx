@@ -49,8 +49,13 @@ function LineRow({ line, grouped }: { line: CartLine; grouped: boolean }) {
   );
 }
 
-/** `resellerHint`: convite ao revendedor da Padrão para entrar na conta (fica de fora nas lojas da multiloja). */
-export default function CartPageView({ resellerHint = true }: { resellerHint?: boolean } = {}) {
+const DELIVERY_NOTE = "Entrega no seu endereço ou retirada na loja: o frete é combinado depois do pedido.";
+
+/**
+ * `resellerHint`: convite ao revendedor da Padrão para entrar na conta (fica de fora nas lojas da multiloja).
+ * `deliveryNote`: como o frete é cobrado (as lojas da multiloja cotam no checkout).
+ */
+export default function CartPageView({ resellerHint = true, deliveryNote = DELIVERY_NOTE }: { resellerHint?: boolean; deliveryNote?: string } = {}) {
   const { lines, groups, subtotal, reseller, pricing, removeBundle } = useCart();
   const customer = useCustomer();
 
@@ -108,7 +113,7 @@ export default function CartPageView({ resellerHint = true }: { resellerHint?: b
           </div>
           <div className="grid grid-cols-[110px_1fr] gap-4 bg-fog px-4 py-4">
             <dt className="text-muted">Entrega</dt>
-            <dd>Entrega no seu endereço ou retirada na loja: o frete é combinado depois do pedido.</dd>
+            <dd>{deliveryNote}</dd>
           </div>
           <div className="grid grid-cols-[110px_1fr] gap-4 bg-mist px-4 py-4">
             <dt className="text-muted">Total</dt>

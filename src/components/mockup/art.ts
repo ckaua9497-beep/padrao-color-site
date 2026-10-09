@@ -114,8 +114,11 @@ export const DEFAULT_ART: ArtSettings = {
  * `frontWindow`: fração da largura que fica de frente para a câmera (template e legenda automáticos);
  * substitui a janela padrão do tipo (garrafa térmica: a faixa de 60% já é frente e laterais).
  * `sample`: false = sem texto de exemplo quando o cliente não escreveu nada (verso).
+ * `aspect`: proporção real da área (largura ÷ altura). O template escolhe o formato (faixa, largo, quadrado…) por ela, e
+ * não pelo canvas: em pixels a proporção sai arredondada, e uma placa de 3,6 × 1,2 m (3:1, bem no limite da faixa)
+ * virava "faixa" na textura do 3D e "largo" no editor 2D, com a arte montada de outro jeito.
  */
-export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[]; surface?: string; opaque?: boolean; frontWindow?: number; sample?: boolean };
+export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[]; surface?: string; opaque?: boolean; frontWindow?: number; sample?: boolean; aspect?: number };
 
 /** A arte tem algo do cliente (texto, subtexto ou imagem)? Verso vazio = sem impressão no verso. */
 export function hasArtContent(art: ArtSettings | null | undefined): boolean {
@@ -364,6 +367,7 @@ const FAMILY: Record<MockupKind, ArtFamily> = {
   totem: "sign",
   flag: "sign",
   hardware: "sign",
+  storefront: "sign",
   cloth: "home",
   mug: "wrap",
   tumbler: "wrap",
@@ -1040,7 +1044,7 @@ function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
     w,
     h,
     unit: Math.min(w, h),
-    shape: shapeOf(w / h),
+    shape: shapeOf(art.aspect && Number.isFinite(art.aspect) && art.aspect > 0 ? art.aspect : w / h),
     family,
     text,
     sub,
@@ -2658,7 +2662,8 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
     ctx.beginPath();
     ctx.rect(0, 0, w, height);
     ctx.clip();
-    paintArea(ctx, w, height, art, image, label, info);
+    // A faixa da região tem a proporção dela (não a da palmilha inteira).
+    paintArea(ctx, w, height, { ...art, aspect: undefined }, image, label, info);
     ctx.restore();
   } else if (opts?.bleed) {
     const b = opts.bleed;

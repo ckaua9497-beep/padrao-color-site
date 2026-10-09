@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { colorsIn, DEFAULT_LED_COLORS, mockupSpec, normalizeName, resolveKind } from "./mockup.ts";
-import { KIND_INFO, MOCKUP_KINDS, type MockupKind } from "./mockup-kinds.ts";
+import { KIND_INFO, MOCKUP_KINDS, PAGE_KINDS, type MockupKind } from "./mockup-kinds.ts";
 import { MOCKUP_OVERRIDES } from "./mockup-overrides.ts";
 
 type CatalogProduct = { slug: string; name: string; categorySlug: string; options: Record<string, string[]> };
@@ -217,7 +217,8 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
 
 test("todo tipo registrado tem pelo menos um produto (nenhum modelo órfão)", () => {
   const used = new Set(allProducts.map((p) => resolveKind(p).kind));
-  assert.deepEqual(MOCKUP_KINDS.filter((kind) => !used.has(kind)), []);
+  // A fachada de loja (PAGE_KINDS) é usada pelo simulador de fachadas, não por um produto.
+  assert.deepEqual(MOCKUP_KINDS.filter((kind) => !used.has(kind) && !PAGE_KINDS.includes(kind)), []);
 });
 
 test("nenhum produto cai no fallback genérico", () => {

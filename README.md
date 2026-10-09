@@ -42,6 +42,8 @@ npm run dev -- -p 3100 # http://localhost:3100
 | `npm run multiloja:seed` | Cria/recria a loja de demonstração da multiloja no banco local (ver "Multiloja"). |
 | `npm run multiloja:admin` | Cria ou troca a senha de um admin da multiloja (senha em `MULTILOJA_ADMIN_SENHA`). |
 | `npm run multiloja:migrar-sqlite` | Copia uma vez o banco SQLite antigo (`.data/multiloja.db` + `.data/arquivos`) para o PostgreSQL. |
+| `node scripts/frete-mock.mjs` | Simulador local da API de frete da Padrão (porta 3197) para testar a cotação sem a chave (ver "Frete"). |
+| `node scripts/bunny-mock.mjs` | Simulador local do Bunny Storage (porta 3196) para testar o envio das artes (ver "Arquivos de arte no Bunny"). |
 
 ## Dados reais × demonstração
 
@@ -68,8 +70,56 @@ Copie `.env.example` para `.env.local` e preencha. Só o servidor do Next lê es
 | `PADRAO_SESSION_SECRET` | Segredo (64+ caracteres aleatórios) que assina o cookie de sessão do cliente logado.                        |
 | `PADRAO_ORDERS_ENABLED` | `true` envia o pedido de verdade (`POST /gerarpedido`); qualquer outro valor deixa o checkout em simulação (padrão). |
 | `PADRAO_SITE_ORIGINS`   | Opcional. Origens extras aceitas nos POST, separadas por vírgula (proxy que troca o Host).                  |
+| `BUNNY_ACCESS_KEY`, `BUNNY_STORAGE_URL`, `BUNNY_CDN_URL`, `BUNNY_UPLOAD_FOLDER` | Bunny Storage dos arquivos de arte (ver "Arquivos de arte no Bunny"). Sem a chave, o checkout segue sem os arquivos. |
+| `PADRAO_FRETE_URL`, `PADRAO_FRETE_API_KEY` | API de frete da Padrão (ver "Frete"). Sem a chave não há cotação: a página de produto mostra só a cidade e cada loja da multiloja cobra o frete fixo dela. |
 
 Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas no próprio `.env.example`.
+
+### Arquivos de arte no Bunny e o pedido
+
+- **Fluxo.** O cliente monta ou envia a arte no site; ao adicionar ao carrinho, os arquivos ficam no navegador (IndexedDB,
+  `print-store.ts`): o PDF no gabarito (`printFile`) e os arquivos que ele enviou, frente e verso (`artFiles`, o original antes
+  do corte de margem e da remoção de fundo; AI, CDR e PDF como vieram). O logo de um kit é guardado uma vez para todos os itens.
+  No checkout, antes do pedido, cada arquivo sobe por `POST /api/arte` (multipart, com a sessão do cliente) e o servidor grava
+  no Bunny: `PUT {BUNNY_STORAGE_URL}/{pasta}/{nome}` com a `AccessKey`, que nunca vai ao navegador. O nome é o do cliente limpo
+  (sem acento, espaço nem símbolo) mais o momento do envio em ms (`Banner80x120teste1791545356518.jpg`, `src/lib/art-files.ts`).
+  A URL pública (`{BUNNY_CDN_URL}/{pasta}/{nome}`) fica guardada na linha do carrinho (não sobe de novo se o pedido falhar) e vai
+  no pedido em `produtos[].arte.anexos` com o `tipoArquivo` que o grupo aceita na API (`tipos_anexo`: "Arquivo Único",
+  "Impressão Frente", "Impressão Verso"…). O servidor só aceita URLs da pasta pública e com nome gerado aqui.
+- **Pedido (`POST /gerarpedido`).** Os produtos seguem o exemplo de pedido da Padrão (`src/lib/orders.ts`): `id` (variação),
+  `groupId`, `groupCategoryId`, `productName`, `productImage`, `productType`, `quantidade` (lotes), `price` (um lote),
+  `precoTotal`, `variations` (opções da variação), `package` (embalagem da variação), `tipoProducao`, `productionTime`,
+  `nomeTrabalho`/`nome_trabalho`, `desc_trabalho` (a linha da arte e o que o site acrescenta: texto, kit, tamanhos, medida),
+  `arte {tipo, preco, anexos}`, `tratamentoArquivo` e `precoTotalAcabamentos`; no envelope, `data`, `hora` (Brasília), `previsao`
+  (o maior prazo em dias úteis, sem fim de semana nem feriado nacional), `idCliente`, `pagamento {tipo, valor, status}`,
+  `entrega`, `tipo_compra`, `nome_trabalho` e `precoTotal`. As premissas ainda abertas estão no comentário do arquivo.
+- **Reenvio de arte** (Meus pedidos, `POST /api/pedidos/[id]/arte`): com o Bunny, o arquivo sobe para lá e o `/reenviararte`
+  leva `url` e `nome`; sem ele, o arquivo vai em base64, como antes.
+- **Teste local:** `node scripts/bunny-mock.mjs` (porta 3196, grava em `.data/bunny-mock/`) e, no `.env.development.local`,
+  `BUNNY_ACCESS_KEY=teste`, `BUNNY_STORAGE_URL=http://localhost:3196/padraocolor`, `BUNNY_CDN_URL=http://localhost:3196/cdn`.
+- **Hospedagem:** o envio aceita até 60 MB por arquivo; plataformas serverless limitam o corpo bem abaixo disso (4,5 MB na
+  Vercel). Num servidor próprio (VPS + Cloudflare Tunnel), sem limite extra.
+
+### Frete (API de frete da Padrão)
+
+- **Quem calcula.** A Padrão já cota no Melhor Envio com a conta, o CEP de despacho e as regras dela; o site não fala com o
+  Melhor Envio. Ele chama `POST {PADRAO_FRETE_URL}` (padrão `https://padraocolor.com.br/api/v2/melhor-envio/freight/calculate`)
+  com o cabeçalho `x-api-key: PADRAO_FRETE_API_KEY`, só no servidor (`src/lib/frete-api.ts`; a chave nunca vai ao navegador nem ao
+  log; cotações iguais ficam 10 minutos em memória).
+- **O que vai.** `{ to: { postal_code }, products: [{ id, width, height, length, weight, insurance_value, quantity }] }`: um
+  produto por item, com a embalagem que a Padrão cadastra na variação (`embalagem` de `GET /produtos` → `em` no catálogo: peso em
+  kg, largura, altura e comprimento em cm, lotes por caixa). `quantity` é o número de volumes, ⌈lotes ÷ lotes por caixa⌉ (1.000
+  cartões num volume = 1); `insurance_value` vai 0. Variação sem embalagem usa a mais pesada do mesmo produto ("estimado"); produto
+  sem nenhuma não é cotado. A resposta (`services[]` com `price`, `deliveryTime`, `deliveryRange`, `company`) vira a lista de formas
+  de entrega, mais barata primeiro; os `unavailable` ficam de fora. Regras puras e testadas em `src/lib/frete.ts`.
+- **Onde aparece.** "Calcular entrega" na página de produto (`POST /api/frete {cep, groupId, variationId, quantity}`; a embalagem
+  sai do catálogo no servidor; 40 consultas a cada 10 minutos por IP): a cidade (ViaCEP) e as formas de entrega com preço e prazo
+  de transporte, contado depois que o pedido fica pronto. É uma estimativa: no checkout do site o frete ainda é combinado com o
+  atendimento, porque o contrato do `gerarpedido` não tem campo de frete. Nas lojas da multiloja o checkout cota e cobra (ver
+  "Multiloja").
+- **Teste local:** `node scripts/frete-mock.mjs` (porta 3197, mesmo formato de resposta, preços inventados com peso cubado e
+  distância pelo CEP) e, no `.env.development.local`, `PADRAO_FRETE_URL=http://localhost:3197/api/v2/melhor-envio/freight/calculate`
+  e `PADRAO_FRETE_API_KEY=teste`.
 
 ### Sincronizar o catálogo
 
@@ -83,7 +133,7 @@ npm test               # tipos de mockup, preços (m², expresso, grade) e token
 
 | Arquivo                        | Conteúdo                                                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/data/catalog.json`        | Categorias (banner, banner de celular e SEO) e produtos. Produto = grupo da API (uma página, slug igual ao do site oficial); variação = produto da API (ID que vai no pedido, preço e prazo econômico/expresso, quantidade). Traz resumo, descrição, blocos de informação, gabarito, tags, SEO, "veja também", grade de tamanhos, tabela de medidas, medida livre (m²), criação de arte, anexos e quantidade mínima/máxima. O produto "Tags" é derivado do grupo 180 (tag de presente). |
+| `src/data/catalog.json`        | Categorias (banner, banner de celular e SEO) e produtos. Produto = grupo da API (uma página, slug igual ao do site oficial); variação = produto da API (ID que vai no pedido, preço e prazo econômico/expresso, quantidade, faixa de quantidade `mn`/`mx` quando a variação tem a sua (Caderno "De 11 até 100" = 11 a 100 unidades) e embalagem `em`: peso em kg, largura, altura e comprimento em cm e lotes por caixa, para o frete; `ei` quando a Padrão cadastrou só parte dela). Traz resumo, descrição, blocos de informação, gabarito, tags, SEO, "veja também", grade de tamanhos, tabela de medidas, medida livre (m²), criação de arte, anexos e quantidade mínima/máxima. O produto "Tags" é derivado do grupo 180 (tag de presente). |
 | `src/data/storefront.json`     | A vitrine do padraocolor.com.br: banners (desktop e celular, com a medida real das artes), botões das linhas 1 e 2, categorias em destaque, "Nossos Destaques", mais vendidos, menu oficial, texto e faixa do topo. Links do site oficial viram rotas locais (`/produto/…`, `/categoria/…`).                                                                       |
 | `src/data/business-types.json` | "Para o seu negócio": tipos de negócio com banner, SEO e grupos (páginas `/negocios/[slug]`).                                                                                                                                                                                                                                                                    |
 | `src/data/finishes.json`       | Acabamentos (`GET /acabamentos`).                                                                                                                                                                                                                                                                                                                                |
@@ -132,6 +182,8 @@ npm test
 
 - **`/produtos/indice.json`** — índice leve da busca do topo, gerado do catálogo no build (substitui o antigo
   `public/search-index.json`).
+- **`/api/kit/produto?slug=`** — um produto do catálogo no formato do Monte o seu kit (variações com preço, opções e faixas),
+  para o produto que o cliente acha na busca do assistente entrar no kit com o valor certo. 400 sem slug, 404 se não existe.
 - **`/api/gabarito/[id]`** — download do gabarito de um produto (`id` do catálogo, ex. `35` ou `tags`, ou o slug). Premissa: o
   "PG Gabarito" do checklist não tem contrato e nenhum endpoint do PDF baixa gabarito; o arquivo vem do campo `gabarito` de
   `GET /grupos`, a mesma URL usada em padraocolor.com.br/gabaritos. A rota só busca em `https://img.padraocolor.com.br/padraocolor/…`,
@@ -163,7 +215,8 @@ impressão (`src/components/mockup/image-intake.ts`, decisões puras e testadas 
   inteira com o fundo da cor da borda. Logo/arte fica inteiro, centralizado, com respiro, no maior tamanho que imprime
   nítido para o tamanho da peça (`dpiTargets`: 150 em peças pequenas, 100 em banners, 50 em lonas, com 2% de folga),
   sobre a cor da borda dele quando a imagem é opaca; em caneca, copo e garrafa, dentro da parte que fica de frente (com
-  ou sem gabarito). Sem gabarito: `src/components/product/auto-fit.ts` (refaz o encaixe ao trocar de formato; botões
+  ou sem gabarito) quando a faixa dá a volta na peça (largura ÷ altura de 1,6 para cima); num adesivo de frente, como o DTF
+  U.V. de 7 × 10 cm da garrafa de alumínio, o logo usa a área toda. Sem gabarito: `src/components/product/auto-fit.ts` (refaz o encaixe ao trocar de formato; botões
   "Preencher a área" / "Imagem inteira"; "Voltar ao encaixe automático" no editor). No gabarito: `fitToTemplate`. O fundo
   que o tratador põe volta ao do cliente quando entra outra imagem.
 - **Mostrar nítido:** a textura do 3D com imagem tem 2048 px (1536 no celular) e filtragem anisotrópica máxima; durante o
@@ -210,9 +263,8 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
     posição do gabarito, sem as linhas, 300 dpi (menos em lonas grandes), TrimBox/BleedBox nas folhas de uma peça;
   - ao adicionar ao carrinho, esse PDF fica no IndexedDB do navegador (`print-store.ts`) e a linha do carrinho leva o id; o
     carrinho, o checkout, o resultado do pedido e "Meus pedidos" (por 14 dias) oferecem o download. Arquivo que o site não lê
-    (CDR, AI) vai anexado como foi enviado, sem PDF no gabarito; LED neon não tem arquivo de impressão. O envio automático
-    para a API depois do pedido depende do número de cada item (`pedido`) na resposta do `gerarpedido`, que o contrato ainda
-    não define;
+    (CDR, AI) vai anexado como foi enviado, sem PDF no gabarito; LED neon não tem arquivo de impressão. No checkout, o PDF e os
+    arquivos enviados sobem para o Bunny e vão no pedido (ver "Arquivos de arte no Bunny e o pedido");
   - limites: canvas de até 40 MP por painel (16 MP no iPhone/iPad, por isso lonas grandes saem com menos dpi), páginas acima
     de ~5 m com `/UserUnit`, PDF sem object streams. Página com só verso (cartão 4/0) e máscaras de verniz ficam fora.
 - **QA:** `/design-system/gabaritos` lista todos os produtos com as medidas, o mapeamento e as pendências, e desenha as folhas
@@ -229,6 +281,42 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
   preço ou o prazo (`express: true` no item do carrinho).
 - **Grade de vestuário.** Camisas com `sizes` pedem a quantidade por tamanho; o total respeita `minQty`/`maxQty` (lotes "de 11 a
   100", "a partir de 101"…) e vai ao carrinho com `quantity` = total de peças e a divisão em `options.Tamanhos` ("P×2, M×3").
+- **Faixa de quantidade da variação.** Em 44 produtos a faixa é uma opção (Caderno, agendas, blocos, crachá, chaveiro: "De 1
+  até 10", "De 11 até 100"…), cada uma com preço e limites próprios na API (qtde_minima/qtde_maxima de cada linha). O catálogo
+  guarda a da variação em `mn`/`mx` quando difere da do produto (a da primeira linha), e `unitLimits` (pricing.ts) vale na página
+  de produto (a quantidade segue a faixa escolhida), no carrinho (`/api/precos/limites` traz as faixas por variação) e no pedido
+  (`priceLine`). Tabela de revenda: a faixa vem de cada linha da API.
+
+### Monte Seu Kit (`/monte-seu-kit`)
+
+- **Monte o seu kit** (`/monte-seu-kit/montar`, `components/kit/`, regras puras em `src/lib/kit-builder.ts`): assistente em quatro
+  perguntas — para que é (boas-vindas da equipe, clientes, evento, lançamento da marca, loja, presente; "Festa" leva ao Crie Sua
+  Festa), quantos kits, quanto investir por kit (faixas por pessoa ou por negócio) e o que não pode faltar, já marcado dentro do
+  orçamento (`suggestPicks`: os essenciais primeiro, saindo do mais caro se passarem do teto, e os extras que cabem). Os cards da
+  página do Monte Seu Kit entram com `?objetivo=`.
+- **Valor:** cada item na quantidade do pedido inteiro (`planKitItem`: unidades por kit × kits), na faixa certa (variação com
+  `mn`/`mx` ou produto da faixa, como a Camisa em Dryfit 01–10 / 11–100 / 101+), no pacote que sai mais em conta (adesivos,
+  cardápios, tags), com um pacote por pessoa nos cartões de visita e o mínimo de cada produto; a tela mostra a faixa, os pacotes e
+  a sobra. Valor por kit = total ÷ kits, sem desconto. Revendedor logado vê a tabela de revenda.
+- **Kit montado:** itens com quantidade por kit, a opção que cada um troca (cor, formato, pacote), medida (m²) e grade de
+  tamanhos; sugestões do objetivo e busca no catálogo inteiro (índice `/produtos/indice.json`; o preço do produto vem de
+  `/api/kit/produto?slug=`); resumo com a prévia 3D do item em foco, valor por kit, kits, total, orçamento e prazo.
+- **Personalização** (`components/kit/kit-art.ts`, `KitArtPanel`, `KitArtEditor`, `KitGallery`):
+  - *O kit inteiro de uma vez:* o logo é enviado uma vez (o tratador da página de produto faz duas versões, com e sem o fundo
+    branco) e entra em cada item encaixado na área de impressão dele (`sharedItemArt` → `autoFitArt` com `fitAreaFor` da peça;
+    sem o fundo branco nas camisetas). Sem logo, o nome e a frase viram a arte no estilo escolhido (`StylePicker`); com logo, o nome
+    pode entrar junto. Cores da marca (paletas) e fundo atrás do logo (branco ou a cor da marca).
+  - *Um item por vez:* "Personalizar" abre o passo "Sua arte" da página de produto (`ArtStep`: texto, imagem, editor 2D, frente e
+    verso, manequim) com o 3D da peça ao lado, começando pela arte do kit encaixada. O que muda fica só no item (`ItemArtState`);
+    "Usar a arte do kit" volta para a comum. Cada item também pode ficar para "enviar a arte depois", e o kit inteiro também.
+  - *Fotos:* a prévia guarda a foto 3D do item quando o modelo fica pronto (`KitPreview`); "Ver o kit inteiro com a arte"
+    (`KitGallery`) fotografa os itens que faltam, um por vez num único visualizador (um contexto WebGL). A foto vale enquanto a
+    peça e a arte não mudam (`photoKey`) e é a miniatura do card e do carrinho.
+  - *Carrinho:* "Adicionar kit ao carrinho" confere a arte (sem logo, nome ou "enviar depois", aponta o painel), termina as fotos
+    que faltam na galeria e manda cada item como produto comum: grupo do kit (`bundle`), opções do kit (Kit, Kits, Marca, Entrega
+    desejada, Por kit), o resumo da arte da peça (`artSummary`, mais "Cores da marca"), a linha "Arte: …" (logo do kit, arte
+    ajustada no item, texto ou enviar depois) e a foto 3D. O gabarito em PDF ainda não é gerado para os itens do kit.
+- **Kits de festa prontos** (`/monte-seu-kit/<slug>`, `src/lib/party.ts`): composição fechada feita dos produtos do Crie Sua Festa.
 
 ## Multiloja (lojas de influenciadores e fornecedores)
 
@@ -281,11 +369,22 @@ todas as lojas: a loja é escolhida pelo endereço.
     credenciais: Efí `POST /mock/pagar/<txid>` (Pix acima de R$ 10) e `GET /mock/checkout/<id>` (cartão/boleto); Cielo
     `POST /mock/config {apiUrl, linkUrl, segredo}` (para onde avisar), `POST /mock/pagar/<PaymentId>` (Pix/boleto) e
     `GET /mock/link/<id>` (cartão). Testado ponta a ponta nos dois; nenhum dos dois rodou ainda contra o sandbox real.
+- **Frete** pela API de frete da Padrão (ver "Frete"), o mesmo cálculo do site dela: `cotarFrete` (`vendas.ts`) manda o CEP do cliente
+  e uma caixa por item do carrinho (embalagem da variação, volumes pelos lotes). O preço que volta é o que a Padrão cobra, sem margem:
+  o frete não entra na comissão.
+  - Checkout: ao digitar o CEP o cliente vê as formas de entrega (preço e prazo de transporte, contado depois que o pedido fica pronto),
+    a mais barata já marcada. Ao fechar, o servidor cota de novo e recusa (409) se o valor mudou ou a forma escolhida sumiu. O pedido
+    guarda serviço, prazo e custo (`frete_servico`, `frete_servico_id`, `frete_prazo`, `frete_custo`, `frete_gratis`), mostrados no
+    painel, no admin e na página do pedido.
+  - Produto sem embalagem cadastrada na Padrão: o checkout não fecha e mostra o WhatsApp da loja, porque o valor não seria o da
+    Padrão. A Padrão completa a embalagem no sistema dela e o próximo `sync:catalog` traz.
+  - "Frete grátis a partir de" (Dados da loja): o frete sai da comissão do lojista, e só vale quando a comissão cobre o frete.
+  - Sem `PADRAO_FRETE_API_KEY`, cada loja cobra o frete fixo que definiu em Dados da loja (como antes).
 - **Produção.** Em `/admin`, "Enviar para produção" monta o `gerarpedido` no preço base em nome de `PADRAO_MULTILOJA_CLIENTE_ID`; só chama a
   API com `PADRAO_ORDERS_ENABLED=true`, senão simula e mostra os dados. Status seguintes (enviado, entregue) com nota no histórico.
 - **Painel** (`/painel`): cadastro; início com vendas dos 30 dias, saldo e checklist; vendas e detalhe do pedido (artes, valores,
   histórico); clientes; financeiro (saldo, chave Pix, saque, extrato); divulgação (links, visitas, conversão); produtos e margens; dados
-  da loja (frete fixo e grátis a partir de, domínio próprio); aparência; conta. Server Actions em `painel/actions.ts`; a loja sempre vem
+  da loja (frete grátis a partir de; frete fixo só enquanto a API de frete da Padrão não está ligada; domínio próprio); aparência; conta. Server Actions em `painel/actions.ts`; a loja sempre vem
   da sessão.
 - **Admin da Padrão** (`/admin`): visão geral (rede toda: visitantes, pedidos, conversão, abandono, canais, configuração), análises,
   pedidos de todas as lojas (produção e status), lojas, saques e pagamentos. Em Lojas a Padrão cria o lojista e a loja (senha provisória
@@ -312,7 +411,8 @@ todas as lojas: a loja é escolhida pelo endereço.
   e cookies lacrados próprios (`auth.ts`), com limite de tentativas.
 - **Demonstração.** `npm run multiloja:seed` recria a loja `atelie-demo` (16 produtos, frete, 2 links) e um admin de teste; e-mails e
   senhas de teste estão no próprio script.
-- **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, homologação da Efí e da Cielo
+- **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, a chave da API de frete no
+  servidor (`PADRAO_FRETE_API_KEY`) e a embalagem dos produtos que ainda não têm, homologação da Efí e da Cielo
   (credenciais, Pix e boleto habilitados na conta, URLs de aviso cadastradas), cliente da multiloja na API Padrão, aviso de privacidade
   sobre o rastreamento anônimo e e-mails automáticos ao cliente (hoje ele recebe o link na tela e o lojista pode reenviar pelo painel).
 
@@ -338,7 +438,8 @@ scripts/sync-catalog.mjs
 
 ## Mockups 3D
 
-Todo produto do catálogo (361 da Padrão e 13 novos hoje) resolve para um de **65 tipos** ("kinds") de mockup. Os modelos são 100% procedurais
+Todo produto do catálogo (361 da Padrão e 13 novos hoje) resolve para um dos **tipos** ("kinds") de mockup; a fachada de loja
+(`storefront`) é um tipo só da página de Fachadas (`PAGE_KINDS`), sem produto do catálogo. Os modelos são 100% procedurais
 (geometria + texturas desenhadas em canvas, sem arquivos .glb nem imagens externas) e recebem a arte do cliente.
 
 O caminho de um produto até a tela:
@@ -366,8 +467,35 @@ O caminho de um produto até a tela:
 6. **Visualizador — `src/components/mockup/MockupViewer.tsx`** (carregado sob demanda por `Mockup3D.tsx`). Enquadra o modelo pela
    esfera envolvente, apoia o ponto mais baixo no chão com sombra de contato, gira sozinho (para com movimento reduzido),
    renderiza sob demanda (`frameloop="demand"`) e captura o snapshot que vai para o carrinho. Os modelos podem pedir outro ângulo
-   inicial com `userData.view = { elevation, azimuth }` e tirar elementos do enquadramento com `userData.noBounds`.
-   Sem WebGL, mostra a foto do catálogo.
+   inicial com `userData.view = { elevation, azimuth, distance }` (`distance` < 1 aproxima a câmera), tirar elementos do
+   enquadramento com `userData.noBounds` (cotas: também somem da sombra e do snapshot) ou `userData.noFrame` (fora do
+   enquadramento, mas na imagem: o interior da fachada). `KIND_INFO.orbit` deixa a peça só de frente (sem giro automático e
+   com órbita limitada), como a fachada. A prop `focus` (> 0; um número novo refaz) leva a câmera de frente para a parte
+   marcada com `userData.focus` ({ elevation, margin }), escurece o estúdio para o fim de tarde (fundo, luzes e ambiente) e
+   avisa o modelo por `useSceneMode().focus`; a foto do carrinho passa a ser essa vista. Sem WebGL, mostra a foto do catálogo.
+
+### Fachadas (`/fachadas`)
+
+Web to print da fachada da loja (`src/components/facade/FacadeStudio.tsx`, regras puras em `src/lib/facade.ts`):
+
+1. **Medida** da placa (m ou cm): o preço sai por m² do material escolhido.
+2. **Arte** no mesmo editor das páginas de produto (`ArtStep`, família `sign`): nome da loja, texto secundário, estilos
+   prontos, fontes e cores, ou o arquivo do cliente (PNG, JPG, WEBP, SVG ou PDF, pelo tratador automático), com o editor 2D
+   na medida da placa. AI, CDR e EPS vão pelo nome e seguem depois do pedido.
+3. **Visualização:** o **mockup 3D** de uma fachada de loja (`models/storefront.tsx`) já abre com a arte de exemplo na placa,
+   e o prédio cresce em volta da medida (calçada, rodapé de granito, porta de enrolar recolhida, vitrine de vidro com porta,
+   interior visto pelo vidro, placa em ACM e refletores de LED). Ao clicar num estilo, a câmera vai de frente para a placa, o
+   estúdio vira fim de tarde e os refletores acendem com uma piscada: luz na arte (`lightMap`, forte em cima), lentes, brilho,
+   facho e a luz na parede; "Ver a placa de perto" / "Ver a loja toda" ficam ao lado da escolha 3D ou foto. A outra opção é
+   **Na foto da sua loja**: a mesma arte, pintada na proporção da fachada, entra em perspectiva na foto do cliente (quatro
+   cantos, até 8 fotos, luz e sombra da foto).
+   - **Layout:** o 3D acompanha a edição. No computador ele fica preso ao lado dos passos e cabe na altura da tela
+     (`clamp(20rem, 100dvh − 15rem, 40rem)`); no celular e no tablet em pé (`max-width: 1023px` e `min-height: 600px`) fica
+     preso no topo, abaixo do cabeçalho, com um terço da tela. A foto da loja (cantos, fotos e ajustes) não fica presa: ao
+     trocar para ela, a página volta até o começo do simulador. Os três passos usam o mesmo título numerado (`StepTitle`; o
+     `ArtStep` aceita `heading`).
+4. **Material** (lona, adesivo, placas) e carrinho: medida, opções do material, resumo da arte (`artSummary`) e a miniatura
+   do 3D ou da foto. Nada é enviado durante a simulação.
 
 ### Adicionar um tipo novo
 
