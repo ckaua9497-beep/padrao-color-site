@@ -18,7 +18,11 @@ export type LojaFormData = {
   redes: Partial<Record<SocialKey, string>>;
   margemPadrao: number;
   categoriasDestaque: string[];
+  freteFixo: number;
+  freteGratisAcima: number | null;
 };
+
+const money = (value: number | null) => (value === null || value === 0 ? "" : value.toFixed(2).replace(".", ","));
 
 const SOCIAL_HINT: Record<SocialKey, string> = {
   instagram: "@seuperfil ou link",
@@ -68,6 +72,13 @@ export default function LojaForm({ loja, categories, domainSuffix }: { loja: Loj
 
       <Panel title="Margem padrão" description={`Vale para todo produto ativo sem margem própria. Mínimo ${MARGIN_MIN}%, máximo ${MARGIN_MAX}%.`} id="margem">
         <Field className="max-w-48" label="Margem (%)" name="margemPadrao" inputMode="decimal" defaultValue={String(loja.margemPadrao)} error={errors.margemPadrao} />
+      </Panel>
+
+      <Panel title="Frete" description="Valor cobrado do cliente por pedido. Ele é repassado para a entrega e não entra na sua comissão. Deixe em branco para frete grátis." id="frete">
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field label="Frete por pedido (R$)" name="freteFixo" inputMode="decimal" defaultValue={money(loja.freteFixo)} placeholder="Grátis" error={errors.freteFixo} />
+          <Field label="Grátis a partir de (R$)" name="freteGratisAcima" inputMode="decimal" defaultValue={money(loja.freteGratisAcima)} placeholder="Opcional" error={errors.freteGratisAcima} hint="Subtotal dos produtos." />
+        </div>
       </Panel>
 
       <Panel title="Categorias em destaque" description={`Escolha até 8. Elas aparecem primeiro no menu da loja (${featured.length}/8).`} id="categorias">

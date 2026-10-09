@@ -12,7 +12,8 @@
     "sync:templates": "node scripts/sync-templates.mjs",
     "sync:novos": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local scripts/sync-novos.mjs",
     "fotos:novos": "node scripts/fotos-produtos.mjs",
-    "multiloja:seed": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/multiloja-seed.mjs"
+    "multiloja:seed": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/multiloja-seed.mjs",
+    "multiloja:admin": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/multiloja-admin.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",

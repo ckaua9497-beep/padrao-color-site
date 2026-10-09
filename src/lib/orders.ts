@@ -325,7 +325,8 @@ function measure(value: unknown): number | undefined | null {
   return Number.isFinite(n) && n > 0 && n <= 100_000 ? n : null;
 }
 
-function parseItem(raw: unknown): OrderItemInput | null {
+/** Um item do carrinho vindo do navegador (validado campo a campo); null = inválido. */
+export function parseItem(raw: unknown): OrderItemInput | null {
   if (!isRecord(raw)) return null;
   const key = text(raw.key, 64);
   const name = text(raw.name, 200);

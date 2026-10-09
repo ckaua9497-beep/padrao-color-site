@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { formatBRL } from "@/lib/format";
 import { requirePainel } from "@/lib/multiloja/auth";
-import { PALETTES, PLAN_INFO, planRoom, salePrice } from "@/lib/multiloja/core";
+import StatusBadge from "@/components/painel/StatusBadge";
+import { PLAN_INFO, balanceOf, formatDateTime, planRoom, salePrice, sqlDaysAgo } from "@/lib/multiloja/core";
+import { releaseDays } from "@/lib/multiloja/config";
+import { listComissoes, listPedidos, listSaques, salesSummary } from "@/lib/multiloja/repo-vendas";
 import { baseFactor, lojaItens, lojaUrl } from "@/lib/multiloja/tenant";
 
 export const metadata: Metadata = { title: "Início" };
@@ -31,6 +34,9 @@ export default async function PainelInicio(props: PageProps<"/painel">) {
   const example = items[0];
   const exampleBase = example ? example.product.price * baseFactor() : 0;
   const shareText = encodeURIComponent(`Conheça a minha loja de produtos personalizados: ${url}`);
+  const mes = salesSummary(loja.id, sqlDaysAgo(30));
+  const saldo = balanceOf(listComissoes(loja.id), listSaques(loja.id), releaseDays());
+  const recentes = listPedidos({ lojaId: loja.id, limite: 5 });
 
   return (
     <div className="space-y-6">
@@ -54,6 +60,51 @@ export default async function PainelInicio(props: PageProps<"/painel">) {
           </Button>
         </div>
         <p className="mt-4 text-caption text-white/70">Coloque o link na bio do Instagram e do TikTok e nos stories.</p>
+      </section>
+
+      <section aria-labelledby="resumo-vendas" className="space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="resumo-vendas" className="text-xl font-bold">
+            Últimos 30 dias
+          </h2>
+          <Link href="/painel/vendas" className="text-[15px] font-bold underline-offset-4 hover:underline">
+            Ver vendas
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            { label: "Vendas pagas", value: String(mes.pagos) },
+            { label: "Faturamento", value: formatBRL(mes.faturamento) },
+            { label: "Sua comissão", value: formatBRL(mes.comissao) },
+            { label: "Disponível para saque", value: formatBRL(saldo.available), href: "/painel/financeiro" },
+          ].map((c) => (
+            <div key={c.label} className="rounded-panel bg-white p-4 shadow-card">
+              <p className="text-caption font-semibold text-muted">{c.label}</p>
+              <p className="mt-1 text-2xl font-black tabular-nums">{c.value}</p>
+              {c.href && (
+                <Link href={c.href} className="text-caption font-bold underline underline-offset-2">
+                  Financeiro
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+        {recentes.length > 0 && (
+          <ul className="divide-y divide-line rounded-panel bg-white px-5 shadow-card">
+            {recentes.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-[15px]">
+                <Link href={`/painel/vendas/${p.codigo}`} className="font-bold underline-offset-4 hover:underline">
+                  {p.codigo}
+                </Link>
+                <span className="min-w-0 flex-1 truncate text-muted">
+                  {p.cliente.nome} · {formatDateTime(p.criadoEm)}
+                </span>
+                <span className="font-bold tabular-nums">{formatBRL(p.total)}</span>
+                <StatusBadge status={p.status} />
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -115,9 +166,6 @@ export default async function PainelInicio(props: PageProps<"/painel">) {
         </ul>
       </section>
 
-      <p className="text-caption text-muted">
-        Cor atual da loja: {PALETTES[loja.paleta].name}. Vendas, financeiro e pagamentos online chegam na próxima etapa da multiloja.
-      </p>
     </div>
   );
 }

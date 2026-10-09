@@ -19,7 +19,8 @@ const holder = globalThis as typeof globalThis & { __multilojaDb?: Holder };
 
 function dbPath(): string {
   const configured = process.env.MULTILOJA_DB?.trim();
-  return path.resolve(process.cwd(), configured || ".data/multiloja.db");
+  // turbopackIgnore: caminho só conhecido em execução; sem ele o build rastreia o projeto inteiro.
+  return path.resolve(/* turbopackIgnore: true */ process.cwd(), configured || ".data/multiloja.db");
 }
 
 function migrate(db: DatabaseSync) {

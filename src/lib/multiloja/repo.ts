@@ -15,6 +15,7 @@ export type Lojista = {
   email: string;
   tipo: LojistaType;
   telefone: string | null;
+  chavePix: string | null;
   status: "ativo" | "bloqueado";
   criadoEm: string;
   ultimoLogin: string | null;
@@ -27,6 +28,8 @@ export type Loja = {
   lojistaId: number;
   subdominio: string;
   dominio: string | null;
+  /** O DNS do domínio próprio aponta para o site (conferido no painel); só então a loja responde nele. */
+  dominioVerificado: boolean;
   nome: string;
   slogan: string;
   sobre: string;
@@ -39,6 +42,9 @@ export type Loja = {
   banners: Banner[];
   categoriasDestaque: string[];
   margemPadrao: number;
+  /** Frete cobrado por pedido (0 = grátis) e o subtotal a partir do qual fica grátis. */
+  freteFixo: number;
+  freteGratisAcima: number | null;
   plano: Plan;
   ativa: boolean;
   criadoEm: string;
@@ -67,6 +73,7 @@ function toLojista(row: Row): Lojista {
     email: str(row.email),
     tipo: str(row.tipo) as LojistaType,
     telefone: strOrNull(row.telefone),
+    chavePix: strOrNull(row.chave_pix),
     status: row.status === "bloqueado" ? "bloqueado" : "ativo",
     criadoEm: str(row.criado_em),
     ultimoLogin: strOrNull(row.ultimo_login),
@@ -83,6 +90,7 @@ function toLoja(row: Row): Loja {
     lojistaId: Number(row.lojista_id),
     subdominio: str(row.subdominio),
     dominio: strOrNull(row.dominio),
+    dominioVerificado: Number(row.dominio_verificado) === 1,
     nome: str(row.nome),
     slogan: str(row.slogan),
     sobre: str(row.sobre),
@@ -97,6 +105,8 @@ function toLoja(row: Row): Loja {
       .map((b) => ({ src: b.src, alt: typeof b.alt === "string" ? b.alt : "", href: typeof b.href === "string" && b.href ? b.href : null })),
     categoriasDestaque: parseJson<unknown[]>(row.categorias_destaque, []).filter((c): c is string => typeof c === "string"),
     margemPadrao: Number(row.margem_padrao),
+    freteFixo: Number(row.frete_fixo ?? 0),
+    freteGratisAcima: row.frete_gratis_acima === null || row.frete_gratis_acima === undefined ? null : Number(row.frete_gratis_acima),
     plano: isPlan(plano) ? plano : "gratis",
     ativa: Number(row.ativa) === 1,
     criadoEm: str(row.criado_em),
@@ -130,6 +140,19 @@ export function updateLojistaPassword(id: number, senhaHash: string) {
 
 export function updateLojista(id: number, data: { nome: string; telefone: string | null }) {
   getDb().prepare("UPDATE lojistas SET nome = ?, telefone = ? WHERE id = ?").run(data.nome, data.telefone, id);
+}
+
+export function setChavePix(id: number, chave: string | null) {
+  getDb().prepare("UPDATE lojistas SET chave_pix = ? WHERE id = ?").run(chave, id);
+}
+
+export function setLojistaStatus(id: number, status: "ativo" | "bloqueado") {
+  getDb().prepare("UPDATE lojistas SET status = ? WHERE id = ?").run(status, id);
+}
+
+export function getLoja(id: number): Loja | null {
+  const row = getDb().prepare("SELECT * FROM lojas WHERE id = ?").get(id) as Row | undefined;
+  return row ? toLoja(row) : null;
 }
 
 export type NewLojista = {
@@ -167,8 +190,9 @@ export function getLojaBySubdomain(subdominio: string): Loja | null {
   return row ? toLoja(row) : null;
 }
 
+/** Loja do domínio próprio (só depois de verificado o DNS). */
 export function getLojaByDomain(dominio: string): Loja | null {
-  const row = getDb().prepare("SELECT * FROM lojas WHERE dominio = ?").get(dominio) as Row | undefined;
+  const row = getDb().prepare("SELECT * FROM lojas WHERE dominio = ? AND dominio_verificado = 1").get(dominio) as Row | undefined;
   return row ? toLoja(row) : null;
 }
 
@@ -195,6 +219,11 @@ export type LojaPatch = Partial<{
   categoriasDestaque: string[];
   margemPadrao: number;
   dominio: string | null;
+  dominioVerificado: boolean;
+  freteFixo: number;
+  freteGratisAcima: number | null;
+  plano: Plan;
+  ativa: boolean;
 }>;
 
 const COLUMNS: Record<keyof LojaPatch, string> = {
@@ -212,6 +241,11 @@ const COLUMNS: Record<keyof LojaPatch, string> = {
   categoriasDestaque: "categorias_destaque",
   margemPadrao: "margem_padrao",
   dominio: "dominio",
+  dominioVerificado: "dominio_verificado",
+  freteFixo: "frete_fixo",
+  freteGratisAcima: "frete_gratis_acima",
+  plano: "plano",
+  ativa: "ativa",
 };
 
 export function updateLoja(id: number, patch: LojaPatch) {
@@ -220,7 +254,7 @@ export function updateLoja(id: number, patch: LojaPatch) {
   for (const [key, value] of Object.entries(patch) as [keyof LojaPatch, unknown][]) {
     if (value === undefined) continue;
     sets.push(`${COLUMNS[key]} = ?`);
-    values.push(typeof value === "object" && value !== null ? JSON.stringify(value) : (value as SQLInputValue));
+    values.push(typeof value === "boolean" ? (value ? 1 : 0) : typeof value === "object" && value !== null ? JSON.stringify(value) : (value as SQLInputValue));
   }
   if (!sets.length) return;
   getDb()

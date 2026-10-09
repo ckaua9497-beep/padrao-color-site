@@ -39,6 +39,7 @@ npm run dev -- -p 3100 # http://localhost:3100
 | `npm run sync:novos` | Consome a API própria `/api/novos` e grava `src/data/catalog-novos.json` (ver "Produtos novos"). |
 | `npm run fotos:novos` | Fotografa os produtos novos (mockup 3D + estampa da marca) em `public/produtos-novos/`. |
 | `npm run multiloja:seed` | Cria/recria a loja de demonstração da multiloja no banco local (ver "Multiloja"). |
+| `npm run multiloja:admin` | Cria ou troca a senha de um admin da multiloja (senha em `MULTILOJA_ADMIN_SENHA`). |
 
 ## Dados reais × demonstração
 
@@ -234,22 +235,35 @@ todas as lojas: a loja é escolhida pelo endereço.
 
 - **Endereço.** `<subdominio>.<MULTILOJA_DOMINIO>` (DNS curinga `*.dominio` apontando para o site). Em desenvolvimento,
   `http://<subdominio>.localhost:3100`. `src/proxy.ts` reescreve esses hosts para `/vitrine/<host>/…` sem mudar a URL; o site principal
-  segue igual e `/vitrine` direto nele dá 404. `/api` e `/painel` não são reescritos.
-- **Vitrine** (`src/app/(vitrine)/vitrine/[host]/`): início (banners ou nome + frase), produtos com busca/filtro/ordem, produto (o mesmo
-  `ProductExperience` do site, com 3D e gabarito), carrinho, sobre e finalização. Por enquanto o pedido segue pronto para o WhatsApp da
-  loja (`VitrineCheckout`); pagamento online e comissão entram na próxima etapa.
-- **Preço.** Preço base = preço do catálogo × `MULTILOJA_FATOR_BASE` (padrão 1, provisório até a Padrão definir a tabela da multiloja);
-  preço da loja = base × (1 + margem). Margem própria por produto ou a padrão da loja, de 20% a 300% (`src/lib/multiloja/core.ts`).
-- **Painel** (`/painel`): cadastro do lojista e da loja, início com link de divulgação e checklist, produtos e margens (busca, filtros,
-  ativar/desativar e margem em lote, destaque), dados da loja (subdomínio, contatos, redes, categorias em destaque, margem padrão),
-  aparência (8 paletas com contraste testado, logo, até 3 banners) e conta. Formulários são Server Actions (`painel/actions.ts`); a loja
-  sempre vem da sessão, nunca do formulário.
-- **Planos.** Grátis (10 produtos ativos), Básico (50) e Premium (sem limite); por enquanto o plano só muda direto no banco.
-- **Dados.** SQLite local (`node:sqlite`) em `.data/multiloja.db`, imagens em `.data/arquivos/` (fora do git), servidas por
-  `/api/multiloja/arquivo/<loja>/<nome>`. Esquema em `src/lib/multiloja/schema.ts` (migrações em ordem; mudança = item novo no fim).
-  Todo SQL fica em `repo.ts`, para a troca por Postgres em produção mexer num arquivo só. Login do lojista: senha com scrypt e cookie
-  lacrado próprio (`auth.ts`), com limite de tentativas.
-- **Demonstração.** `npm run multiloja:seed` cria a loja `atelie-demo` com 16 produtos; e-mail e senha de teste estão no próprio script.
+  segue igual e `/vitrine` direto nele dá 404. `/api` e `/painel` não são reescritos; `/admin` num host de loja dá 404.
+  Domínio próprio: o lojista cadastra em Dados da loja e a loja passa a responder nele quando o DNS aponta para `MULTILOJA_DNS_ALVO`
+  (verificado no painel) ou quando a Padrão libera em `/admin/lojas`.
+- **Vitrine** (`src/app/(vitrine)/vitrine/[host]/`): início, produtos com busca/filtro/ordem, produto (o mesmo `ProductExperience` do site,
+  com 3D e gabarito), carrinho, sobre, finalização e página do pedido (`/pedido/<código>?t=<token>`: status, Pix, cartão e envio de arte).
+  Links de divulgação: `?ref=<nome>` marca a origem por 30 dias e o pedido leva essa origem; visitas contadas por dia.
+- **Preço e comissão.** Preço base = preço do catálogo × `MULTILOJA_FATOR_BASE` (padrão 1, provisório até a Padrão definir a tabela da
+  multiloja); preço da loja = base × (1 + margem), de 20% a 300%. No pedido, o servidor recalcula cada item duas vezes (`priceLine`): no
+  preço da loja e no base. Comissão = pago pelo cliente − custo base − frete − taxa do pagamento (`src/lib/multiloja/pedido.ts`, testado).
+  Fica "a liberar" até a entrega ou `MULTILOJA_DIAS_LIBERACAO` dias após o pagamento; o lojista pede saque (mínimo R$ 20) para a chave Pix.
+- **Pagamento** (`payments.ts`): `simulado` em desenvolvimento (botão "Simular pagamento" na página do pedido); `efi` com Pix (cobrança
+  imediata, QR e copia e cola; certificado .p12) e cartão por link de pagamento da Efí. Webhooks em `/api/multiloja/pagamento/efi/pix`
+  e `/efi/cartao`; o aviso nunca vale sozinho: a cobrança é consultada na Efí antes de marcar "pago". **Não testado no sandbox da Efí.**
+- **Produção.** Em `/admin`, "Enviar para produção" monta o `gerarpedido` no preço base em nome de `PADRAO_MULTILOJA_CLIENTE_ID`; só chama a
+  API com `PADRAO_ORDERS_ENABLED=true`, senão simula e mostra os dados. Status seguintes (enviado, entregue) com nota no histórico.
+- **Painel** (`/painel`): cadastro; início com vendas dos 30 dias, saldo e checklist; vendas e detalhe do pedido (artes, valores,
+  histórico); clientes; financeiro (saldo, chave Pix, saque, extrato); divulgação (links, visitas, conversão); produtos e margens; dados
+  da loja (frete fixo e grátis a partir de, domínio próprio); aparência; conta. Server Actions em `painel/actions.ts`; a loja sempre vem
+  da sessão.
+- **Admin da Padrão** (`/admin`): visão geral, pedidos de todas as lojas (produção e status), lojas (plano, no ar, bloqueio, domínio) e
+  saques. Conta criada com `MULTILOJA_ADMIN_SENHA=… npm run multiloja:admin -- email "Nome"`.
+- **Planos.** Grátis (10 produtos ativos), Básico (50) e Premium (sem limite), trocados no admin.
+- **Dados.** SQLite local (`node:sqlite`) em `.data/multiloja.db`; imagens e artes em `.data/arquivos/` (fora do git). Esquema em
+  `src/lib/multiloja/schema.ts` (migrações em ordem; mudança = item novo no fim). Todo SQL fica em `repo.ts` e `repo-vendas.ts`, para a
+  troca por Postgres mexer só neles. Logins com scrypt e cookies lacrados próprios (`auth.ts`), com limite de tentativas.
+- **Demonstração.** `npm run multiloja:seed` recria a loja `atelie-demo` (16 produtos, frete, 2 links) e um admin de teste; e-mails e
+  senhas de teste estão no próprio script.
+- **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, homologação da Efí, cliente da multiloja
+  na API Padrão e e-mails automáticos ao cliente (hoje ele recebe o link na tela e o lojista pode reenviar pelo painel).
 
 ## Estrutura
 

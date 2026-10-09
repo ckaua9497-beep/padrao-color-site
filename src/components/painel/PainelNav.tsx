@@ -9,6 +9,10 @@ import { sair } from "@/app/(painel)/painel/actions";
 
 const LINKS = [
   { href: "/painel", label: "Início" },
+  { href: "/painel/vendas", label: "Vendas" },
+  { href: "/painel/clientes", label: "Clientes" },
+  { href: "/painel/financeiro", label: "Financeiro" },
+  { href: "/painel/divulgacao", label: "Divulgação" },
   { href: "/painel/produtos", label: "Produtos e margens" },
   { href: "/painel/loja", label: "Dados da loja" },
   { href: "/painel/aparencia", label: "Aparência" },

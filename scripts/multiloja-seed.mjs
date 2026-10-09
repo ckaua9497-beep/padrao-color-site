@@ -3,9 +3,11 @@
  *
  *   npm run multiloja:seed
  *
- * Cria (ou recria) a lojista de teste abaixo com 16 produtos ativos, cor e textos. Depois:
+ * Cria (ou recria) a lojista de teste abaixo com 16 produtos ativos, cor e textos, e um admin de teste da
+ * Padrão. Pedidos, saques e links antigos da loja demo são apagados. Depois:
  *   painel:  http://localhost:3100/painel/entrar  (e-mail e senha abaixo)
  *   loja:    http://atelie-demo.localhost:3100
+ *   admin:   http://localhost:3100/admin/entrar   (ADMIN_EMAIL e ADMIN_SENHA abaixo)
  *
  * Credenciais de TESTE, válidas só neste banco local. Nunca use em produção.
  */
@@ -18,6 +20,8 @@ import { MIGRATIONS } from "../src/lib/multiloja/schema.ts";
 const EMAIL = "demo@atelie-demo.test";
 const SENHA = process.env.MULTILOJA_SEED_SENHA || "demo-loja-2026";
 const SUBDOMINIO = "atelie-demo";
+const ADMIN_EMAIL = "admin@padrao-demo.test";
+const ADMIN_SENHA = process.env.MULTILOJA_SEED_ADMIN_SENHA || "admin-demo-2026";
 
 // IDs do catálogo (src/data/catalog.json) e margem própria (null = margem padrão da loja).
 const PRODUTOS = [
@@ -57,12 +61,18 @@ for (let i = version; i < MIGRATIONS.length; i++) {
 
 db.exec("BEGIN");
 const old = db.prepare("SELECT id FROM lojistas WHERE email = ?").get(EMAIL);
-if (old) {
-  db.prepare("DELETE FROM loja_produtos WHERE loja_id IN (SELECT id FROM lojas WHERE lojista_id = ?)").run(old.id);
-  db.prepare("DELETE FROM lojas WHERE lojista_id = ?").run(old.id);
-  db.prepare("DELETE FROM lojistas WHERE id = ?").run(old.id);
+const oldLojas = db
+  .prepare("SELECT id FROM lojas WHERE subdominio = ? OR lojista_id = ?")
+  .all(SUBDOMINIO, old?.id ?? 0)
+  .map((row) => row.id);
+for (const id of oldLojas) {
+  for (const table of ["pedidos", "saques", "links", "visitas", "loja_produtos"]) db.prepare(`DELETE FROM ${table} WHERE loja_id = ?`).run(id);
+  db.prepare("DELETE FROM lojas WHERE id = ?").run(id);
 }
-db.prepare("DELETE FROM lojas WHERE subdominio = ?").run(SUBDOMINIO);
+if (old) db.prepare("DELETE FROM lojistas WHERE id = ?").run(old.id);
+
+db.prepare("DELETE FROM admins WHERE email = ?").run(ADMIN_EMAIL);
+db.prepare("INSERT INTO admins (nome, email, senha_hash) VALUES (?, ?, ?)").run("Equipe Padrão (teste)", ADMIN_EMAIL, hashPassword(ADMIN_SENHA));
 
 const lojista = db
   .prepare("INSERT INTO lojistas (nome, email, senha_hash, tipo, telefone) VALUES (?, ?, ?, ?, ?)")
@@ -89,8 +99,11 @@ const loja = db
 const lojaId = Number(loja.lastInsertRowid);
 const insert = db.prepare("INSERT INTO loja_produtos (loja_id, produto_id, margem, destaque) VALUES (?, ?, ?, ?)");
 for (const [id, margem, destaque] of PRODUTOS) insert.run(lojaId, id, margem, destaque ? 1 : 0);
+db.prepare("UPDATE lojas SET frete_fixo = 19.9, frete_gratis_acima = 150 WHERE id = ?").run(lojaId);
+db.prepare("INSERT INTO links (loja_id, slug, nome) VALUES (?, 'instagram-bio', 'Bio do Instagram'), (?, 'stories', 'Stories')").run(lojaId, lojaId);
 db.exec("COMMIT");
 
 console.log(`Loja de demonstração pronta (${PRODUTOS.length} produtos).`);
 console.log(`  painel: http://localhost:3100/painel/entrar  →  ${EMAIL}  (senha em scripts/multiloja-seed.mjs ou MULTILOJA_SEED_SENHA)`);
 console.log(`  loja:   http://${SUBDOMINIO}.localhost:3100`);
+console.log(`  admin:  http://localhost:3100/admin/entrar  →  ${ADMIN_EMAIL}  (senha no script ou MULTILOJA_SEED_ADMIN_SENHA)`);

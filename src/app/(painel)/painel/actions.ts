@@ -3,9 +3,15 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCategory, getProducts } from "@/lib/catalog";
+import { resolve4, resolveCname } from "node:dns/promises";
 import {
   LOJISTA_TYPES,
   MARGIN_DEFAULT,
+  WITHDRAW_MIN,
+  balanceOf,
+  cleanPixKey,
+  customDomainError,
+  linkSlugError,
   SOCIAL_KEYS,
   emailError,
   isPalette,
@@ -21,11 +27,15 @@ import {
 } from "@/lib/multiloja/core";
 import { endPainelSession, hashPassword, painelLimits, requestIp, requirePainel, startPainelSession, timingDummy, verifyPassword } from "@/lib/multiloja/auth";
 import { deleteImage, saveImage } from "@/lib/multiloja/files";
+import { dnsTarget, releaseDays } from "@/lib/multiloja/config";
+import { createLink, createSaque, deleteLink, listComissoes, listSaques } from "@/lib/multiloja/repo-vendas";
 import {
   activateProdutos,
   countLojaProdutos,
   createLojistaWithLoja,
   deactivateProdutos,
+  domainTaken,
+  setChavePix,
   emailTaken,
   findLojistaLogin,
   setProdutoDestaque,
@@ -183,9 +193,22 @@ export async function salvarLoja(_prev: FormState, form: FormData): Promise<Form
     .filter((slug) => getCategory(slug))
     .slice(0, 8);
 
+  const money = (key: string) => {
+    const raw = text(form, key, 12).replace(/[R$\s.]/g, "").replace(",", ".");
+    if (!raw) return null;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0 || value > 10_000) {
+      errors[key] = "Valor inválido.";
+      return null;
+    }
+    return Math.round(value * 100) / 100;
+  };
+  const freteFixo = money("freteFixo") ?? 0;
+  const freteGratisAcima = money("freteGratisAcima");
+
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
 
-  updateLoja(loja.id, { subdominio, nome, slogan, sobre, whatsapp, telefone, emailContato, redes, margemPadrao: margem, categoriasDestaque });
+  updateLoja(loja.id, { subdominio, nome, slogan, sobre, whatsapp, telefone, emailContato, redes, margemPadrao: margem, categoriasDestaque, freteFixo, freteGratisAcima });
   refresh();
   return { ok: true, message: subdominio !== loja.subdominio ? "Salvo. O endereço da loja mudou: divulgue o link novo." : "Dados da loja salvos." };
 }
@@ -319,3 +342,94 @@ export async function trocarSenha(_prev: FormState, form: FormData): Promise<For
   return { ok: true, message: "Senha alterada." };
 }
 
+
+// ---------------------------------------------------------------------------------- financeiro
+
+export async function salvarChavePix(_prev: FormState, form: FormData): Promise<FormState> {
+  const { lojista } = await requirePainel();
+  const raw = text(form, "chavePix", 120);
+  const chave = raw ? cleanPixKey(raw) : null;
+  if (raw && !chave) return { errors: { chavePix: "Chave Pix inválida. Use CPF, CNPJ, e-mail, celular com +55 ou chave aleatória." }, message: "Chave Pix inválida." };
+  setChavePix(lojista.id, chave);
+  refresh();
+  return { ok: true, message: chave ? "Chave Pix salva." : "Chave Pix removida." };
+}
+
+export async function solicitarSaque(_prev: FormState, form: FormData): Promise<FormState> {
+  const { lojista, loja } = await requirePainel();
+  if (!lojista.chavePix) return { message: "Cadastre a sua chave Pix antes de pedir o saque." };
+  const valor = Math.round(Number(text(form, "valor", 12).replace(/[R$\s.]/g, "").replace(",", ".")) * 100) / 100;
+  const saldo = balanceOf(listComissoes(loja.id), listSaques(loja.id), releaseDays());
+  if (!Number.isFinite(valor) || valor < WITHDRAW_MIN) return { errors: { valor: `O saque mínimo é de R$ ${WITHDRAW_MIN},00.` }, message: "Valor abaixo do mínimo." };
+  if (valor > saldo.available + 0.001) return { errors: { valor: "O valor passa do saldo disponível." }, message: "Saldo insuficiente." };
+  createSaque(loja.id, valor, lojista.chavePix);
+  refresh();
+  return { ok: true, message: "Saque solicitado. A Padrão Color faz o Pix em até 2 dias úteis." };
+}
+
+// ---------------------------------------------------------------------------------- divulgação
+
+export async function criarLink(_prev: FormState, form: FormData): Promise<FormState> {
+  const { loja } = await requirePainel();
+  const nome = text(form, "nome", 60);
+  const slug = text(form, "slug", 30).toLowerCase();
+  const errors: Record<string, string> = {};
+  if (nome.length < 2) errors.nome = "Dê um nome ao link (ex.: Bio do Instagram).";
+  const slugProblem = linkSlugError(slug);
+  if (slugProblem) errors.slug = slugProblem;
+  if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
+  if (!createLink(loja.id, slug, nome)) return { errors: { slug: "Já existe um link com este nome curto." }, message: "Nome curto repetido." };
+  refresh();
+  return { ok: true, message: "Link criado. Copie e use na divulgação." };
+}
+
+export async function removerLink(id: number) {
+  const { loja } = await requirePainel();
+  if (Number.isInteger(id)) deleteLink(loja.id, id);
+  refresh();
+}
+
+// ---------------------------------------------------------------------------------- domínio próprio
+
+export async function salvarDominio(_prev: FormState, form: FormData): Promise<FormState> {
+  const { loja } = await requirePainel();
+  const dominio = text(form, "dominio", 253).toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!dominio) {
+    updateLoja(loja.id, { dominio: null, dominioVerificado: false });
+    refresh();
+    return { ok: true, message: "Domínio próprio removido. A loja segue no endereço da multiloja." };
+  }
+  const problem = customDomainError(dominio);
+  if (problem) return { errors: { dominio: problem }, message: problem };
+  if (domainTaken(dominio, loja.id)) return { errors: { dominio: "Este domínio já está em outra loja." }, message: "Domínio em uso." };
+  if (dominio !== loja.dominio) updateLoja(loja.id, { dominio, dominioVerificado: false });
+  return verificar(loja.id, dominio);
+}
+
+/** Confere o DNS: o domínio precisa apontar (CNAME ou mesmo IP) para MULTILOJA_DNS_ALVO. */
+async function verificar(lojaId: number, dominio: string): Promise<FormState> {
+  const target = dnsTarget();
+  if (!target) return { ok: true, message: "Domínio salvo. A verificação do DNS será feita pela Padrão Color." };
+  let ok = false;
+  try {
+    const cnames = await resolveCname(dominio).catch(() => [] as string[]);
+    ok = cnames.some((c) => c.toLowerCase().replace(/\.$/, "") === target);
+    if (!ok) {
+      const [mine, theirs] = await Promise.all([resolve4(dominio).catch(() => [] as string[]), resolve4(target).catch(() => [] as string[])]);
+      ok = mine.length > 0 && mine.every((ip) => theirs.includes(ip));
+    }
+  } catch {
+    ok = false;
+  }
+  updateLoja(lojaId, { dominioVerificado: ok });
+  refresh();
+  return ok
+    ? { ok: true, message: "Domínio verificado! A loja já responde nele (o certificado HTTPS pode levar alguns minutos)." }
+    : { message: `O DNS ainda não aponta para ${target}. Crie o CNAME e tente de novo (a propagação pode levar algumas horas).` };
+}
+
+export async function verificarDominio(): Promise<FormState> {
+  const { loja } = await requirePainel();
+  if (!loja.dominio) return { message: "Cadastre o domínio primeiro." };
+  return verificar(loja.id, loja.dominio);
+}

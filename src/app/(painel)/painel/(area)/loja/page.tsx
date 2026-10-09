@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import DominioForm from "@/components/painel/DominioForm";
 import LojaForm from "@/components/painel/LojaForm";
 import { getCategories } from "@/lib/catalog";
 import { requirePainel } from "@/lib/multiloja/auth";
+import { dnsTarget } from "@/lib/multiloja/config";
 import { rootDomain } from "@/lib/multiloja/tenant";
 
 export const metadata: Metadata = { title: "Dados da loja" };
@@ -26,10 +28,13 @@ export default async function PainelLoja() {
           redes: loja.redes,
           margemPadrao: loja.margemPadrao,
           categoriasDestaque: loja.categoriasDestaque,
+          freteFixo: loja.freteFixo,
+          freteGratisAcima: loja.freteGratisAcima,
         }}
         categories={getCategories().map((c) => ({ slug: c.slug, name: c.name }))}
         domainSuffix={`.${root}${port ? `:${port}` : ""}`}
       />
+      <DominioForm dominio={loja.dominio} verificado={loja.dominioVerificado} alvo={dnsTarget()} />
     </div>
   );
 }

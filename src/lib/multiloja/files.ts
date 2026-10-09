@@ -18,7 +18,8 @@ export type ImageExt = keyof typeof IMAGE_TYPES;
 const NAME_RE = /^[a-z0-9-]{8,64}\.(png|jpg|webp)$/;
 
 function root(): string {
-  return path.resolve(process.cwd(), process.env.MULTILOJA_ARQUIVOS?.trim() || ".data/arquivos");
+  // turbopackIgnore: caminho só conhecido em execução; sem ele o build rastreia o projeto inteiro.
+  return path.resolve(/* turbopackIgnore: true */ process.cwd(), process.env.MULTILOJA_ARQUIVOS?.trim() || ".data/arquivos");
 }
 
 /** Tipo real da imagem pelos bytes iniciais; null = não é PNG, JPEG nem WebP. */
@@ -57,6 +58,29 @@ export async function readImage(lojaId: string, name: string): Promise<{ bytes: 
     const bytes = await readFile(path.join(root(), lojaId, name));
     const ext = name.split(".").pop() as ImageExt;
     return { bytes, type: IMAGE_TYPES[ext] };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------------- artes dos pedidos
+
+const ART_RE = /^\d{1,3}-[a-f0-9]{12}\.[a-z0-9]{2,4}$/;
+
+/** Guarda a arte de um item do pedido (fora da pasta pública). Devolve o nome interno do arquivo. */
+export async function saveOrderArt(pedidoId: number, posicao: number, file: File): Promise<string> {
+  const ext = (file.name.toLowerCase().split(".").pop() ?? "bin").replace(/[^a-z0-9]/g, "").slice(0, 4) || "bin";
+  const name = `${posicao}-${randomBytes(6).toString("hex")}.${ext}`;
+  const dir = path.join(root(), "pedidos", String(pedidoId));
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, name), new Uint8Array(await file.arrayBuffer()));
+  return name;
+}
+
+export async function readOrderArt(pedidoId: number, name: string): Promise<Buffer | null> {
+  if (!ART_RE.test(name)) return null;
+  try {
+    return await readFile(path.join(root(), "pedidos", String(pedidoId), name));
   } catch {
     return null;
   }

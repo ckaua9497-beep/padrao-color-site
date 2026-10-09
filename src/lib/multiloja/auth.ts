@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { seal, unseal } from "../api/seal";
 import { createRateLimiter } from "../api/rate-limit";
 import { getLojaByLojista, getLojista, type Loja, type Lojista } from "./repo";
+import { getAdmin, type Admin } from "./repo-vendas";
 
 /*
  * Login do lojista no painel. Senha com scrypt (sal aleatório por senha); sessão num cookie httpOnly lacrado
@@ -93,6 +94,44 @@ export async function requirePainel(): Promise<PainelContext> {
   const ctx = await getPainel();
   if (!ctx) redirect("/painel/entrar");
   return ctx;
+}
+
+// ---------------------------------------------------------------------------------- administradores da Padrão
+
+export const ADMIN_COOKIE = PRODUCTION ? "__Host-ml_admin" : "ml_admin";
+const ADMIN_MAX_AGE_SEC = 12 * 60 * 60;
+
+type AdminSession = { v: 1; adminId: number; iat: number; exp: number };
+
+let adminKey: Buffer | null = null;
+function adminSessionKey(): Buffer {
+  const secret = process.env.PADRAO_SESSION_SECRET ?? "";
+  if (secret.length < 32) throw new Error("PADRAO_SESSION_SECRET precisa de pelo menos 32 caracteres aleatórios.");
+  adminKey ??= Buffer.from(hkdfSync("sha256", secret, "padrao-color", "multiloja-admin-v1", 32));
+  return adminKey;
+}
+
+export async function startAdminSession(adminId: number) {
+  const iat = nowSec();
+  const session: AdminSession = { v: 1, adminId, iat, exp: iat + ADMIN_MAX_AGE_SEC };
+  (await cookies()).set(ADMIN_COOKIE, seal(session, adminSessionKey()), { ...COOKIE_OPTIONS, sameSite: "strict", maxAge: ADMIN_MAX_AGE_SEC });
+}
+
+export async function endAdminSession() {
+  (await cookies()).set(ADMIN_COOKIE, "", { ...COOKIE_OPTIONS, sameSite: "strict", maxAge: 0, expires: new Date(0) });
+}
+
+export async function getAdminSession(): Promise<Admin | null> {
+  const raw = (await cookies()).get(ADMIN_COOKIE)?.value;
+  if (!raw) return null;
+  const s = unseal<AdminSession>(raw, adminSessionKey());
+  return s && s.v === 1 && Number.isInteger(s.adminId) && s.exp > nowSec() ? getAdmin(s.adminId) : null;
+}
+
+export async function requireAdmin(): Promise<Admin> {
+  const admin = await getAdminSession();
+  if (!admin) redirect("/admin/entrar");
+  return admin;
 }
 
 // ---------------------------------------------------------------------------------- limites

@@ -323,6 +323,11 @@ export function socialUrl(key: SocialKey, raw: string): string | null {
   }
 }
 
+/** "1 venda", "3 vendas" (número no formato brasileiro). */
+export function plural(n: number, one: string, many: string): string {
+  return `${n.toLocaleString("pt-BR")} ${n === 1 ? one : many}`;
+}
+
 /** Texto sem acento, minúsculo e só com letras/números (busca do painel, sem carregar o catálogo no navegador). */
 export function normalizeText(value: string): string {
   return value
@@ -331,4 +336,157 @@ export function normalizeText(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+// ---------------------------------------------------------------------------------- pedidos
+
+export const ORDER_STATUSES = ["aguardando_pagamento", "pago", "em_producao", "enviado", "entregue", "cancelado", "expirado"] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
+  aguardando_pagamento: "Aguardando pagamento",
+  pago: "Pago",
+  em_producao: "Em produção",
+  enviado: "Enviado",
+  entregue: "Entregue",
+  cancelado: "Cancelado",
+  expirado: "Pagamento expirado",
+};
+
+/** Mudanças de status que a Padrão faz à mão (o pagamento online marca "pago" sozinho). */
+export const ORDER_NEXT: Record<OrderStatus, OrderStatus[]> = {
+  aguardando_pagamento: ["pago", "cancelado", "expirado"],
+  pago: ["em_producao", "cancelado"],
+  em_producao: ["enviado", "cancelado"],
+  enviado: ["entregue"],
+  entregue: [],
+  cancelado: [],
+  expirado: [],
+};
+
+export function isOrderStatus(value: string): value is OrderStatus {
+  return (ORDER_STATUSES as readonly string[]).includes(value);
+}
+
+/** Pedido que conta como venda (pagamento confirmado e não cancelado). */
+export function isPaidStatus(status: OrderStatus): boolean {
+  return status === "pago" || status === "em_producao" || status === "enviado" || status === "entregue";
+}
+
+const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/** Código do pedido para o cliente ("ML-7F3K2Q"): curto, sem 0/O/1/I/L. */
+export function orderCode(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
+  const bytes = random(6);
+  return `ML-${[...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("")}`;
+}
+
+export type PaymentKind = "pix" | "cartao";
+export const PAYMENT_LABEL: Record<PaymentKind, string> = { pix: "Pix", cartao: "Cartão de crédito" };
+
+/** Frete da loja: valor fixo, grátis a partir de um subtotal. */
+export function shippingFor(subtotal: number, fixed: number, freeAbove: number | null): number {
+  if (!(fixed > 0)) return 0;
+  if (freeAbove !== null && freeAbove > 0 && subtotal >= freeAbove) return 0;
+  return roundCents(fixed);
+}
+
+export type PaymentRates = { pix: number; cartao: number };
+
+/** Taxa do meio de pagamento (% do total cobrado). */
+export function paymentFee(total: number, method: PaymentKind, rates: PaymentRates): number {
+  return roundCents((total * rates[method]) / 100);
+}
+
+/**
+ * Comissão do lojista: o que o cliente pagou menos o custo da Padrão (preço base), o frete (repassado) e a
+ * taxa do pagamento. O desconto do PIX sai da margem do lojista. Nunca negativa.
+ */
+export function commissionFor({ total, baseCost, shipping, fee }: { total: number; baseCost: number; shipping: number; fee: number }): number {
+  return Math.max(0, roundCents(total - baseCost - shipping - fee));
+}
+
+export type BalanceOrder = { status: OrderStatus; comissao: number; pagoEm: string | null };
+export type BalanceWithdrawal = { status: "solicitado" | "pago" | "recusado"; valor: number };
+export type Balance = { available: number; pending: number; requested: number; withdrawn: number; earned: number };
+
+/** Data do SQLite ("AAAA-MM-DD HH:MM:SS", UTC) → Date. */
+export function sqlDate(value: string): Date {
+  return new Date(`${value.replace(" ", "T")}Z`);
+}
+
+/** Data e hora do SQLite no horário de Brasília ("08/10/2026 22:06"). */
+export function formatDateTime(value: string, withTime = true): string {
+  return sqlDate(value).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {}),
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
+/** "AAAA-MM-DD HH:MM:SS" (UTC, como o SQLite grava) de N dias atrás, para filtrar por período. */
+export function sqlDaysAgo(days: number, now = new Date()): string {
+  return new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/** Comissão já liberada: pedido entregue, ou pago há pelo menos `releaseDays` dias. */
+export function commissionReleased(order: Pick<BalanceOrder, "status" | "pagoEm">, releaseDays: number, now = new Date()): boolean {
+  if (order.status === "entregue") return true;
+  return order.pagoEm ? now.getTime() - sqlDate(order.pagoEm).getTime() >= releaseDays * 86_400_000 : false;
+}
+
+/**
+ * Saldo do lojista. A comissão fica "a liberar" até o pedido ser entregue ou passarem `releaseDays` desde o
+ * pagamento; depois entra no disponível. Saque solicitado já sai do disponível; recusado volta.
+ */
+export function balanceOf(orders: BalanceOrder[], withdrawals: BalanceWithdrawal[], releaseDays: number, now = new Date()): Balance {
+  let released = 0;
+  let pending = 0;
+  for (const order of orders) {
+    if (!isPaidStatus(order.status)) continue;
+    if (commissionReleased(order, releaseDays, now)) released += order.comissao;
+    else pending += order.comissao;
+  }
+  const requested = withdrawals.filter((w) => w.status === "solicitado").reduce((sum, w) => sum + w.valor, 0);
+  const withdrawn = withdrawals.filter((w) => w.status === "pago").reduce((sum, w) => sum + w.valor, 0);
+  return {
+    available: roundCents(Math.max(0, released - requested - withdrawn)),
+    pending: roundCents(pending),
+    requested: roundCents(requested),
+    withdrawn: roundCents(withdrawn),
+    earned: roundCents(released + pending),
+  };
+}
+
+export const WITHDRAW_MIN = 20;
+
+/** Chave PIX: CPF, CNPJ, e-mail, celular (+55…) ou chave aleatória. Devolve a chave limpa ou null. */
+export function cleanPixKey(raw: string): string | null {
+  const text = raw.trim();
+  if (!text) return null;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)) return text.toLowerCase();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(text) && text.length <= 77) return text.toLowerCase();
+  const digits = text.replace(/\D/g, "");
+  if (/^\+?55/.test(text.replace(/[\s()-]/g, "")) && /^55\d{10,11}$/.test(digits)) return `+${digits}`;
+  if (digits.length === 11 || digits.length === 14) return digits;
+  return null;
+}
+
+// ---------------------------------------------------------------------------------- divulgação
+
+/** Nome curto do link de divulgação (?ref=…): 2 a 30 letras minúsculas, números e hífen. */
+export function linkSlugError(value: string): string | null {
+  return /^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])$/.test(value) ? null : "Use de 2 a 30 letras minúsculas, números e hífen.";
+}
+
+/** Dia (AAAA-MM-DD) no horário de Brasília, para somar visitas por dia. */
+export function dayKey(date = new Date()): string {
+  return new Date(date.getTime() - 3 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/** Dia (AAAA-MM-DD, Brasília) de N dias atrás. */
+export function dayKeyDaysAgo(days: number, now = new Date()): string {
+  return dayKey(new Date(now.getTime() - days * 86_400_000));
 }

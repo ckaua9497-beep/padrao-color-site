@@ -102,10 +102,12 @@ The t-shirt pipeline lives in the folder `src/components/mockup/models/apparel/`
 ### Multiloja (stores for influencers and suppliers)
 
 - One install serves every store by host: `src/proxy.ts` rewrites `<sub>.<MULTILOJA_DOMINIO>` (dev: `<sub>.localhost:3100`) to `src/app/(vitrine)/vitrine/[host]/`; `/api` and `/painel` are never rewritten. The store's palette overrides the coral CSS variables (`paletteVars`).
-- Lojista panel: `src/app/(painel)/painel/` (Server Actions in `actions.ts`; the store always comes from the session via `requirePainel()`).
-- Data: `src/lib/multiloja/` — `core.ts` (pure, tested: host parsing, margin/price, plans, palettes), `schema.ts` (migrations), `db.ts` (node:sqlite in `.data/`), `repo.ts` (all SQL), `auth.ts` (scrypt + sealed cookie), `tenant.ts` (store from host, priced products), `files.ts` (uploads).
-- Store price = catalog price × `MULTILOJA_FATOR_BASE` × (1 + margin). Checkout hands the order to the store's WhatsApp until online payment exists.
-- `npm run multiloja:seed` creates the demo store `atelie-demo` (test login inside the script).
+- Lojista panel: `src/app/(painel)/painel/` (Server Actions in `actions.ts`; the store always comes from the session via `requirePainel()`). Padrão admin: `src/app/(admin)/admin/` (`requireAdmin()`).
+- `src/lib/multiloja/`: `core.ts` and `pedido.ts` are pure and tested (host parsing, margin/price, plans, palettes, order totals, commission, balance); `schema.ts` (migrations), `db.ts` (node:sqlite in `.data/`), `repo.ts` + `repo-vendas.ts` (all SQL), `auth.ts` (scrypt + sealed cookies for lojista and admin), `tenant.ts` (store from host, priced products), `vendas.ts` (place order, confirm payment, send to production), `payments.ts` (simulated / Efí Pix + card link), `config.ts` (env), `files.ts` (uploads and order art).
+- Orders: the server reprices every cart line with `priceLine` at store price and at base price; the browser total is only compared (409 when it changed). Payment webhooks are re-checked against the provider before marking "pago".
+- Production send (`gerarpedido`) only with `PADRAO_ORDERS_ENABLED=true` and `PADRAO_MULTILOJA_CLIENTE_ID`; otherwise simulated. The Efí integration is untested against the sandbox.
+- `npm run multiloja:seed` recreates the demo store `atelie-demo` and a test admin (test logins inside the script).
+- Server components must not call `Date.now()`/`new Date()` directly (React Compiler purity rule): use `sqlDaysAgo`, `dayKeyDaysAgo`, `commissionReleased` from `core.ts`.
 
 ### Layout and design system (user-approved: do not redesign)
 
