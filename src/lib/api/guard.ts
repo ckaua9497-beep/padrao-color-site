@@ -94,16 +94,24 @@ export async function readJsonBody(request: Request, maxBytes = 32 * 1024): Prom
   }
 }
 
+/** Endereço local, de rede interna ou de loopback (o próprio proxy, não o cliente). */
+function isInternalIp(ip: string): boolean {
+  const v4 = ip.replace(/^::ffff:/i, "");
+  return /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.)/.test(v4) || ip === "::1" || ip === "::" || /^(f[cd][0-9a-f]{2}|fe80):/i.test(ip) || ip === "localhost";
+}
+
 /**
- * IP do cliente como o proxy da hospedagem viu: X-Real-IP ou a ÚLTIMA entrada do X-Forwarded-For (a primeira
- * o próprio cliente pode inventar). null = desconhecido (sem proxy): aí os limites por IP não valem, para
- * não virar um balde único do site inteiro; os limites por usuário/documento continuam.
+ * IP do cliente como o proxy da hospedagem viu: o cabeçalho de PADRAO_CLIENT_IP_HEADER (atrás de CDN:
+ * cf-connecting-ip, x-vercel-forwarded-for…), senão X-Real-IP ou a ÚLTIMA entrada do X-Forwarded-For (a
+ * primeira o próprio cliente pode inventar). null = desconhecido: sem cabeçalho, ou só o IP interno do proxy
+ * (o Next preenche o X-Forwarded-For com o endereço da conexão). Aí os limites por IP não valem, para não
+ * virar um balde único do site inteiro; os limites por usuário/documento continuam.
  */
 export function clientIp(request: Request): string | null {
-  const real = request.headers.get("x-real-ip")?.trim();
-  if (real) return real;
+  const configured = process.env.PADRAO_CLIENT_IP_HEADER?.trim();
   const forwarded = request.headers.get("x-forwarded-for")?.split(",").map((part) => part.trim()).filter(Boolean);
-  return forwarded?.length ? forwarded[forwarded.length - 1] : null;
+  const ip = (configured ? request.headers.get(configured)?.split(",")[0]?.trim() : null) || request.headers.get("x-real-ip")?.trim() || forwarded?.[forwarded.length - 1];
+  return ip && !isInternalIp(ip) ? ip : null;
 }
 
 const MINUTE = 60_000;

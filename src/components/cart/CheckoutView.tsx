@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { getJson, lookupCep, postJson } from "@/components/account/client-api";
 import { FormAlert, UfSelect } from "@/components/account/FormBits";
 import { LoginForm } from "@/components/account/LoginForm";
@@ -30,6 +30,8 @@ import { STORE } from "@/lib/store";
 import { ItemTags, ResellerNote } from "./CartDrawer";
 import { CartThumb } from "./CartThumb";
 import { quantityText, toOrderItem, useCart } from "./CartProvider";
+import { PrintFileLink } from "@/components/product/gabarito/PrintFileLink";
+import { keepPrintFiles } from "@/components/product/gabarito/print-store";
 
 /*
  * Checkout: 1 Identificação (sessão: entrar ou criar conta, porque o POST /gerarpedido exige idCliente),
@@ -42,7 +44,31 @@ type AccountSummary = { customerId: number; document: string; address: DeliveryA
 type QuoteLine = { key: string; unitPrice: number; total: number; reseller: boolean };
 type Quote = { totals: OrderTotals; reseller: boolean; lines: QuoteLine[] };
 type OrderReply = { mode: "simulation"; payload: OrderPayload; quote: Quote } | { mode: "order"; order: number | null; quote: Quote; duplicate?: boolean };
-type Result = { mode: "simulation"; payload: OrderPayload; quote: Quote } | { mode: "order"; order: number | null; quote: Quote; method: PaymentMethod; cancelled: boolean };
+type PrintFile = { id: string; name: string; product: string };
+type Result =
+  | { mode: "simulation"; payload: OrderPayload; quote: Quote; files: PrintFile[] }
+  | { mode: "order"; order: number | null; quote: Quote; method: PaymentMethod; cancelled: boolean; files: PrintFile[] };
+
+/** Arquivos de impressão no gabarito do pedido (PDF guardado no navegador), para baixar ou reenviar. */
+function PrintFiles({ files, className }: { files: PrintFile[]; className?: string }) {
+  if (!files.length) return null;
+  return (
+    <section className={cx("rounded-control bg-white p-5 text-left", className)} aria-labelledby="arquivos-gabarito">
+      <h2 id="arquivos-gabarito" className="text-[15px] font-bold">
+        Arte encaixada no gabarito
+      </h2>
+      <p className="mt-1 text-caption text-muted">PDF no tamanho real de cada peça, sem as linhas do gabarito. Se a Padrão Color pedir a arte, é este arquivo que você envia.</p>
+      <ul className="mt-3 grid gap-2">
+        {files.map((file) => (
+          <li key={file.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+            <span className="font-semibold">{file.product}</span>
+            <PrintFileLink file={file} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 const EMPTY_ADDRESS: DeliveryAddress = { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "" };
 
@@ -150,7 +176,7 @@ function CancelPurchase({ order, onCancelled }: { order: number; onCancelled: ()
   );
 }
 
-function SimulationResult({ payload, onBack }: { payload: OrderPayload; onBack: () => void }) {
+function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; files: PrintFile[]; onBack: () => void }) {
   return (
     <div className="mx-auto max-w-[960px] px-5 py-12">
       <div className="text-center">
@@ -237,6 +263,7 @@ function SimulationResult({ payload, onBack }: { payload: OrderPayload; onBack: 
             <dd className="text-lg font-black">{formatBRL(payload.precoTotal)}</dd>
           </div>
         </dl>
+        <PrintFiles files={files} className="mt-6 ring-1 ring-line" />
         <details className="mt-6 rounded-control bg-mist p-4">
           <summary className="cursor-pointer text-sm font-semibold">Ver o JSON do POST /gerarpedido</summary>
           <pre className="mt-3 max-h-96 overflow-auto rounded-thumb bg-ink p-4 text-[12px] leading-relaxed text-white">{JSON.stringify(payload, null, 2)}</pre>
@@ -270,6 +297,7 @@ function OrderResult({ result, onCancelled }: { result: Extract<Result, { mode: 
             Total de {formatBRL(result.quote.totals.total)} no {method.label}. Pagamento pendente: a Padrão Color envia as instruções de pagamento pelo e-mail e telefone do seu cadastro. A produção começa depois da confirmação.
           </p>
           <p className="mt-3 text-sm text-muted">Se a arte ainda não foi enviada, mande pelo pedido em Meus pedidos.</p>
+          <PrintFiles files={result.files} className="mt-6 ring-1 ring-line" />
           {result.order && (
             <div className="mt-4">
               <CancelPurchase order={result.order} onCancelled={onCancelled} />
@@ -294,7 +322,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const customer = useCustomer();
   const logged = customer.status === "customer" || customer.status === "reseller";
   const [authTab, setAuthTab] = useState<"entrar" | "criar">("entrar");
-  const [authInfo, setAuthInfo] = useState<string | null>(null);
+  const [authInfo, setAuthInfo] = useState<{ tone: "success" | "info"; text: string } | null>(null);
   const [summary, setSummary] = useState<AccountSummary | null>(null);
   const [deliveryKind, setDeliveryKind] = useState<DeliveryChoice["kind"]>("cadastro");
   const [address, setAddress] = useState<DeliveryAddress>(EMPTY_ADDRESS);
@@ -307,6 +335,21 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const [checkOrders, setCheckOrders] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
+  // CEP da última busca: resposta atrasada de um CEP anterior é descartada.
+  const cepAsked = useRef("");
+
+  // Sessão perdida no meio (token vencido, cookie apagado): volta para a identificação com o aviso, sem a
+  // entrega, o orçamento e os erros da conta anterior.
+  const sessionLost = useCallback(() => {
+    setCustomer({ status: "anonymous" });
+    setDeliveryDone(false);
+    setQuote(null);
+    setError(null);
+    setItemErrors([]);
+    setCheckOrders(false);
+    setAuthTab("entrar");
+    setAuthInfo({ tone: "info", text: "Sua sessão expirou. Entre de novo para continuar a compra: o carrinho continua aqui." });
+  }, []);
 
   // Endereço do cadastro e saldo (GET /api/conta/resumo) da conta logada.
   const customerId = logged ? customer.id : undefined;
@@ -316,14 +359,14 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     getJson<Omit<AccountSummary, "customerId">>("/api/conta/resumo").then((reply) => {
       if (!alive) return;
       if (reply.ok) setSummary({ ...reply.data, customerId });
-      else if (reply.status === 401) setCustomer({ status: "anonymous" });
+      else if (reply.status === 401) sessionLost();
       // Sem o cadastro agora: segue com outro endereço ou retirada.
       else setSummary({ customerId, document: "", address: null, balance: null, blocked: null });
     });
     return () => {
       alive = false;
     };
-  }, [customerId]);
+  }, [customerId, sessionLost]);
 
   const account = summary && summary.customerId === customerId ? summary : null;
   const registered = account?.address && !addressProblem(account.address) ? account.address : null;
@@ -332,7 +375,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const totals = orderTotals(lines, payment);
   const step = !logged ? 1 : !deliveryDone ? 2 : 3;
 
-  if (result?.mode === "simulation") return <SimulationResult payload={result.payload} onBack={() => setResult(null)} />;
+  if (result?.mode === "simulation") return <SimulationResult payload={result.payload} files={result.files} onBack={() => setResult(null)} />;
   if (result?.mode === "order") return <OrderResult result={result} onCancelled={() => setResult({ ...result, cancelled: true })} />;
 
   if (lines.length === 0) {
@@ -349,12 +392,15 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const onCep = async (value: string) => {
     const cep = formatCep(value);
     setAddress((current) => ({ ...current, cep }));
-    if (cep.replace(/\D/g, "").length !== 8) {
+    const digits = cep.replace(/\D/g, "");
+    cepAsked.current = digits;
+    if (digits.length !== 8) {
       setCepStatus(null);
       return;
     }
     setCepStatus("Buscando o endereço…");
     const found = await lookupCep(cep);
+    if (cepAsked.current !== digits) return;
     if (!found) {
       setCepStatus("CEP não encontrado. Preencha o endereço.");
       return;
@@ -387,16 +433,28 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     setBusy(false);
     if (reply.ok) {
       setQuote(null);
+      // PDFs no gabarito das linhas: o pedido guarda por alguns dias (o carrinho é limpo logo abaixo).
+      const files = lines.flatMap((line) => (line.item.printFile ? [{ ...line.item.printFile, product: line.item.name }] : []));
       if (reply.data.mode === "simulation") {
-        setResult({ mode: "simulation", payload: reply.data.payload, quote: reply.data.quote });
+        setResult({ mode: "simulation", payload: reply.data.payload, quote: reply.data.quote, files });
         return;
       }
-      setResult({ mode: "order", order: reply.data.order, quote: reply.data.quote, method: payment, cancelled: false });
+      keepPrintFiles(files, reply.data.order);
+      setResult({ mode: "order", order: reply.data.order, quote: reply.data.quote, method: payment, cancelled: false, files });
       clear();
       return;
     }
+    if (reply.status === 401) {
+      sessionLost();
+      return;
+    }
+    // Sem resposta da rota (internet caiu, proxy devolveu 5xx sem JSON): o pedido pode ter sido criado.
+    if (reply.status === 0 || (reply.status >= 500 && typeof reply.data.error !== "string")) {
+      setError("Não recebemos a confirmação do pedido. Confira em Meus pedidos antes de enviar de novo.");
+      setCheckOrders(true);
+      return;
+    }
     setError(reply.error);
-    if (reply.status === 401) setCustomer({ status: "anonymous" });
     if (reply.status === 409 && reply.data.quote) setQuote(reply.data.quote as Quote);
     if (reply.status === 422 && Array.isArray(reply.data.items)) setItemErrors(reply.data.items as LineError[]);
     if (reply.data.checkOrders) setCheckOrders(true);
@@ -465,18 +523,18 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
                 className="mb-5"
               />
               {authInfo && (
-                <FormAlert tone="success" className="mb-4">
-                  {authInfo}
+                <FormAlert tone={authInfo.tone} className="mb-4">
+                  {authInfo.text}
                 </FormAlert>
               )}
               {authTab === "entrar" ? (
-                <LoginForm onSignup={() => setAuthTab("criar")} />
+                <LoginForm onSignup={() => setAuthTab("criar")} recoverHref="/conta/recuperar?volta=%2Fcheckout" />
               ) : (
                 <SignupForm
                   onSuccess={({ loggedIn, message }) => {
                     if (loggedIn) return;
                     setAuthTab("entrar");
-                    setAuthInfo(message ?? "Conta criada! Entre para continuar.");
+                    setAuthInfo({ tone: "success", text: message ?? "Conta criada! Entre para continuar." });
                   }}
                 />
               )}
@@ -497,8 +555,8 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
               <div className="grid gap-4 rounded-thumb border border-line p-4 md:grid-cols-2">
                 <TextField label="CEP" value={address.cep} onChange={onCep} hint={cepStatus ?? undefined} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" />
                 <TextField label="Rua" value={address.logradouro} onChange={(value) => setAddress((a) => ({ ...a, logradouro: value }))} autoComplete="address-line1" />
-                <TextField label="Número" value={address.numero} onChange={(value) => setAddress((a) => ({ ...a, numero: value }))} autoComplete="address-line2" />
-                <TextField label="Complemento (opcional)" value={address.complemento} onChange={(value) => setAddress((a) => ({ ...a, complemento: value }))} autoComplete="address-line3" />
+                <TextField label="Número" value={address.numero} onChange={(value) => setAddress((a) => ({ ...a, numero: value }))} autoComplete="off" />
+                <TextField label="Complemento (opcional)" value={address.complemento} onChange={(value) => setAddress((a) => ({ ...a, complemento: value }))} autoComplete="address-line2" />
                 <TextField label="Bairro" value={address.bairro} onChange={(value) => setAddress((a) => ({ ...a, bairro: value }))} autoComplete="address-level3" />
                 <TextField label="Cidade" value={address.cidade} onChange={(value) => setAddress((a) => ({ ...a, cidade: value }))} autoComplete="address-level2" />
                 <UfSelect value={address.estado} onChange={(value) => setAddress((a) => ({ ...a, estado: value }))} />

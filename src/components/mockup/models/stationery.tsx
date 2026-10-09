@@ -10,6 +10,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
 import { canvasFor, fontFamily } from "../art";
+import { JewelryCard } from "./jewelry";
 import {
   Dimensions,
   PrintMaterial,
@@ -1206,7 +1207,13 @@ function TagPiece({ card, hole, spec, front, back, eyelet, knotGeometry, metal, 
  * Tags de roupa em cartão grosso: três peças sobrepostas em leque (a da frente com a arte, uma
  * virada mostrando o verso), furo com ilhós metálico e laço de algodão torcido com nó e pontas.
  */
-export function HangtagModel({ spec, art, label, showDims }: ModelProps) {
+/** Tags (padrão) ou cartela de bijuteria (jewelry.tsx, produto novo). */
+export function HangtagModel(props: ModelProps) {
+  if (props.spec.variant === "jewelry") return <JewelryCard {...props} />;
+  return <HangTags {...props} />;
+}
+
+function HangTags({ spec, art, label, showDims }: ModelProps) {
   const w = Math.max(1, spec.widthCm);
   const h = Math.max(1, spec.heightCm);
   // Couchê 250 g (~0,3 mm), levemente exagerado para a borda aparecer de lado.

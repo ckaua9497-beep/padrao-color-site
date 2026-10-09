@@ -1,4 +1,5 @@
 import Image, { getImageProps } from "next/image";
+import type { ReactNode } from "react";
 import { Breadcrumb, type Crumb } from "@/components/ui/Breadcrumb";
 import { imageUrl } from "@/lib/format";
 
@@ -14,7 +15,7 @@ const BANNER_H = 355;
 
 type Props = {
   title: string;
-  subtitle: string;
+  subtitle: ReactNode;
   crumbs: Crumb[];
   /** Banner da API (desktop e, quando houver, celular). Sem ele, o topo é o bloco colorido com fotos. */
   banner?: { desktop: string; mobile?: string | null } | null;

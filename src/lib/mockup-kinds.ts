@@ -33,6 +33,7 @@ export const MOCKUP_KINDS = [
   "banner",
   "lightbox",
   "rollup",
+  "totem",
   "flag",
   "hardware",
   // Bebidas
@@ -129,6 +130,7 @@ export const KIND_INFO: Record<MockupKind, KindInfo> = {
   banner: k("Banner", [60, 90, 0.05], true),
   lightbox: k("Backlight", [60, 90, 5], true),
   rollup: k("Roll-up", [80, 200, 0.05], true),
+  totem: k("Totem de chão", [70, 170, 30], true),
   flag: k("Bandeira / wind banner", [70, 240, 0.05], false),
   hardware: k("Base e haste", [70, 240, 0.05], false),
 

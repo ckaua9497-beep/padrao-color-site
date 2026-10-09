@@ -15,10 +15,12 @@ type Props = {
   /** Link "Criar conta"; com onSignup vira botão (checkout troca a aba). */
   onSignup?: () => void;
   signupHref?: string;
+  /** "Esqueci minha senha" (com a volta, para o cliente retornar ao checkout depois de trocar a senha). */
+  recoverHref?: string;
 };
 
 /** Login: documento, e-mail ou usuário + senha → POST /api/conta/login. */
-export function LoginForm({ onSuccess, defaultUser = "", onSignup, signupHref = "/conta/cadastro" }: Props) {
+export function LoginForm({ onSuccess, defaultUser = "", onSignup, signupHref = "/conta/cadastro", recoverHref = "/conta/recuperar" }: Props) {
   const [usuario, setUsuario] = useState(defaultUser);
   const [senha, setSenha] = useState("");
   const [show, setShow] = useState(false);
@@ -34,14 +36,16 @@ export function LoginForm({ onSuccess, defaultUser = "", onSignup, signupHref = 
     setBusy(true);
     setError(null);
     const reply = await postJson<{ customer: unknown }>("/api/conta/login", { usuario, senha });
-    setBusy(false);
     if (!reply.ok) {
+      setBusy(false);
       setError(reply.error);
       return;
     }
     setSenha("");
     setCustomer(reply.data.customer);
-    onSuccess?.();
+    // Com onSuccess a página navega (a conta leva alguns segundos para abrir): o botão segue carregando até sair.
+    if (onSuccess) onSuccess();
+    else setBusy(false);
   };
 
   return (
@@ -62,7 +66,7 @@ export function LoginForm({ onSuccess, defaultUser = "", onSignup, signupHref = 
         Entrar
       </Button>
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <Link href="/conta/recuperar" className="font-semibold underline underline-offset-4">
+        <Link href={recoverHref} className="font-semibold underline underline-offset-4">
           Esqueci minha senha
         </Link>
         {onSignup ? (

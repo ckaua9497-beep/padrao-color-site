@@ -1,10 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { ProductSummary } from "@/lib/catalog";
-import { imageUrl, quantityLabel } from "@/lib/format";
+import { imageUrl } from "@/lib/format";
+import { CardPrice, CardResellerBadge } from "@/components/CardPrice";
 import { IconCube } from "@/components/icons";
 import { Badge } from "@/components/ui/Badge";
-import { Price } from "@/components/ui/Price";
 
 export default function ProductCard({ product, tone = "var(--color-mist)", priority = false }: { product: ProductSummary; tone?: string; priority?: boolean }) {
   return (
@@ -21,6 +21,7 @@ export default function ProductCard({ product, tone = "var(--color-mist)", prior
         <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
           {product.bestSeller && <Badge tone="brand">Mais vendido</Badge>}
           {product.isNew && <Badge tone="dark">Lançamento</Badge>}
+          <CardResellerBadge groupId={product.groupId} />
         </div>
         <span
           aria-hidden
@@ -31,7 +32,7 @@ export default function ProductCard({ product, tone = "var(--color-mist)", prior
       </div>
       <div className="flex flex-1 flex-col items-center px-4 pb-5 pt-4 text-center">
         <h3 className="line-clamp-2 min-h-[2.4em] text-card-title">{product.name}</h3>
-        <Price className="mt-2 flex flex-col items-center" value={product.price} from unit={product.perM2 ? "por m²" : quantityLabel(product.priceQty)} />
+        <CardPrice className="mt-2" product={product} />
       </div>
     </Link>
   );

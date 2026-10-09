@@ -10,6 +10,9 @@ type CatalogProduct = { slug: string; name: string; categorySlug: string; option
 const catalog = JSON.parse(readFileSync(new URL("../data/catalog.json", import.meta.url), "utf8")) as {
   products: CatalogProduct[];
 };
+/** Produtos novos da API própria (sync:novos): entram nos testes de cobertura, não no snapshot da Padrão. */
+const novos = JSON.parse(readFileSync(new URL("../data/catalog-novos.json", import.meta.url), "utf8")) as { products: CatalogProduct[] };
+const allProducts = [...catalog.products, ...novos.products];
 
 function product(name: string): CatalogProduct {
   const wanted = normalizeName(name);
@@ -213,17 +216,17 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
 });
 
 test("todo tipo registrado tem pelo menos um produto (nenhum modelo órfão)", () => {
-  const used = new Set(catalog.products.map((p) => resolveKind(p).kind));
+  const used = new Set(allProducts.map((p) => resolveKind(p).kind));
   assert.deepEqual(MOCKUP_KINDS.filter((kind) => !used.has(kind)), []);
 });
 
 test("nenhum produto cai no fallback genérico", () => {
-  const fallbacks = catalog.products.filter((p) => resolveKind(p).source === "fallback").map((p) => p.name);
+  const fallbacks = allProducts.filter((p) => resolveKind(p).source === "fallback").map((p) => p.name);
   assert.deepEqual(fallbacks, []);
 });
 
 test("todo slug de override existe no catálogo", () => {
-  const slugs = new Set(catalog.products.map((p) => p.slug));
+  const slugs = new Set(allProducts.map((p) => p.slug));
   for (const slug of Object.keys(MOCKUP_OVERRIDES)) assert.ok(slugs.has(slug), slug);
 });
 

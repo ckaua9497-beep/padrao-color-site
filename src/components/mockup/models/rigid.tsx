@@ -9,6 +9,7 @@ import { artAspect } from "@/lib/mockup-kinds";
 import { fontFamily } from "../art";
 import { useSceneMode } from "../viewer-hooks";
 import { AcrylicMaterials, Dimensions, PrintMaterial, fitFlat, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { DoorHook } from "./door-hook";
 
 type V3 = [number, number, number];
 type Plate = { body: THREE.BufferGeometry; face: THREE.BufferGeometry };
@@ -545,6 +546,9 @@ export function PanelModel(props: ModelProps) {
       return <MosaicPanel {...props} />;
     case "door-sign":
       return <DoorHanger {...props} />;
+    // Identificador de porta (produto novo, door-hook.tsx): gancho aberto ou furo redondo, conforme o formato.
+    case "door-hook":
+      return <DoorHook {...props} />;
     case "pet-tag":
       return <PetTag {...props} />;
     case "desk":

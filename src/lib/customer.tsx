@@ -254,3 +254,109 @@ export function useCustomerVariations(product: PricedProduct, variations: Variat
   const { groupId, category, categorySlug } = product;
   return useMemo(() => pricesFor({ groupId, category, categorySlug }, variations), [pricesFor, groupId, category, categorySlug, variations]);
 }
+
+// ---------------------------------------------------------------------------------- "a partir de" dos cards
+
+/** Menor preço do grupo na tabela do revendedor (já com o desconto da categoria) e a quantidade dele. */
+export type FromPrice = { p: number; q: number };
+
+type FromEntry = { status: "ready"; price: FromPrice | null } | { status: "error"; at: number };
+
+/** Grupos por chamada ao GET /api/precos/minimos (o mesmo limite da rota). */
+const FROM_BATCH = 60;
+const EMPTY_FROM: ReadonlyMap<string, FromEntry> = new Map();
+let fromPrices: ReadonlyMap<string, FromEntry> = EMPTY_FROM;
+const fromPending = new Set<string>();
+const fromQueue = new Map<number, number[]>();
+let fromTimer: ReturnType<typeof setTimeout> | null = null;
+const fromListeners = new Set<() => void>();
+
+function setFromEntries(entries: [string, FromEntry][]) {
+  const next = new Map(fromPrices);
+  for (const [key, entry] of entries) next.set(key, entry);
+  fromPrices = next;
+  fromListeners.forEach((listener) => listener());
+}
+
+function fetchFromPrices(customerId: number, groupIds: number[]) {
+  const keys = groupIds.map((id) => priceKey(customerId, id));
+  const failAll = () => setFromEntries(keys.map((key) => [key, { status: "error", at: Date.now() }]));
+  fetch(`/api/precos/minimos?grupos=${groupIds.join(",")}`, { cache: "no-store", headers: { Accept: "application/json" } })
+    .then(async (response) => (response.ok ? ((await response.json()) as Record<string, unknown>) : null))
+    .then((data) => {
+      if (!data) return failAll();
+      // Sessão mudou no meio (login/logout em outra aba): descarta e recarrega o cliente.
+      if (data.customerId !== customerId) {
+        failAll();
+        load();
+        return;
+      }
+      const found = (typeof data.prices === "object" && data.prices !== null ? data.prices : {}) as Record<string, unknown>;
+      const failed = new Set(Array.isArray(data.failed) ? data.failed : []);
+      setFromEntries(
+        groupIds.map((id, i): [string, FromEntry] => {
+          if (failed.has(id)) return [keys[i], { status: "error", at: Date.now() }];
+          const price = found[String(id)] as Partial<FromPrice> | undefined;
+          const valid = typeof price?.p === "number" && price.p > 0 && typeof price.q === "number" && price.q > 0;
+          return [keys[i], { status: "ready", price: valid ? { p: price.p as number, q: price.q as number } : null }];
+        }),
+      );
+    })
+    .catch(failAll)
+    .finally(() => keys.forEach((key) => fromPending.delete(key)));
+}
+
+/** Junta os grupos pedidos pelos cards do mesmo render numa chamada só. */
+function requestFromPrices(customerId: number, groupIds: number[]) {
+  for (const id of groupIds) {
+    const key = priceKey(customerId, id);
+    const entry = fromPrices.get(key);
+    if (fromPending.has(key) || entry?.status === "ready" || (entry?.status === "error" && Date.now() - entry.at < RETRY_MS)) continue;
+    fromPending.add(key);
+    const queue = fromQueue.get(customerId) ?? [];
+    queue.push(id);
+    fromQueue.set(customerId, queue);
+  }
+  if (!fromQueue.size || fromTimer) return;
+  fromTimer = setTimeout(() => {
+    fromTimer = null;
+    for (const [customer, ids] of fromQueue) {
+      for (let i = 0; i < ids.length; i += FROM_BATCH) fetchFromPrices(customer, ids.slice(i, i + FROM_BATCH));
+    }
+    fromQueue.clear();
+  }, 30);
+}
+
+function subscribeFromPrices(listener: () => void) {
+  fromListeners.add(listener);
+  return () => {
+    fromListeners.delete(listener);
+  };
+}
+
+const getFromPrices = () => fromPrices;
+const getServerFromPrices = () => EMPTY_FROM;
+
+/**
+ * "A partir de" dos cards para o cliente atual. Devolve a consulta por grupo: FromPrice = preço de revenda;
+ * null = preço do catálogo (visitante, conta comum, grupo sem tabela de revenda ou falha da API);
+ * undefined = revendedor com o preço ainda carregando (o card mostra o do catálogo esmaecido).
+ */
+export function useFromPrices(groupIds: readonly (number | undefined)[]): (groupId: number | undefined) => FromPrice | null | undefined {
+  const customer = useCustomer();
+  const all = useSyncExternalStore(subscribeFromPrices, getFromPrices, getServerFromPrices);
+  const customerId = customer.status === "reseller" ? customer.id : undefined;
+  const idsKey = customerId ? [...new Set(groupIds.filter((id): id is number => !!id && id > 0))].sort((a, b) => a - b).join(",") : "";
+  useEffect(() => {
+    if (customerId && idsKey) requestFromPrices(customerId, idsKey.split(",").map(Number));
+  }, [idsKey, customerId]);
+  return useCallback(
+    (groupId: number | undefined) => {
+      if (!customerId || !groupId) return null;
+      const entry = all.get(priceKey(customerId, groupId));
+      if (!entry) return undefined;
+      return entry.status === "ready" ? entry.price : null;
+    },
+    [all, customerId],
+  );
+}

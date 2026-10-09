@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 const LINKS = [
   { href: "/design-system", label: "Design system" },
   { href: "/design-system/mockups", label: "Mockups 3D" },
+  { href: "/design-system/gabaritos", label: "Gabaritos" },
 ];
 
 export default function InternoLayout({ children }: { children: React.ReactNode }) {

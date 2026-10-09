@@ -7,7 +7,20 @@ export function templateExtension(url: string): string {
 }
 
 /** Cartão "Gabarito do produto": baixa pela rota /api/gabarito/[id] (nome de arquivo amigável, só do servidor da Padrão). */
-export default function TemplateDownload({ productId, template, name, className }: { productId: string; template: string; name: string; className?: string }) {
+export default function TemplateDownload({
+  productId,
+  template,
+  name,
+  facts = null,
+  className,
+}: {
+  productId: string;
+  template: string;
+  name: string;
+  /** Medidas reais do gabarito na seleção atual ("Tamanho final 9 × 5 cm", "sangria 2 mm"…). */
+  facts?: string[] | null;
+  className?: string;
+}) {
   const ext = templateExtension(template);
   return (
     <div className={cx("flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card bg-white p-4 ring-1 ring-line", className)}>
@@ -19,7 +32,7 @@ export default function TemplateDownload({ productId, template, name, className 
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-[15px] font-bold">Gabarito do produto</p>
-        <p className="text-caption text-muted">Medidas, sangria e área de segurança para montar a arte.</p>
+        <p className="text-caption text-muted">{facts?.length ? `${facts.join(" · ")}. Monte a arte em cima dele ou envie a sua: nós encaixamos.` : "Medidas, sangria e área de segurança para montar a arte."}</p>
       </div>
       <a href={`/api/gabarito/${encodeURIComponent(productId)}`} download className={buttonClass({ variant: "outline", size: "sm" })} aria-label={`Baixar gabarito de ${name} (arquivo .${ext})`}>
         Baixar .{ext}

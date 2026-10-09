@@ -11,6 +11,7 @@ import { pixPrice } from "@/lib/pricing";
 import { BundleHeader, ItemTags, QuantityControl, ResellerNote } from "./CartDrawer";
 import { CartThumb, artLine } from "./CartThumb";
 import { unitLabel, useCart, type CartLine } from "./CartProvider";
+import { PrintFileLink } from "@/components/product/gabarito/PrintFileLink";
 
 const ROW = "grid items-center gap-4 rounded-control bg-mist p-4 md:grid-cols-[1fr_120px_130px_120px_44px]";
 
@@ -31,6 +32,7 @@ function LineRow({ line, grouped }: { line: CartLine; grouped: boolean }) {
               .join(" · ")}
           </p>
           <p className="mt-1 text-caption font-medium">{artLine(item.artName)}</p>
+          {item.printFile && <PrintFileLink file={item.printFile} className="mt-0.5" />}
           <ItemTags line={line} hideBundle={grouped} className="mt-2" />
         </div>
       </div>

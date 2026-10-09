@@ -9,6 +9,8 @@ export type RateLimitResult = { ok: boolean; remaining: number; retryAfterSec: n
 export type RateLimiter = {
   hit: (key: string, now?: number) => RateLimitResult;
   reset: (key: string) => void;
+  /** Devolve uma tentativa (a que falhou sem chegar ao destino, ex.: API sem conexão). */
+  undo: (key: string) => void;
 };
 
 export function createRateLimiter({ max, windowMs, maxKeys = 10_000 }: { max: number; windowMs: number; maxKeys?: number }): RateLimiter {
@@ -38,6 +40,10 @@ export function createRateLimiter({ max, windowMs, maxKeys = 10_000 }: { max: nu
     },
     reset(key) {
       hits.delete(key);
+    },
+    undo(key) {
+      const entry = hits.get(key);
+      if (entry && entry.count > 0) entry.count -= 1;
     },
   };
 }

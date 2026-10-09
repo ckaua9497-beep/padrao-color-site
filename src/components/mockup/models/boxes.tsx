@@ -9,6 +9,8 @@ import type { MockupSpec } from "@/lib/mockup";
 import { fontFamily } from "../art";
 import { AcrylicMaterials, PrintMaterial, bandGeometry, faceGeometry, makeShape, roughnessOf, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
 import { PrintBand, handleGeometry, lathe, smoothProfile, type Pt } from "./vessel";
+import { BasketBox, PanettoneBox } from "./baskets";
+import { CartonBag, CartonBox } from "./cartons";
 
 type Vec3 = [number, number, number];
 
@@ -1195,6 +1197,11 @@ function Solapa({ spec, art, label }: ModelProps) {
  */
 export function BoxModel(props: ModelProps) {
   const { spec } = props;
+  // Embalagens de papel cartão dos produtos novos (cartons.tsx e baskets.tsx).
+  if (spec.variant === "carton") return <CartonBox {...props} />;
+  if (spec.variant === "carton-bag") return <CartonBag {...props} />;
+  if (spec.variant === "panettone") return <PanettoneBox {...props} />;
+  if (spec.variant === "basket") return <BasketBox {...props} />;
   if (spec.variant === "cinema") return <CinemaKit {...props} />;
   if (spec.variant === "executive") return <ExecutiveKit {...props} />;
   if (spec.variant === "sleeve") return <Solapa {...props} />;

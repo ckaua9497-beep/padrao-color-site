@@ -9,6 +9,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { MockupSpec } from "@/lib/mockup";
 import { useApparelArt, useGeometriesCleanup } from "./fabric";
 import { PrintMaterial, backVariant, metalColor, roughnessOf, useArtTexture, type ModelProps } from "./shared";
+import { KraftSack, PlasticBag } from "./sacks";
 
 /*
  * Tudo é modelado em centímetros e reduzido por um único fator de escala por peça (proporção real).
@@ -1558,6 +1559,9 @@ export function BagModel({ spec, art, label, showDims }: ModelProps) {
   const variant = spec.variant;
   const props = { spec, art, label, showDims };
   if (variant === "rope") return <PaperGiftBag {...props} />;
+  // Produtos novos (sacks.tsx): sacola plástica de alça vazada ou fita e saco de papel kraft.
+  if (variant === "plastic") return <PlasticBag {...props} />;
+  if (variant === "kraft-sack") return <KraftSack {...props} />;
   if (variant === "gift") return <GiftPouch {...props} />;
   if (variant === "car-trash") return <CarTrashBag {...props} />;
   if (variant === "pencil-case") return <ZipPouch {...props} kind="pencil" />;

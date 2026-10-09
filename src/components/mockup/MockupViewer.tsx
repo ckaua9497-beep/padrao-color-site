@@ -21,7 +21,12 @@ import { RoomLights, RoomScene } from "./environments/Room";
 import { RoomDims } from "./environments/RoomDims";
 import { measureBox, placeInRoom } from "./environments/placement";
 
-export type CaptureFn = () => string | null;
+/**
+ * Foto do estúdio no ângulo 3/4 do carrinho: JPEG com o fundo da tela. `transparent`: PNG sem fundo (só a peça e a
+ * sombra), para as fotos de catálogo; `turn` gira o ângulo da foto (rad) em volta da peça.
+ */
+export type CaptureOptions = { transparent?: boolean; turn?: number };
+export type CaptureFn = (options?: CaptureOptions) => string | null;
 /** Foto do estúdio: `jpeg` no ângulo 3/4 do carrinho; `png` na vista atual (botão "Baixar imagem"). */
 type ShotFn = (format: "jpeg" | "png") => string | null;
 
@@ -411,16 +416,17 @@ function StudioShadows({ framingRef, stamp, dark, follow }: { framingRef: Mutabl
  * Ângulo do carrinho: 3/4 à direita da vista inicial da peça e pelo menos um pouco acima, respeitando
  * `userData.view` (peças deitadas continuam vistas de cima).
  */
-function captureDirection(root: THREE.Object3D): THREE.Vector3 {
+function captureDirection(root: THREE.Object3D, turn = 0): THREE.Vector3 {
   const { elevation, azimuth = 0 } = viewHint(root);
   const e = Math.max(THREE.MathUtils.clamp(elevation ?? 0, 0, 1.2), CAPTURE_ELEVATION);
-  const a = azimuth + CAPTURE_AZIMUTH;
+  const a = azimuth + CAPTURE_AZIMUTH + turn;
   return new THREE.Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e));
 }
 
-type SnapshotOptions = { fixedAngle: boolean; framing: Framing | null; backdrop: Backdrop; format: "jpeg" | "png" };
+/** `backdrop` null = fundo transparente (foto de catálogo). */
+type SnapshotOptions = { fixedAngle: boolean; framing: Framing | null; backdrop: Backdrop | null; format: "jpeg" | "png"; turn?: number };
 
-function snapshot(state: RootState, { fixedAngle, framing, backdrop, format }: SnapshotOptions): string | null {
+function snapshot(state: RootState, { fixedAngle, framing, backdrop, format, turn: extraTurn = 0 }: SnapshotOptions): string | null {
   const { gl, scene, camera } = state;
   const controls = state.controls as unknown as OrbitControlsImpl | null;
   const target = controls?.target ?? new THREE.Vector3();
@@ -431,7 +437,7 @@ function snapshot(state: RootState, { fixedAngle, framing, backdrop, format }: S
     // Sempre a peça inteira, mesmo que o cliente tenha dado zoom. No ambiente: a vista composta da sala.
     const center = framing?.center ?? target;
     const distance = framing?.distance ?? saved.distanceTo(target);
-    camera.position.copy(center).addScaledVector(framing?.capture ?? captureDirection(scene), distance);
+    camera.position.copy(center).addScaledVector(framing?.capture ?? captureDirection(scene, extraTurn), distance);
     camera.lookAt(center);
   }
   // A luz do estúdio gira com a câmera; a do ambiente é fixa.
@@ -444,8 +450,8 @@ function snapshot(state: RootState, { fixedAngle, framing, backdrop, format }: S
   out.height = source.height;
   const ctx = out.getContext("2d");
   if (ctx) {
-    // O mesmo ciclorama da tela por baixo do canvas transparente.
-    paintBackdrop(ctx, out.width, out.height, backdrop, document.documentElement);
+    // O mesmo ciclorama da tela por baixo do canvas transparente (sem ele, a foto sai com fundo transparente).
+    if (backdrop) paintBackdrop(ctx, out.width, out.height, backdrop, document.documentElement);
     ctx.drawImage(source, 0, 0);
   }
   restoreOverlays();
@@ -468,7 +474,10 @@ function Capture({ captureRef, shotRef, framingRef, backdrop }: CaptureProps) {
   const get = useThree((state) => state.get);
   useEffect(() => {
     const shot: ShotFn = (format) => snapshot(get(), { fixedAngle: format === "jpeg", framing: framingRef.current, backdrop, format });
-    const capture: CaptureFn = () => shot("jpeg");
+    const capture: CaptureFn = (options) =>
+      options?.transparent
+        ? snapshot(get(), { fixedAngle: true, framing: framingRef.current, backdrop: null, format: "png", turn: options.turn })
+        : shot("jpeg");
     shotRef.current = shot;
     const previous = captureRef ? captureRef.current : null;
     if (captureRef) captureRef.current = capture;

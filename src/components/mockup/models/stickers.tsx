@@ -25,6 +25,7 @@ import {
   type ModelProps,
 } from "./shared";
 import { lathe, smoothProfile, type Pt } from "./vessel";
+import { BagSealSticker, SecuritySeal } from "./seals";
 
 /* ------------------------------------------------------------------ máscaras e texturas de apoio */
 
@@ -1245,6 +1246,11 @@ export function StickerModel(props: ModelProps) {
   const { spec } = props;
   if (spec.blank && !spec.variant) return <BlankVinyl {...props} />;
   switch (spec.variant) {
+    // Produtos novos (seals.tsx): adesivo fechando a boca da sacola e lacre de segurança.
+    case "bag-seal":
+      return <BagSealSticker {...props} />;
+    case "seal":
+      return <SecuritySeal {...props} />;
     case "sheet":
       return <StickerSheet {...props} />;
     case "dtf":

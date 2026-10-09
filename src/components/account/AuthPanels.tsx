@@ -2,21 +2,27 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { setCustomer } from "@/lib/customer";
+import { setCustomer, useCustomer } from "@/lib/customer";
 import { postJson } from "./client-api";
 import { FormAlert } from "./FormBits";
 import { LoginForm } from "./LoginForm";
 import { SignupForm } from "./SignupForm";
 
 /** /conta/entrar: entra e volta para onde estava (o caminho já vem validado do servidor). */
-export function LoginPanel({ returnTo, defaultUser }: { returnTo: string; defaultUser?: string }) {
+export function LoginPanel({ returnTo, defaultUser, expired = false }: { returnTo: string; defaultUser?: string; expired?: boolean }) {
   const router = useRouter();
+  const { refresh } = useCustomer();
+  // Sessão vencida vista no servidor (a página não apaga cookie): o GET /api/conta/sessao apaga e o topo sai da conta.
+  useEffect(() => {
+    if (expired) refresh();
+  }, [expired, refresh]);
   return (
     <LoginForm
       defaultUser={defaultUser}
       signupHref={`/conta/cadastro?volta=${encodeURIComponent(returnTo)}`}
+      recoverHref={returnTo === "/conta" ? "/conta/recuperar" : `/conta/recuperar?volta=${encodeURIComponent(returnTo)}`}
       onSuccess={() => {
         router.replace(returnTo);
         router.refresh();
@@ -41,6 +47,7 @@ export function SignupPanel({ returnTo }: { returnTo: string }) {
   }
   return (
     <SignupForm
+      navigatesOnLogin
       onSuccess={({ loggedIn, message }) => {
         if (!loggedIn) {
           setDone(message ?? "Conta criada! Entre com seu CPF/CNPJ ou e-mail e a senha.");

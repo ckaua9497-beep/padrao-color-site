@@ -14,6 +14,8 @@ type Props = {
   /** Link do e-mail de recuperação: /conta/recuperar?token=…&email=… */
   token?: string;
   email?: string;
+  /** Para onde o login leva depois da nova senha (já validado pela página). */
+  returnTo?: string;
 };
 
 const PASSWORD_HINT = `De ${PASSWORD_RULES.min} a ${PASSWORD_RULES.max} caracteres, com letra e número.`;
@@ -22,7 +24,8 @@ const PASSWORD_HINT = `De ${PASSWORD_RULES.min} a ${PASSWORD_RULES.max} caracter
  * Recuperação de acesso: documento → e-mail do cadastro (mascarado) → código por e-mail + nova senha.
  * Quem chega pelo link do e-mail (token) só define a nova senha (POST /alterarsenhaatual).
  */
-export function RecoverFlow({ token = "", email: linkEmail = "" }: Props) {
+export function RecoverFlow({ token = "", email: linkEmail = "", returnTo = "/conta" }: Props) {
+  const back = returnTo === "/conta" ? "" : `?volta=${encodeURIComponent(returnTo)}`;
   const [step, setStep] = useState<Step>(token ? "token" : "documento");
   const [documento, setDocumento] = useState("");
   const [email, setEmail] = useState(linkEmail);
@@ -101,7 +104,7 @@ export function RecoverFlow({ token = "", email: linkEmail = "" }: Props) {
     return (
       <div className="space-y-5">
         <FormAlert tone="success">{info ?? "Senha alterada."}</FormAlert>
-        <Button href="/conta/entrar" variant="buy" size="md" block>
+        <Button href={`/conta/entrar${back}`} variant="buy" size="md" block>
           Entrar com a nova senha
         </Button>
       </div>
@@ -175,7 +178,7 @@ export function RecoverFlow({ token = "", email: linkEmail = "" }: Props) {
           <Button type="submit" variant="buy" size="md" block loading={busy}>
             Salvar nova senha
           </Button>
-          <Link href="/conta/recuperar" className="block text-sm font-semibold underline underline-offset-4">
+          <Link href={`/conta/recuperar${back}`} className="block text-sm font-semibold underline underline-offset-4">
             O link expirou? Peça um novo código
           </Link>
         </form>

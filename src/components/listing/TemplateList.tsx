@@ -14,6 +14,8 @@ export type TemplateItem = {
   category: string;
   categorySlug: string;
   image: string;
+  /** Medidas do gabarito ("5 cm × 5 cm · sangria 2 mm · segurança 4 mm", "3 tamanhos: …"); null quando não há dado. */
+  facts?: string | null;
   /** Extensão do arquivo (zip, rar, pdf). */
   ext: string;
 };
@@ -104,6 +106,7 @@ export default function TemplateList({ items }: { items: TemplateItem[] }) {
                 <Link href={`/produto/${item.slug}`} className="line-clamp-2 text-[15px] font-semibold leading-snug underline-offset-2 hover:underline">
                   {item.name}
                 </Link>
+                {item.facts && <span className="block text-caption tabular-nums text-muted">{item.facts}</span>}
                 <span className="block text-caption text-muted">{item.category}</span>
               </span>
               <a

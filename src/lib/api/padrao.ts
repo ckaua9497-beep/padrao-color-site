@@ -1,6 +1,6 @@
 import "server-only";
 
-import { apiDate, apiRequest } from "./client";
+import { ApiError, apiDate, apiRequest } from "./client";
 import type {
   ApiAcabamento,
   ApiCategoria,
@@ -26,7 +26,7 @@ import type {
 
 export async function login(usuario: string, senha: string): Promise<{ api_token: string }> {
   const result = await apiRequest<{ api_token: string }>("/user/login", { method: "POST", token: false, body: { Usuario: usuario, Senha: senha } });
-  if (!result?.api_token) throw new Error("Login sem token na resposta.");
+  if (!result?.api_token) throw new ApiError(401, "Login sem token na resposta.");
   return result;
 }
 

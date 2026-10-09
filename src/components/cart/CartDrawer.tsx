@@ -13,6 +13,7 @@ import { formatBRL } from "@/lib/format";
 import { pixPrice } from "@/lib/pricing";
 import { CartThumb, artLine } from "./CartThumb";
 import { itemFacts, unitLabel, useCart, type CartGroup, type CartItem, type CartLine, type QuantityRange } from "./CartProvider";
+import { PrintFileLink } from "@/components/product/gabarito/PrintFileLink";
 
 export { CartThumb } from "./CartThumb";
 
@@ -90,6 +91,7 @@ function DrawerLine({ line, grouped, onNavigate }: { line: CartLine; grouped: bo
         </Link>
         <p className="mt-1 line-clamp-2 text-caption text-muted">{Object.values(item.options).join(" · ")}</p>
         <p className="mt-1 text-caption text-muted">{artLine(item.artName)}</p>
+        {item.printFile && <PrintFileLink file={item.printFile} className="mt-0.5" />}
         <ItemTags line={line} hideBundle={grouped} className="mt-2" />
         <div className="mt-3 flex items-center justify-between gap-2">
           <QuantityControl item={item} range={rangeOf(item)} size="sm" onChange={(value) => setQuantity(item.key, value)} />

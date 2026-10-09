@@ -9,6 +9,7 @@ import { IconClock, IconCube, IconShield } from "@/components/icons";
 import { getProduct, getProductById, getProducts, getRelated, seoTitle, toSummary } from "@/lib/catalog";
 import { imageUrl, spectrumAt } from "@/lib/format";
 import { cleanOptionLabel, optionKeys } from "@/lib/pricing";
+import { productTemplate } from "@/lib/templates-data";
 
 export function generateStaticParams() {
   return getProducts().map((p) => ({ slug: p.slug }));
@@ -100,6 +101,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             sizeChart: product.sizeChart ?? null,
             customSize: product.customSize ?? null,
             template: product.template ?? null,
+            printTemplate: productTemplate(product.id),
             summary: product.summary,
             attachments: product.attachments,
             artCreationPrice: product.artCreationPrice ?? null,
@@ -116,6 +118,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             leadDays: product.leadDays,
             isNew: product.isNew,
             bestSeller: product.bestSeller,
+            source: product.source,
           }}
         />
       </div>

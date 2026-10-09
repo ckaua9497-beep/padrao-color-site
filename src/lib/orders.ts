@@ -63,6 +63,8 @@ export type LinePrices = {
   reseller: boolean;
   /** Mínimo/máximo de unidades do produto (qtde_minima/qtde_maxima), para produtos vendidos por unidade. */
   limits?: { minQty: number; maxQty: number } | null;
+  /** false = produto que a Padrão ainda não tem cadastrado (produto novo do site): não entra no pedido online. */
+  orderable?: boolean;
 };
 
 export type PricedLine = {
@@ -84,6 +86,9 @@ export type PricedLine = {
 };
 
 export type LineError = { key: string; name: string; error: string };
+
+/** Produto novo (API própria do site): o pedido é fechado pelo atendimento até a Padrão cadastrar o item. */
+export const NEW_PRODUCT_ORDER = "Produto novo: o pedido deste item é fechado pelo atendimento. Remova-o do carrinho e fale com a gente pelo WhatsApp.";
 
 export function isLineError(line: PricedLine | LineError): line is LineError {
   return "error" in line;
@@ -107,6 +112,7 @@ export function resolveVariationId(variations: Variation[], options: Record<stri
 export function priceLine(input: OrderItemInput, prices: LinePrices | null | undefined): PricedLine | LineError {
   const fail = (error: string): LineError => ({ key: input.key, name: input.name, error });
   if (!prices) return fail("Produto indisponível para compra pelo site. Remova o item ou fale com o atendimento.");
+  if (prices.orderable === false) return fail(NEW_PRODUCT_ORDER);
   const variationId = input.variationId ?? resolveVariationId(prices.variations, input.options);
   const variation = variationId ? prices.variations.find((v) => v.id === variationId) : undefined;
   if (!variation || variation.id === undefined) return fail("Esta opção do produto não está mais disponível. Remova o item e escolha de novo.");

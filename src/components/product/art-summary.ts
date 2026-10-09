@@ -37,7 +37,11 @@ export function artSummary(art: ArtSettings, family?: ArtFamily): Record<string,
   const leds = family === "neon" || family === undefined ? ledSummary(art.ledColors) : null;
   const region = art.region && art.region !== "inteira" ? flipflopRegion(art.region).label : null;
   const back = backSummary(art.back);
-  const free = Boolean(art.layout?.text || art.layout?.image);
+  // A imagem no encaixe automático (tratador ou gabarito) não conta como posição ajustada pelo cliente.
+  const fit = art.templateFit;
+  const image = art.layout?.image;
+  const autoImage = Boolean(image && fit?.placement && fit.src === art.src && Math.abs(image.x - fit.placement.x) < 1e-3 && Math.abs(image.y - fit.placement.y) < 1e-3 && Math.abs(image.scale - fit.placement.scale) / Math.max(1e-6, fit.placement.scale) < 1e-3);
+  const free = Boolean(art.layout?.text || (image && !autoImage));
   return {
     ...(text ? { "Texto da arte": text } : {}),
     ...(subtext ? { Subtexto: subtext } : {}),

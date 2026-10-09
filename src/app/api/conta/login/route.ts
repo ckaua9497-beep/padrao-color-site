@@ -1,5 +1,7 @@
-import { ApiError } from "@/lib/api/client";
-import { clientIp, fail, json, limits, overLimit, readJsonBody } from "@/lib/api/guard";
+import { ApiError, apiUnavailable } from "@/lib/api/client";
+import { apiFailure, clientIp, fail, json, limits, overLimit, readJsonBody } from "@/lib/api/guard";
+
+const UNAVAILABLE = "Não foi possível entrar agora. Tente de novo em instantes.";
 import { getCliente, login } from "@/lib/api/padrao";
 import type { ApiCliente } from "@/lib/api/types";
 import { normalizeLogin } from "@/lib/api/validation";
@@ -13,26 +15,39 @@ export async function POST(request: Request) {
   if (typeof usuario !== "string" || typeof senha !== "string" || !usuario.trim() || !senha) return fail(400, "Informe o usuário e a senha.");
   if (usuario.length > 120 || senha.length > 100) return fail(401, "Usuário ou senha inválidos.");
 
+  // API sem conexão: responde já, sem contar tentativa (nada chega a ela e a senha pode estar certa).
+  if (apiUnavailable()) return fail(503, UNAVAILABLE);
+
   const user = normalizeLogin(usuario);
   const userKey = `login:${user.toLowerCase()}`;
-  const blocked = overLimit(limits.loginIp, clientIp(request)) ?? overLimit(limits.loginUser, userKey);
+  const ip = clientIp(request);
+  const blocked = overLimit(limits.loginIp, ip) ?? overLimit(limits.loginUser, userKey);
   if (blocked) return blocked;
 
   let token: string;
   try {
     token = (await login(user, senha)).api_token;
   } catch (error) {
-    // 401/406 e resposta sem token = credencial errada; não diz qual dos dois.
-    if (error instanceof ApiError && error.status >= 500) {
-      return fail(502, "Não foi possível entrar agora. Tente de novo em instantes.");
+    if (!(error instanceof ApiError)) return apiFailure(error, { fallback: UNAVAILABLE });
+    // 401/406 (e afins) e resposta sem token = credencial errada; não diz qual dos dois.
+    if ([400, 401, 404, 406, 422].includes(error.status)) return fail(401, "Usuário ou senha inválidos.");
+    if (error.reached === false) {
+      // Não chegou à API (sem conexão): a tentativa não conta.
+      limits.loginUser.undo(userKey);
+      if (ip) limits.loginIp.undo(ip);
+      return fail(503, UNAVAILABLE);
     }
-    return fail(401, "Usuário ou senha inválidos.");
+    // 429/403 (limite ou bloqueio da API), redirecionamento e falha do sistema: a senha pode estar certa.
+    if (error.status === 429) return fail(503, "O sistema da Padrão Color recebeu tentativas demais. Tente de novo em alguns minutos.");
+    if (error.status < 500) console.error(`[conta] login recusado pela API com status ${error.status}`);
+    return fail(502, UNAVAILABLE);
   }
 
   let cliente: ApiCliente | null;
   try {
     cliente = await getCliente(token);
-  } catch {
+  } catch (error) {
+    console.error(`[conta] login aceito, mas GET /cliente falhou: ${error instanceof ApiError ? error.status : "erro desconhecido"}`);
     cliente = null;
   }
   if (!cliente?.id) return fail(502, "Entramos, mas não foi possível carregar os dados da sua conta. Tente de novo.");

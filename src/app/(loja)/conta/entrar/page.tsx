@@ -24,7 +24,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           Sua sessão expirou. Entre de novo para continuar.
         </FormAlert>
       )}
-      <LoginPanel returnTo={returnTo} />
+      <LoginPanel returnTo={returnTo} expired={expired} />
     </AuthShell>
   );
 }

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { FromPriceText } from "@/components/CardPrice";
 import Listing from "@/components/listing/Listing";
 import ListingBanner from "@/components/listing/ListingBanner";
 import { categoryNav } from "@/components/listing/nav";
 import { getCategories, getCategory, getProductsByCategory, seoTitle, toSummary } from "@/lib/catalog";
-import { formatBRL, imageUrl, spectrumAt } from "@/lib/format";
+import { imageUrl, spectrumAt } from "@/lib/format";
 
 export function generateStaticParams() {
   return getCategories().map((c) => ({ slug: c.slug }));
@@ -29,17 +30,22 @@ export default async function CategoryPage(props: PageProps<"/categoria/[slug]">
   if (!category) notFound();
   const products = getProductsByCategory(slug);
   const index = getCategories().findIndex((c) => c.slug === slug);
+  const summaries = products.map(toSummary);
 
   return (
     <div className="container-site pb-20">
       <ListingBanner
         title={category.name}
-        subtitle={`${category.count} ${category.count === 1 ? "produto" : "produtos"} · a partir de ${formatBRL(category.minPrice)}`}
+        subtitle={
+          <>
+            {category.count} {category.count === 1 ? "produto" : "produtos"} · <FromPriceText products={summaries} />
+          </>
+        }
         images={products.slice(0, 8).map((p) => p.image)}
         tone={spectrumAt(index).soft}
         crumbs={[{ href: "/", label: "Início" }, { href: "/produtos", label: "Produtos" }, { label: category.name }]}
       />
-      <Listing products={products.map(toSummary)} nav={categoryNav(slug)} />
+      <Listing products={summaries} nav={categoryNav(slug)} />
     </div>
   );
 }

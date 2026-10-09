@@ -108,6 +108,12 @@ test("volta depois do login: só caminhos internos", () => {
   assert.equal(safeReturnPath("https://evil.com"), "/conta");
   assert.equal(safeReturnPath("//evil.com"), "/conta");
   assert.equal(safeReturnPath("/\\evil.com"), "/conta");
+  // O parser de URL apaga TAB e quebra de linha: "/\t/evil.com" viraria "//evil.com".
+  assert.equal(safeReturnPath("/\t/evil.com"), "/conta");
+  assert.equal(safeReturnPath("/\n/evil.com"), "/conta");
+  assert.equal(safeReturnPath("/ /evil.com"), "/conta");
+  assert.equal(safeReturnPath("/./conta/entrar"), "/conta");
+  assert.equal(safeReturnPath("/checkout?passo=2#entrega"), "/checkout?passo=2#entrega");
   assert.equal(safeReturnPath("/api/conta/logout"), "/conta");
   assert.equal(safeReturnPath(null, "/"), "/");
 });
@@ -134,6 +140,8 @@ test("cadastro: erros por campo", () => {
   assert.deepEqual(Object.keys(signupErrors({ ...valid, confirmacao: "outra123" })), ["confirmacao"]);
   assert.deepEqual(signupErrors({ ...valid, confirmacao: "" }, { confirmPassword: false }), {});
   assert.deepEqual(Object.keys(signupErrors({ ...valid, estado: "XX", nascimento: "2999-01-01" })).sort(), ["estado", "nascimento"]);
+  // Data digitada antes de trocar para CNPJ: o campo some e não pode travar o cadastro.
+  assert.deepEqual(signupErrors({ ...valid, documento: "11.222.333/0001-81", nome: "Gráfica", nascimento: "0202-01-01" }), {});
   assert.equal(isValidBirthDate("1990-05-20", new Date("2026-10-06")), true);
   assert.equal(isValidBirthDate("1850-05-20", new Date("2026-10-06")), false);
 });

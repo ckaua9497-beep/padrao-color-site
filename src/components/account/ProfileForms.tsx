@@ -24,11 +24,18 @@ export function ContactForm({ initial }: { initial: Contact }) {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // Só o que a pessoa mudou: o valor antigo da API (telefone sem DDD, com +55…) não pode travar nem
+    // sobrescrever o cadastro quando ela troca só o e-mail.
+    const changed: Partial<Contact> = Object.fromEntries((Object.keys(form) as (keyof Contact)[]).filter((key) => form[key].trim() !== initial[key].trim()).map((key) => [key, form[key]]));
+    if (!Object.keys(changed).length) {
+      setError("Altere algum dado para salvar.");
+      return;
+    }
     const problem =
-      (form.telefone1 && !isValidPhone(form.telefone1) && "Telefone principal inválido: use DDD + número.") ||
-      (form.telefone2 && !isValidPhone(form.telefone2) && "Segundo telefone inválido: use DDD + número.") ||
-      (form.email && !isValidEmail(form.email) && "E-mail inválido.") ||
-      (form.nascimento && !isValidBirthDate(form.nascimento) && "Data de nascimento inválida.") ||
+      (changed.telefone1 && !isValidPhone(changed.telefone1) && "Telefone principal inválido: use DDD + número.") ||
+      (changed.telefone2 && !isValidPhone(changed.telefone2) && "Segundo telefone inválido: use DDD + número.") ||
+      (changed.email && !isValidEmail(changed.email) && "E-mail inválido.") ||
+      (changed.nascimento && !isValidBirthDate(changed.nascimento) && "Data de nascimento inválida.") ||
       null;
     if (problem) {
       setError(problem);
@@ -36,7 +43,7 @@ export function ContactForm({ initial }: { initial: Contact }) {
     }
     setBusy(true);
     setError(null);
-    const reply = await postJson<{ message?: string }>("/api/conta/dados", form);
+    const reply = await postJson<{ message?: string }>("/api/conta/dados", changed);
     setBusy(false);
     if (!reply.ok) {
       setError(reply.error);

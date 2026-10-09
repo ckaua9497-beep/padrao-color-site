@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AccountNav, LogoutButton } from "@/components/account/AuthPanels";
 import { OrderCard } from "@/components/account/OrdersList";
+import { RecentPrintFiles } from "@/components/product/gabarito/RecentPrintFiles";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button, buttonClass } from "@/components/ui/Button";
 import { ApiError } from "@/lib/api/client";
@@ -94,6 +95,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
             )}
           </div>
         </form>
+
+        <RecentPrintFiles className="mt-6" />
 
         <div className="mt-6 space-y-5">
           {failure ? (

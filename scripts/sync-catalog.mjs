@@ -11,6 +11,8 @@
 //   finishes.json        acabamentos (GET /acabamentos)
 
 import { mkdirSync, writeFileSync } from "node:fs";
+import { classifyNetworkError, createTransport } from "../src/lib/api/transport.ts";
+import { buildCategories, mapGroup, num, parseImageSize, sim, slugify } from "./lib/catalog-map.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,16 +29,32 @@ const SITE = "https://padraocolor.com.br";
 
 // ------------------------------------------------------------------------------------- HTTP
 
+// O host lab não envia o certificado intermediário: a chamada usa o mesmo transporte do site
+// (src/lib/api/transport.ts: node:https com a cadeia da Let's Encrypt, prazos e repetição em conexão velha).
+const transport = createTransport();
+/** Conexões novas recusadas antes do handshake, seguidas (3 = firewall bloqueando, como no client.ts). */
+let refusals = 0;
+
 async function api(path, { retries = 2, timeout = 60_000 } = {}) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const res = await fetch(BASE + path, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: "application/json" }, signal: AbortSignal.timeout(timeout) });
+      const res = await transport.request(new URL(BASE + path), "GET", { Authorization: `Bearer ${TOKEN}`, Accept: "application/json" }, undefined, timeout, true);
+      refusals = 0;
       if (res.status === 204) return null;
-      const text = await res.text();
-      if (!res.ok) throw new Error(`${res.status} ${text.slice(0, 120)}`);
+      const text = res.text;
+      if (res.status < 200 || res.status >= 300) throw new Error(`${res.status} ${text.slice(0, 120)}`);
       return JSON.parse(text);
     } catch (error) {
-      if (attempt >= retries) throw new Error(`${path}: ${error.message}`);
+      const network = classifyNetworkError(error);
+      // Sem conexão (API fora do ar ou firewall bloqueando este IP): parar tudo. Repetir centenas de grupos só
+      // prolonga o bloqueio.
+      refusals = network.refused ? refusals + 1 : 0;
+      if (network.unreachable || refusals >= 3) {
+        console.error(`
+Sem conexão com ${new URL(BASE).host} (${network.code}): a API está fora do ar ou bloqueando este IP. Sincronização interrompida; nada foi gravado.`);
+        process.exit(1);
+      }
+      if (attempt >= retries) throw new Error(`${path}: ${network.timedOut ? "tempo esgotado" : error.message}`);
       await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
     }
   }
@@ -61,44 +79,6 @@ async function mapLimit(items, limit, fn) {
 }
 
 // ------------------------------------------------------------------------------------- texto
-
-/** Slug do site oficial (padraocolor.com.br/produto/35-banner---medida-personalizada): não junta hifens. */
-const officialSlug = (value) =>
-  value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s/g, "-");
-
-/** Slug das rotas de categoria do site novo (mantém as URLs já publicadas). */
-const slugify = (value) =>
-  value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/&/g, " e ")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-const sim = (value) => value === "Sim" || value === "S" || value === true;
-const num = (value) => {
-  const n = Number(String(value ?? "").replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-};
-
-/** "- P: Largura 50 cm | Comprimento 68 cm" → { size: "P", widthCm: 50, lengthCm: 68 } */
-function parseSizeChart(info) {
-  const block = info.find((b) => /medida/i.test(b.titulo));
-  if (!block) return null;
-  const rows = [];
-  for (const line of block.texto.split(/\n/)) {
-    const m = /^\s*-?\s*([^:]+?):\s*Largura\s*([\d,.]+)\s*cm?\s*\|\s*Comprimento\s*([\d,.]+)/i.exec(line);
-    if (m) rows.push({ size: m[1].trim(), widthCm: num(m[2]), lengthCm: num(m[3]) });
-  }
-  return rows.length ? rows : null;
-}
 
 /** Converte a lista em texto do Python que vem no campo "grupos" do menu ("[{'id': 74, 'nome': '...'}]"). */
 function parseMenuGroups(raw) {
@@ -126,35 +106,6 @@ function localHref(url, productSlugs, categoryById) {
 }
 
 // ------------------------------------------------------------------------------------- imagens
-
-/** Largura × altura de PNG, GIF, WEBP ou JPEG a partir dos primeiros bytes do arquivo. */
-function parseImageSize(buf) {
-  if (buf.length < 30) return null;
-  if (buf[0] === 0x89 && buf[1] === 0x50) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
-  if (buf.toString("ascii", 0, 3) === "GIF") return { w: buf.readUInt16LE(6), h: buf.readUInt16LE(8) };
-  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") {
-    const chunk = buf.toString("ascii", 12, 16);
-    if (chunk === "VP8X") return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
-    if (chunk === "VP8 ") return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
-    if (chunk === "VP8L") {
-      const bits = buf.readUInt32LE(21);
-      return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1 };
-    }
-  }
-  if (buf[0] === 0xff && buf[1] === 0xd8) {
-    let i = 2;
-    while (i + 9 < buf.length) {
-      if (buf[i] !== 0xff) {
-        i += 1;
-        continue;
-      }
-      const marker = buf[i + 1];
-      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
-      i += 2 + buf.readUInt16BE(i + 2);
-    }
-  }
-  return null;
-}
 
 /** Medida real de uma imagem da vitrine (só os primeiros 64 KB). Falha = null: o site usa a medida padrão. */
 async function imageSize(url) {
@@ -199,82 +150,7 @@ const productGroupById = new Map();
 const products = grupos.map((grupo, index) => {
   const rows = variationsByGroup[index] ?? [];
   for (const row of rows) productGroupById.set(row.id, grupo.id);
-
-  const options = {};
-  for (const row of rows) {
-    for (const [key, value] of Object.entries(row.variacoes ?? {})) {
-      if (!value) continue;
-      options[key] ??= [];
-      if (!options[key].includes(value)) options[key].push(value);
-    }
-  }
-
-  const variations = rows.map((row) => ({
-    id: row.id,
-    p: row.preco?.economico ?? 0,
-    pe: row.preco?.expresso ?? row.preco?.economico ?? 0,
-    q: num(row.quantidade) || 1,
-    d: row.prazo?.economico ?? null,
-    de: row.prazo?.expresso ?? null,
-    v: row.variacoes ?? {},
-  }));
-
-  const priced = variations.filter((v) => v.p > 0);
-  const cheapest = priced.reduce((best, v) => (!best || v.p < best.p ? v : best), null);
-  const leads = variations.map((v) => v.d).filter((d) => typeof d === "number" && d > 0);
-  const first = rows[0];
-  const sizesRow = rows.find((r) => r.quantidade_tamanho && r.quantidade_tamanho !== "Não");
-  const m2Row = rows.find((r) => r.informa_medida === 1);
-  const images = [grupo.imagem, ...rows.flatMap((r) => [r.imagem_1, r.imagem_2, r.imagem_3, r.imagem_4])].filter(Boolean);
-  const criacao = rows.map((r) => num(r.customizacao?.criacao_arte?.preco)).filter((p) => p > 0);
-
-  return {
-    id: String(grupo.id),
-    groupId: grupo.id,
-    slug: `${grupo.id}-${officialSlug(grupo.nome)}`,
-    name: grupo.nome.trim(),
-    category: grupo.categoria,
-    categoryId: num(grupo.id_categoria),
-    categorySlug: slugify(grupo.categoria),
-    description: (grupo.descricao ?? "").trim(),
-    summary: (grupo.resumo ?? "").trim(),
-    info: (grupo.informacao ?? []).map((b) => ({ title: b.titulo.trim(), text: b.texto.trim() })).filter((b) => b.text),
-    template: grupo.gabarito || null,
-    tags: (grupo.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean),
-    metaTitle: grupo.meta_title || grupo.nome,
-    metaDescription: grupo.meta_description || "",
-    image: grupo.imagem,
-    images: [...new Set(images)].slice(0, 6),
-    options,
-    variations,
-    variationCount: variations.length,
-    price: cheapest?.p ?? grupo.preco ?? 0,
-    priceQty: cheapest?.q ?? 1,
-    leadDays: leads.length ? Math.min(...leads) : null,
-    featured: highlightIds.includes(grupo.id),
-    bestSeller: sim(grupo.mais_vendido),
-    isNew: sim(grupo.lancamento),
-    sourceUrl: `${SITE}/produto/${grupo.id}-${officialSlug(grupo.nome)}`,
-    related: (grupo.veja_tambem ?? []).map((r) => r.id),
-    sizes: sizesRow ? Object.values(sizesRow.quantidade_tamanho).filter(Boolean) : null,
-    sizeChart: parseSizeChart(grupo.informacao ?? []),
-    // Medida livre (m²): o preço da variação é por m² (formato 1x1). Limites "0" = sem limite.
-    customSize: m2Row
-      ? {
-          minWidth: num(m2Row.largura_minima),
-          maxWidth: num(m2Row.largura_maxima),
-          minHeight: num(m2Row.altura_minima),
-          maxHeight: num(m2Row.altura_maxima),
-          minArea: num(m2Row.tamanho_minimo),
-          maxArea: num(m2Row.tamanho_maximo),
-        }
-      : null,
-    web2print: rows.some((r) => sim(r.customizacao?.web2print)),
-    artCreationPrice: criacao.length ? Math.min(...criacao) : null,
-    attachments: [...new Set(rows.flatMap((r) => (r.tipos_anexo ?? []).map((a) => a.nome)))],
-    minQty: num(first?.qtde_minima) || 1,
-    maxQty: num(first?.qtde_maxima) || 999_999,
-  };
+  return mapGroup(grupo, rows, { featured: highlightIds.includes(grupo.id), site: SITE });
 });
 
 // "Tags" (checklist): reaproveita o produto de tag de presente que já existe (grupo 180) com nome e texto próprios.
@@ -297,35 +173,7 @@ if (tagBase) {
 
 // ------------------------------------------------------------------------------------- categorias
 
-const bySlug = new Map();
-for (const p of products) {
-  const list = bySlug.get(p.categorySlug) ?? [];
-  list.push(p);
-  bySlug.set(p.categorySlug, list);
-}
-const categories = categorias
-  .map((c) => {
-    const slug = slugify(c.nome);
-    const list = bySlug.get(slug) ?? [];
-    if (!list.length) return null;
-    const lead = list.map((p) => p.leadDays).filter((d) => typeof d === "number");
-    const prices = list.map((p) => p.price).filter((p) => p > 0);
-    const cover = list.find((p) => p.featured) ?? list.find((p) => p.bestSeller) ?? list[0];
-    return {
-      id: c.id,
-      slug,
-      name: c.nome,
-      count: list.length,
-      image: c.imagem || cover.image,
-      banner: c.banner || null,
-      bannerMobile: c.banner_mobile || null,
-      metaTitle: c.meta_title || c.nome,
-      metaDescription: c.meta_description || "",
-      minLeadDays: lead.length ? Math.min(...lead) : null,
-      minPrice: prices.length ? Math.min(...prices) : 0,
-    };
-  })
-  .filter(Boolean);
+const categories = buildCategories(categorias, products);
 
 // ------------------------------------------------------------------------------------- vitrine
 

@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
-import { DEFAULT_ART, fileToDataUrl, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, type ArtSettings } from "@/components/mockup/art";
+import { intakeImage } from "@/components/mockup/image-intake";
+import { autoFitArt, fitAreaFor } from "@/components/product/auto-fit";
 import { mockupSpec, type MockupProduct } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
 import { cleanOptionLabel, optionKeys, type Selection } from "@/lib/pricing";
@@ -33,8 +35,8 @@ export default function MockupInspector({ product }: { product: MockupProduct & 
               const file = e.target.files?.[0];
               if (!file) return;
               try {
-                const src = await fileToDataUrl(file);
-                setArt((a) => ({ ...a, src }));
+                const src = (await intakeImage(file, { removeWhite: fitAreaFor(spec).transparentBase })).src;
+                setArt((a) => autoFitArt({ ...a, src, layout: null, templateFit: null }, fitAreaFor(spec)));
                 setArtError(null);
               } catch {
                 setArtError("Não foi possível ler essa imagem.");

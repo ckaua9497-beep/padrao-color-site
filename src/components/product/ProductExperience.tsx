@@ -1,11 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { useDeferredValue, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { DEFAULT_ART, artFamily, fileToDataUrl, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, artFamily, hasArtContent, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
+import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { artSummary } from "./art-summary";
 import { useCart } from "@/components/cart/CartProvider";
 import { IconClock, IconCube, IconTruck } from "@/components/icons";
@@ -20,7 +22,8 @@ import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catal
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, imageUrl, leadLabel, quantityLabel } from "@/lib/format";
 import { formatSize, mockupSpec } from "@/lib/mockup";
-import { artAspect } from "@/lib/mockup-kinds";
+import { artArea, artAspect } from "@/lib/mockup-kinds";
+import { describePanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
 import {
   areaQuote,
   availableValues,
@@ -47,6 +50,7 @@ import PreviewModal from "./PreviewModal";
 import SizeBreakdown from "./SizeBreakdown";
 import SizeInput, { type SizeText } from "./SizeInput";
 import TemplateDownload from "./TemplateDownload";
+import { fitToTemplate, madeForTemplate, needsRefit, printFileName, printSheets, type Gabarito, type GabaritoSide } from "./gabarito/jobs";
 
 export type ClientProduct = {
   /** ID do catálogo ("35", "tags"): baixa o gabarito em /api/gabarito/[id]. Sem ele, vale o slug. */
@@ -72,6 +76,8 @@ export type ClientProduct = {
   /** Medida livre: preço por m² (banner, adesivo, papel, lona, tecido). */
   customSize?: CustomSize | null;
   template?: string | null;
+  /** Gabarito oficial com as medidas (folhas, sangria, corte e segurança) para encaixar a arte. */
+  printTemplate?: ProductTemplate | null;
   summary?: string;
   info?: InfoBlock[];
   attachments?: string[];
@@ -79,6 +85,8 @@ export type ClientProduct = {
   /** Quantidade mínima e máxima de peças (qtde_minima/qtde_maxima da API). */
   minQty?: number;
   maxQty?: number;
+  /** "site" = produto novo da API própria: o pedido é fechado pelo atendimento. */
+  source?: "padrao" | "site";
 };
 
 const MAX_UPLOAD_MB = 25;
@@ -190,6 +198,78 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const units = apparel ? sizeTotal(counts) : 0;
   const gridError = apparel ? sizeError(units, product.minQty ?? 1, product.maxQty ?? 0) : null;
 
+  // Área de arte do mockup (produtos sem gabarito ou com o editor na área): o tratador encaixa a imagem nela.
+  const fitArea = fitAreaFor(spec);
+  const transparentBase = fitArea.transparentBase;
+
+  // Gabarito oficial da seleção: folhas (no tamanho de referência, nas camisas), painel da frente e do verso.
+  const printTemplate = product.printTemplate ?? null;
+  const refSize = apparel ? (sizes.find((s) => (counts[s] ?? 0) > 0) ?? sizes[Math.floor(sizes.length / 2)]) : null;
+  // Sem useMemo: o React Compiler memoriza (e a grade de tamanhos muda a cada render).
+  const gabarito = ((): Gabarito | null => {
+    // Neon é montado em tubo de LED a partir de vetor: não há arquivo de impressão a encaixar.
+    if (!printTemplate || spec.blank || family === "neon") return null;
+    const aspect = artAspect(spec);
+    // Medida livre: a regra do gabarito (ou a margem das folhas de medida fixa) aplicada à medida digitada.
+    const rule = areaMode ? (printTemplate.parametric ?? ruleOf(printTemplate.pages)) : null;
+    const custom = rule ? parametricPage(rule, widthCm, heightCm) : null;
+    // Gabarito deitado para peça em pé (ou o contrário): as folhas giram para a orientação da peça.
+    const orient = (list: TemplatePage[]) => (custom ? list : orientPages(list, aspect));
+    const pages = orient(custom ? [custom] : printTemplate.parametric ? [] : pagesFor(printTemplate, selection, refSize));
+    if (!pages.length) return null;
+    // Camisas: uma folha por tamanho com peças na grade.
+    let printPages: TemplatePage[] = pages;
+    if (apparel && printTemplate.bySize) {
+      const chosen = sizes.filter((s) => (counts[s] ?? 0) > 0).flatMap((s) => pagesFor(printTemplate, selection, s));
+      if (chosen.length) printPages = orient(chosen.filter((p, i) => chosen.findIndex((q) => q.id === p.id) === i));
+    }
+    const side = (which: "front" | "back") => {
+      const ref = panelFor(pages, which);
+      // O editor trabalha no molde (é ele que vai para a impressão); "fit" só por curadoria: a composição
+      // feita na área do mockup é encaixada no gabarito depois.
+      // Chinelo com região (dedos, meio, calcanhar): o editor usa a faixa da região, não o molde da palmilha.
+      const region = spec.kind === "flipflop" && art.region && art.region !== "inteira";
+      return ref ? { ref, frame: printTemplate.editor !== "fit" && !region } : null;
+    };
+    // Gabarito que é só um adesivo/área da peça (garrafa, copo): o texto automático usa a área toda, não a
+    // janela frontal do mockup.
+    const front = side("front");
+    const area = artArea(spec);
+    const frontWindow = front && front.ref.panel.cut.w / 10 < area.widthCm * 0.6 ? 1 : undefined;
+    // Gabarito da volta inteira (caneca, copo, garrafa): o logo entra na parte da frente, como sem gabarito.
+    const fitWindow = frontWindow === 1 ? undefined : fitArea.frontWindow;
+    return { pages, printPages, front, back: printsBack(selection) ? side("back") : null, aspect, kind: spec.kind, transparent: artFamily(spec.kind) === "apparel", frontWindow, fitWindow };
+  })();
+  const frontFacts = gabarito?.front ? describePanel(gabarito.front.ref.panel) : null;
+
+  // Imagem no encaixe automático encaixada noutra peça (troca de medida/tamanho/formato, ou um envio que
+  // terminou depois da troca): refaz o encaixe na peça atual — no gabarito, se o lado tem um; senão, na área do
+  // mockup. Ajuste durante o render (estado derivado, sem efeito): só quando a peça ou o encaixe mudam.
+  const refitKey = `${gabarito?.front ? pieceKey(gabarito.front.ref.piece) : ""}|${gabarito?.back ? pieceKey(gabarito.back.ref.piece) : ""}|${fitArea.aspect.toFixed(4)}|${art.templateFit?.piece ?? ""}|${art.back?.templateFit?.piece ?? ""}`;
+  const [fittedFor, setFittedFor] = useState(refitKey);
+  if (fittedFor !== refitKey) {
+    setFittedFor(refitKey);
+    const frontSide = gabarito?.front ?? null;
+    const backSide = gabarito?.back ?? null;
+    const textOnly = (a: ArtSettings): ArtSettings => ({ ...a, layout: a.layout?.text ? { text: a.layout.text } : null });
+    const stale = (a: ArtSettings, side: GabaritoSide | null) => (side?.frame ? needsRefit(a, side) : needsAreaRefit(a, fitArea));
+    const refit = (a: ArtSettings, side: GabaritoSide | null) =>
+      side?.frame ? fitToTemplate(textOnly(a), side, { transparentBase, frontWindow: gabarito?.fitWindow }) : autoFitArt(a, fitArea, a.templateFit?.chosen);
+    if (stale(art, frontSide) || (art.back && stale(art.back, backSide))) {
+      setArt((a) => {
+        const front = stale(a, frontSide) ? refit(a, frontSide) : a;
+        return front.back && stale(front.back, backSide) ? { ...front, back: { ...refit(front.back, backSide), back: null } } : front;
+      });
+    }
+  }
+
+  // As imagens da arte (frente e verso) ficam registradas enquanto estão em uso; a trocada é liberada.
+  const owner = useId();
+  useEffect(() => {
+    retainSources(owner, [art.src, art.back?.src]);
+  }, [owner, art.src, art.back?.src]);
+  useEffect(() => () => retainSources(owner, []), [owner]);
+
   // Quantidade fora da grade: unidades (preço por unidade, com o mínimo da API) ou pacotes ("por 1.000 un.").
   const perUnit = !areaMode && price.qty <= 1;
   const minQty = perUnit ? Math.max(1, product.minQty ?? 1) : 1;
@@ -245,32 +325,57 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     setPreview(true);
   };
 
-  const onFile = async (file: File | undefined) => {
+  // Cada envio ganha um número: o resultado de um envio anterior que termina depois não sobrescreve o último.
+  const uploadSeq = useRef(0);
+  // `raw`: "Usar a imagem original" (sem corte de margem nem remoção de fundo).
+  const onFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
     if (!file) return;
-    setUploadError(null);
+    // Grande demais: avisa sem cancelar um envio que ainda está em andamento.
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
       setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor ou marque “Enviar arte depois”.`);
       return;
     }
-    if (!file.type.startsWith("image/")) {
-      // PDF e outros: vão anexados ao pedido; o 3D segue com a arte de exemplo.
+    const seq = ++uploadSeq.current;
+    setUploadError(null);
+    const pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    // Sem prévia (AI, CDR, TIFF…): vai anexado ao pedido; o 3D segue com a arte de exemplo.
+    const attach = (message: string | null) => {
       setArtName(file.name);
-      setArt((a) => ({ ...a, src: null }));
+      setArt((a) => ({ ...a, src: null, templateFit: null }));
       setArtLater(false);
       setArtMissing(false);
-      return;
-    }
+      setUploadError(message);
+    };
     setUploading(true);
     try {
-      const src = await fileToDataUrl(file);
-      setArt((a) => ({ ...a, src, zoom: 1, offsetX: 0, offsetY: 0 }));
+      // PDF: a primeira página aparece no 3D e entra no gabarito pela medida real da página. Imagem: passa pelo
+      // tratador automático (orientação, SVG, transparência, margem, fundo branco em camisa/sacola, prévia nítida).
+      // Arquivo já feito no gabarito (pelos pixels do original) entra como veio, sem corte nem remoção de fundo.
+      const frontSide = gabarito?.front ?? null;
+      const src = pdf
+        ? (await (await import("./gabarito/pdf-artwork")).readPdfArtwork(file)).src
+        : (await intakeImage(file, { removeWhite: transparentBase, treat: !raw, madeForTemplate: frontSide?.frame ? (px, vector) => madeForTemplate(frontSide, px, vector) : null })).src;
+      if (seq !== uploadSeq.current) {
+        releaseSource(src);
+        return;
+      }
+      // Arquivo novo: a posição e o fundo automático da imagem anterior não valem. No gabarito ele entra
+      // encaixado nele; sem gabarito, o tratador encaixa na área do mockup (foto preenche, logo inteiro). Se a
+      // peça mudou durante o envio, o re-encaixe acima corrige na hora.
+      setArt((a) => {
+        const fresh: ArtSettings = { ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null };
+        return frontSide?.frame ? fitToTemplate(fresh, frontSide, { transparentBase, frontWindow: gabarito?.fitWindow }) : autoFitArt(fresh, fitArea);
+      });
       setArtName(file.name);
       setArtMissing(false);
       setTab("3d");
-    } catch {
-      setUploadError("Não conseguimos ler essa imagem. Tente PNG, JPG ou WEBP.");
+    } catch (error) {
+      if (seq !== uploadSeq.current) return;
+      if (error instanceof IntakeError && error.attach) attach(error.message);
+      else if (pdf) attach(null); // PDF que o navegador não lê: segue anexado pelo nome, como antes.
+      else setUploadError(error instanceof IntakeError ? error.message : "Não conseguimos ler essa imagem. Tente PNG, JPG, WEBP ou SVG.");
     } finally {
-      setUploading(false);
+      if (seq === uploadSeq.current) setUploading(false);
     }
   };
 
@@ -298,15 +403,35 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     } catch {
       thumb = null;
     }
+    // Arquivo de impressão no gabarito (PDF no tamanho real): fica no navegador e segue com o pedido.
+    let printFile: { id: string; name: string } | null = null;
+    // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado.
+    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back);
+    if (gabarito && !artLater && ownArt) {
+      try {
+        const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
+        const sheets = printSheets(gabarito, art);
+        const blob = await buildPrintPdf(sheets, { title: `${product.name} — arte no gabarito`, variant: family === "neon" ? "neon" : "front", label: product.name, transparent: gabarito.transparent });
+        const id = crypto.randomUUID();
+        const name = printFileName(product.slug);
+        const summary = frontFacts ? `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` : "";
+        if (await savePrintFile(id, blob, { name, product: product.name, pages: sheets.length, summary })) printFile = { id, name };
+      } catch {
+        printFile = null;
+      }
+    }
     add({
       slug: product.slug,
       name: product.name,
       image: product.image,
       preview: thumb,
+      printFile,
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
         ...(!spec.blank && !artLater ? artSummary(art, family) : {}),
+        // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
+        ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
       // Mesmo contrato do pedido (lib/orders.ts): quantity = lotes da variação (q unidades cada), unitPrice = preço de um lote.
       // Medida livre: 1 peça por lote, já com a área. Vestuário: quantity = total de peças; a divisão vai em "Tamanhos".
@@ -402,6 +527,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             {expressChosen && <span className="text-muted">· expresso</span>}
           </p>
         )}
+        {product.source === "site" && <p className="mt-2 text-caption text-muted">Produto novo: monte a arte e o orçamento aqui; o pedido é fechado com o nosso atendimento.</p>}
 
         <ol className="mt-8 space-y-6">
           {keys.map((key, i) => {
@@ -467,6 +593,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             label={product.name}
             sizes={product.sizes ?? null}
             sizeChart={product.sizeChart ?? null}
+            gabarito={gabarito}
+            slug={product.slug}
           />
         </ol>
 
@@ -510,7 +638,15 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           </Button>
         </div>
 
-        {product.template && <TemplateDownload productId={product.id ?? product.slug} template={product.template} name={product.name} className="mt-4" />}
+        {product.template && (
+          <TemplateDownload
+            productId={product.id ?? product.slug}
+            template={product.template}
+            name={product.name}
+            facts={frontFacts ? [`Tamanho final ${frontFacts.final}`, frontFacts.bleed ? `sangria ${frontFacts.bleed}` : "sem sangria", frontFacts.safe ? `segurança ${frontFacts.safe}` : null].filter((f): f is string => Boolean(f)) : null}
+            className="mt-4"
+          />
+        )}
 
         <CepLookup leadDays={chosen.leadDays} />
       </div>

@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, u
 import { currentCustomer, customerVariations, useCustomer, useGroupPrices } from "@/lib/customer";
 import { quantityLabel } from "@/lib/format";
 import { bundleTitle, isLineError, priceLine, type OrderItemInput } from "@/lib/orders";
+import { prunePrintFilesExcept } from "@/components/product/gabarito/print-store";
 
 export type CartItem = {
   key: string;
@@ -34,6 +35,8 @@ export type CartItem = {
   bundle?: { id: string; name: string } | null;
   /** Tabela do preço salvo (carimbada ao adicionar): item de revenda é recalculado se a conta mudar. */
   priceTier?: "balcao" | "revenda";
+  /** Arte encaixada no gabarito oficial (PDF no tamanho real), guardada no navegador (IndexedDB) por id. */
+  printFile?: { id: string; name: string } | null;
 };
 
 /** Item com o preço do cliente de agora (balcão ou revenda), que pode diferir do salvo ao adicionar. */
@@ -109,6 +112,11 @@ function write(next: CartItem[]) {
     }
   }
   listeners.forEach((listener) => listener());
+}
+
+/** Ids dos PDFs no gabarito das linhas do carrinho (o resto sai do IndexedDB). */
+function printFileIds(list: CartItem[]): string[] {
+  return list.flatMap((item) => (item.printFile ? [item.printFile.id] : []));
 }
 
 function subscribe(listener: () => void) {
@@ -242,9 +250,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setOpen(true);
   }, []);
 
-  const remove = useCallback((key: string) => write(read().filter((item) => item.key !== key)), []);
+  const remove = useCallback((key: string) => {
+    write(read().filter((item) => item.key !== key));
+    prunePrintFilesExcept(printFileIds(read()));
+  }, []);
 
-  const removeBundle = useCallback((bundleId: string) => write(read().filter((item) => item.bundle?.id !== bundleId)), []);
+  const removeBundle = useCallback((bundleId: string) => {
+    write(read().filter((item) => item.bundle?.id !== bundleId));
+    prunePrintFilesExcept(printFileIds(read()));
+  }, []);
+
+  // Arquivos órfãos (carrinho limpo em outra aba, pedido antigo): a limpeza lê o carrinho salvo, não o da hidratação.
+  useEffect(() => {
+    prunePrintFilesExcept(printFileIds(read()));
+  }, []);
 
   const rangeOf = useCallback((item: CartItem) => quantityRange(item, item.groupId ? productLimits.get(item.groupId) : undefined), [productLimits]);
 
@@ -260,7 +279,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const clear = useCallback(() => write([]), []);
+  const clear = useCallback(() => {
+    write([]);
+    prunePrintFilesExcept([]);
+  }, []);
 
   const { category, priceTable } = customer;
   const lines = useMemo<CartLine[]>(

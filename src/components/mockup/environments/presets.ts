@@ -193,6 +193,7 @@ export function roomsFor(spec: Pick<MockupSpec, "kind" | "variant">): RoomId[] {
     case "lightbox":
       return ["store"];
     case "rollup":
+    case "totem":
       return ["store"];
     default:
       return [];
@@ -228,6 +229,7 @@ export function placementFor(spec: Pick<MockupSpec, "kind" | "variant">, room: R
     case "tablecloth":
       return { spot: "table", surface: "floor", yaw: 0, pivot: "box" };
     case "rollup":
+    case "totem":
       return { spot: "stand", surface: "floor", yaw: 0.3, pivot: "box" };
     default:
       return wall;

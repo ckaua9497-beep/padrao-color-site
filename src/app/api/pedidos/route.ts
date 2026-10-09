@@ -81,7 +81,7 @@ export async function POST(request: Request) {
     await Promise.all(
       groups.map(async (groupId) => {
         const group = await groupPrices(groupId, account);
-        if (group) prices.set(groupId, linePricesFor(group, account));
+        if (group) prices.set(groupId, linePricesFor(group, account, { ordersOn: ordersEnabled() }));
       }),
     );
   } catch (error) {
@@ -120,9 +120,13 @@ export async function POST(request: Request) {
     rememberOrder(key, { order });
     return json({ mode: "order", order, quote });
   } catch (error) {
-    // Demorou demais: o pedido pode ter sido criado. Segura a repetição e manda conferir antes.
-    if (error instanceof ApiError && error.status === 504) {
-      return fail(504, "O sistema da Padrão Color demorou a responder. Confira em Meus pedidos antes de tentar de novo.", { checkOrders: true });
+    // Só libera a repetição com certeza de que o pedido não foi criado: nada saiu (sem conexão, disjuntor,
+    // certificado) ou a API recusou (4xx). Resposta inválida, 5xx, conexão caída ou muda depois de conectar:
+    // o pedido pode ter sido criado. Segura a repetição e manda conferir antes.
+    const certainlyNotCreated = error instanceof ApiError && (error.reached === false || (error.status >= 400 && error.status < 500));
+    if (!certainlyNotCreated) {
+      if (!(error instanceof ApiError)) console.error("[pedidos] gerarpedido:", error instanceof Error ? error.message : "erro desconhecido");
+      return fail(error instanceof ApiError && error.status === 504 ? 504 : 502, "Não deu para confirmar se o pedido foi criado. Confira em Meus pedidos antes de tentar de novo.", { checkOrders: true });
     }
     recentOrders.delete(key);
     return apiFailure(error, { session: true, fallback: "Não foi possível criar o pedido agora. Nada foi cobrado." });

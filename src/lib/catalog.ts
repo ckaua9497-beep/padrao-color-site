@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import data from "@/data/catalog.json";
+import novosData from "@/data/catalog-novos.json";
 import storefrontData from "@/data/storefront.json";
 import businessTypesData from "@/data/business-types.json";
+import { mergeCatalogs, type CatalogFile } from "./catalog-merge";
 
 /*
  * Catálogo gerado da API Padrão Color por scripts/sync-catalog.mjs (npm run sync:catalog).
@@ -71,6 +73,8 @@ export type Product = {
   attachments?: string[];
   minQty?: number;
   maxQty?: number;
+  /** "site" = produto novo da API própria (/api/novos), que a Padrão ainda não tem: sem tabela de revenda nem pedido direto. */
+  source?: "padrao" | "site";
 };
 
 export type Category = {
@@ -89,7 +93,7 @@ export type Category = {
 
 export type ProductSummary = Pick<
   Product,
-  "id" | "slug" | "name" | "category" | "categorySlug" | "image" | "price" | "priceQty" | "leadDays" | "isNew" | "bestSeller"
+  "id" | "groupId" | "slug" | "name" | "category" | "categorySlug" | "image" | "price" | "priceQty" | "leadDays" | "isNew" | "bestSeller"
 > & {
   /** Vendido por m² (medida livre): o preço do card é por m². */
   perM2?: boolean;
@@ -124,12 +128,11 @@ export type BusinessType = {
   groupIds: number[];
 };
 
-const catalog = data as unknown as {
-  generatedAt: string;
-  source?: string;
-  categories: Category[];
-  products: Product[];
-};
+// Catálogo da Padrão (sync:catalog) + produtos novos da API própria (sync:novos).
+const catalog = mergeCatalogs(data as unknown as CatalogFile, novosData as unknown as CatalogFile);
+
+/** Categorias dos produtos novos (API própria): na home elas vêm logo depois das em destaque. */
+const NEW_CATEGORY_SLUGS = new Set((novosData as unknown as CatalogFile).categories.map((c) => c.slug));
 
 export const storefront = storefrontData as unknown as Storefront;
 export const businessTypes = businessTypesData as unknown as BusinessType[];
@@ -213,7 +216,8 @@ export function getFeatured(): Product[] {
 /** Categorias da home: as "Categorias em Destaque" do site oficial primeiro, na ordem de lá; depois as demais. */
 export function getShowcaseCategories(): Category[] {
   const featured = storefront.featuredCategories.map((c) => getCategory(c.slug)).filter((c): c is Category => Boolean(c));
-  return [...new Set([...featured, ...catalog.categories])];
+  const fresh = catalog.categories.filter((c) => NEW_CATEGORY_SLUGS.has(c.slug));
+  return [...new Set([...featured, ...fresh, ...catalog.categories])];
 }
 
 /** "Veja também" da API; completa com a mesma categoria. */
@@ -236,6 +240,7 @@ export function searchProducts(term: string): Product[] {
 export function toSummary(p: Product): ProductSummary {
   return {
     id: p.id,
+    groupId: p.groupId,
     slug: p.slug,
     name: p.name,
     category: p.category,
@@ -251,7 +256,7 @@ export function toSummary(p: Product): ProductSummary {
 }
 
 /** Índice leve da busca do topo (servido em /produtos/indice.json). */
-export type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number; t?: string; m?: 1 };
+export type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number; g?: number; t?: string; m?: 1 };
 
 export function getSearchIndex(): SearchEntry[] {
   return catalog.products.map((p) => ({
@@ -261,6 +266,7 @@ export function getSearchIndex(): SearchEntry[] {
     i: p.image,
     p: p.price,
     q: p.priceQty,
+    ...(p.groupId ? { g: p.groupId } : {}),
     ...(p.tags?.length ? { t: p.tags.join(" ") } : {}),
     ...(p.customSize ? { m: 1 as const } : {}),
   }));

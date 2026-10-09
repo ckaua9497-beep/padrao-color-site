@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/TextField";
 import { EMPTY_SIGNUP, PASSWORD_RULES, documentKind, formatCep, formatDocument, formatPhone, signupErrors, type SignupErrors, type SignupInput } from "@/lib/api/validation";
@@ -11,10 +11,12 @@ import { FormAlert, FormSection, PasswordField, UfSelect } from "./FormBits";
 type Props = {
   /** Conta criada. `loggedIn` = já entrou (login automático deu certo). */
   onSuccess: (result: { loggedIn: boolean; message?: string }) => void;
+  /** O onSuccess navega quando já entrou: o botão segue carregando até a página trocar. */
+  navigatesOnLogin?: boolean;
 };
 
 /** Cadastro → POST /api/conta/cadastro (POST /cadastrarcliente + login automático). */
-export function SignupForm({ onSuccess }: Props) {
+export function SignupForm({ onSuccess, navigatesOnLogin = false }: Props) {
   const [form, setForm] = useState<SignupInput>(EMPTY_SIGNUP);
   const [errors, setErrors] = useState<SignupErrors>({});
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +24,8 @@ export function SignupForm({ onSuccess }: Props) {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [honeypot, setHoneypot] = useState("");
+  // CEP da última busca: resposta atrasada de um CEP anterior é descartada.
+  const cepAsked = useRef("");
   const kind = documentKind(form.documento);
 
   const set = (field: keyof SignupInput) => (value: string) => {
@@ -32,17 +36,27 @@ export function SignupForm({ onSuccess }: Props) {
   const onCep = async (value: string) => {
     const cep = formatCep(value);
     set("cep")(cep);
-    if (cep.replace(/\D/g, "").length !== 8) {
+    const digits = cep.replace(/\D/g, "");
+    cepAsked.current = digits;
+    if (digits.length !== 8) {
       setCepStatus(null);
       return;
     }
     setCepStatus("Buscando o endereço…");
     const found = await lookupCep(cep);
+    if (cepAsked.current !== digits) return;
     if (!found) {
       setCepStatus("CEP não encontrado. Preencha o endereço.");
       return;
     }
     setForm((current) => ({ ...current, logradouro: found.logradouro || current.logradouro, bairro: found.bairro || current.bairro, cidade: found.cidade || current.cidade, estado: found.estado || current.estado }));
+    setErrors((current) => ({
+      ...current,
+      logradouro: found.logradouro ? undefined : current.logradouro,
+      bairro: found.bairro ? undefined : current.bairro,
+      cidade: found.cidade ? undefined : current.cidade,
+      estado: found.estado ? undefined : current.estado,
+    }));
     setCepStatus("Endereço encontrado. Confira e informe o número.");
   };
 
@@ -58,14 +72,15 @@ export function SignupForm({ onSuccess }: Props) {
     setError(null);
     // A confirmação da senha fica no navegador.
     const reply = await postJson<{ loggedIn: boolean; customer?: unknown; message?: string }>("/api/conta/cadastro", { ...form, confirmacao: undefined, site: honeypot });
-    setBusy(false);
     if (!reply.ok) {
+      setBusy(false);
       const fields = reply.data.fields;
       if (fields && typeof fields === "object") setErrors(fields as SignupErrors);
       setError(reply.error);
       return;
     }
     if (reply.data.loggedIn) setCustomer(reply.data.customer);
+    if (!(reply.data.loggedIn && navigatesOnLogin)) setBusy(false);
     onSuccess({ loggedIn: reply.data.loggedIn, message: reply.data.message });
   };
 
@@ -77,7 +92,6 @@ export function SignupForm({ onSuccess }: Props) {
           value={form.documento}
           onChange={(value) => set("documento")(formatDocument(value))}
           error={errors.documento}
-          inputMode={kind === "cnpj" ? "text" : "numeric"}
           autoComplete="off"
           required
           className="md:col-span-2"
@@ -109,8 +123,8 @@ export function SignupForm({ onSuccess }: Props) {
           required
         />
         <TextField label="Rua" value={form.logradouro} onChange={set("logradouro")} error={errors.logradouro} autoComplete="address-line1" required />
-        <TextField label="Número" value={form.numero} onChange={set("numero")} error={errors.numero} autoComplete="address-line2" required />
-        <TextField label="Complemento (opcional)" value={form.complemento} onChange={set("complemento")} autoComplete="address-line3" />
+        <TextField label="Número" value={form.numero} onChange={set("numero")} error={errors.numero} autoComplete="off" required />
+        <TextField label="Complemento (opcional)" value={form.complemento} onChange={set("complemento")} autoComplete="address-line2" />
         <TextField label="Bairro" value={form.bairro} onChange={set("bairro")} error={errors.bairro} autoComplete="address-level3" required />
         <TextField label="Cidade" value={form.cidade} onChange={set("cidade")} error={errors.cidade} autoComplete="address-level2" required />
         <UfSelect value={form.estado} onChange={set("estado")} error={errors.estado} />

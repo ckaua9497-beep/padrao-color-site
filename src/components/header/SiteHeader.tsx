@@ -12,6 +12,7 @@ import { AccordionItem } from "@/components/ui/Accordion";
 import { Drawer } from "@/components/ui/Drawer";
 import { IconButton } from "@/components/ui/IconButton";
 import { cx } from "@/components/ui/cx";
+import { useFromPrices } from "@/lib/customer";
 import { formatBRL, imageUrl, spectrumAt } from "@/lib/format";
 import type { BenefitIcon, MenuBenefit, TabIcon } from "@/lib/menu";
 import { EXTRA_TABS } from "@/lib/menu";
@@ -21,12 +22,13 @@ import { AccountLink } from "@/components/account/AccountLink";
 export type MenuCategory = { slug: string; name: string; count: number; image: string; minLeadDays: number | null };
 export type MenuGroup = { label: string; blurb: string; categories: MenuCategory[]; benefits: MenuBenefit[]; more?: { href: string; label: string } };
 
-type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number };
+type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number; g?: number };
 
 const TAB_ICONS: Record<TabIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   balloon: IconBalloon,
   gift: IconGift,
   store: IconStorefront,
+  bag: IconBag,
 };
 
 const BENEFIT_ICONS: Record<BenefitIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
@@ -304,6 +306,8 @@ function SearchPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
     if (!index || words.length === 0) return [];
     return index.filter((e) => words.every((w) => normalize(`${e.n} ${e.c}`).includes(w))).slice(0, 8);
   }, [index, term]);
+  // Revendedor logado: o "a partir de" da tabela de revenda (o mesmo dos cards).
+  const fromPrice = useFromPrices(results.map((r) => r.g));
 
   return (
     <div id="busca" className={cx("absolute inset-x-0 top-full border-t border-line bg-white transition-all duration-300 ease-button", open ? "visible opacity-100 shadow-header" : "invisible -translate-y-2 opacity-0")}>
@@ -343,7 +347,7 @@ function SearchPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
                   </span>
                   <span className="min-w-0">
                     <span className="line-clamp-2 text-caption font-semibold leading-snug group-hover:underline">{r.n}</span>
-                    <span className="text-caption text-muted">a partir de {formatBRL(r.p)}</span>
+                    <span className="text-caption text-muted">a partir de {formatBRL(fromPrice(r.g)?.p ?? r.p)}</span>
                   </span>
                 </Link>
               </li>

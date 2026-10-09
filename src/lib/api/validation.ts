@@ -170,10 +170,19 @@ export function normalizeLogin(value: string): string {
 
 /** Caminho de volta depois do login: só caminhos internos (evita redirecionamento aberto). */
 export function safeReturnPath(value: string | null | undefined, fallback = "/conta"): string {
-  if (!value || typeof value !== "string") return fallback;
-  if (!value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\") || /[\r\n]/.test(value)) return fallback;
-  if (value.startsWith("/api/") || value.startsWith("/conta/entrar")) return fallback;
-  return value.slice(0, 300);
+  if (!value || typeof value !== "string" || value.length > 300) return fallback;
+  // Sem espaço, caractere de controle nem "\": o parser de URL apaga TAB e quebra de linha ("/\t/x.com" vira "//x.com").
+  if (!value.startsWith("/") || /[\u0000-\u001F\u007F\s\\]/.test(value)) return fallback;
+  let url: URL;
+  try {
+    url = new URL(value, "https://loja.invalid");
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== "https://loja.invalid" || url.pathname.startsWith("//")) return fallback;
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  if (path.startsWith("/api/") || path.startsWith("/conta/entrar")) return fallback;
+  return path;
 }
 
 /** Nome de arquivo seguro para enviar à API (sem caminho nem caracteres de controle). */
@@ -250,7 +259,8 @@ export function signupErrors(input: SignupInput, { confirmPassword = true } = {}
   if (password) errors.senha = password;
   if (confirmPassword && input.confirmacao !== input.senha) errors.confirmacao = "As senhas não conferem.";
   if (!isValidPhone(input.telefone)) errors.telefone = "Informe o telefone com DDD.";
-  if (input.nascimento && !isValidBirthDate(input.nascimento)) errors.nascimento = "Data de nascimento inválida.";
+  // Só pessoa física: com CNPJ o campo some do formulário e a data não vai para a API.
+  if (kind !== "cnpj" && input.nascimento && !isValidBirthDate(input.nascimento)) errors.nascimento = "Data de nascimento inválida.";
   if (!isValidCep(input.cep)) errors.cep = "Informe um CEP válido.";
   if (input.logradouro.trim().length < 3) errors.logradouro = "Informe a rua.";
   if (!input.numero.trim()) errors.numero = "Informe o número (ou S/N).";

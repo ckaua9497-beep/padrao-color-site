@@ -43,3 +43,6 @@ next-env.d.ts
 
 # ferramentas locais
 /.claude/
+
+# cache dos gabaritos baixados (npm run sync:templates)
+/.cache/

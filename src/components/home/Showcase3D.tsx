@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
-import { ART_STYLES, DEFAULT_ART, artFamily, fileToDataUrl, type ArtSettings, type ArtStyle } from "@/components/mockup/art";
+import { ART_STYLES, DEFAULT_ART, artFamily, releaseSource, retainSources, type ArtSettings, type ArtStyle } from "@/components/mockup/art";
+import { intakeImage } from "@/components/mockup/image-intake";
+import { autoFitArt, fitAreaFor, needsAreaRefit } from "@/components/product/auto-fit";
 import { IconArrow, IconUpload } from "@/components/icons";
 import { Marker, Reveal } from "@/components/motion";
 import { StylePicker } from "@/components/product/ArtStep";
@@ -36,6 +38,21 @@ export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
   const demo = demos.find((d) => d.slug === active) ?? demos[0];
   const spec = useMemo(() => mockupSpec(demo, {}), [demo]);
   const family = artFamily(spec.kind);
+  // O logo enviado entra pelo encaixe automático da peça (inteiro, centralizado, na frente da caneca) e é
+  // reencaixado quando o produto da vitrine muda.
+  const fitArea = fitAreaFor(spec);
+  const [fittedFor, setFittedFor] = useState(`${fitArea.aspect}|${art.templateFit?.piece ?? ""}`);
+  if (fittedFor !== `${fitArea.aspect}|${art.templateFit?.piece ?? ""}`) {
+    setFittedFor(`${fitArea.aspect}|${art.templateFit?.piece ?? ""}`);
+    if (needsAreaRefit(art, fitArea)) setArt((a) => autoFitArt(a, fitArea));
+  }
+  // Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
+  const uploadSeq = useRef(0);
+  const owner = useId();
+  useEffect(() => {
+    retainSources(owner, [art.src]);
+  }, [owner, art.src]);
+  useEffect(() => () => retainSources(owner, []), [owner]);
 
   return (
     <section id="mockup-3d" className="on-dark scroll-mt-28 bg-ink py-20 text-white md:py-28">
@@ -96,13 +113,18 @@ export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
               onChange={async (event) => {
                 const file = event.target.files?.[0];
                 if (!file) return;
+                const seq = ++uploadSeq.current;
                 try {
-                  const src = await fileToDataUrl(file);
-                  setArt((a) => ({ ...a, src, fit: "contain" }));
+                  const src = (await intakeImage(file)).src;
+                  if (seq !== uploadSeq.current) {
+                    releaseSource(src);
+                    return;
+                  }
+                  setArt((a) => autoFitArt({ ...a, src, fit: "contain", layout: null, templateFit: null }, fitArea));
                   setFileName(file.name);
                   setUploadError(null);
                 } catch {
-                  setUploadError("Não conseguimos ler essa imagem. Tente PNG, JPG ou WEBP.");
+                  if (seq === uploadSeq.current) setUploadError("Não conseguimos ler essa imagem. Tente PNG, JPG ou WEBP.");
                 }
               }}
             />

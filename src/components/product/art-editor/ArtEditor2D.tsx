@@ -4,12 +4,14 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type P
 import {
   MIN_LAYER_SCALE,
   clampPlacement,
+  layerExtent,
   dpiQuality,
   loadArtFont,
   maxLayerScale,
   normalizeRotation,
   paintArt,
   readableInk,
+  sourceOf,
   sourceSizeOf,
   withPlacement,
   type ArtFamily,
@@ -24,6 +26,10 @@ import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { MockupKind } from "@/lib/mockup-kinds";
+import { dpiTargets } from "@/lib/image-prep";
+import { bleedFractions, containBox, coverBox, describePanel, placementFromBox, safeBoxOf, type TemplatePanel } from "@/lib/templates";
+import { PanelLines, outlinePath } from "../gabarito/TemplateSheet";
+import { setArtGesture } from "@/components/mockup/art-gesture";
 import { useLoadedImage } from "./useLoadedImage";
 
 export type EditorLayer = "text" | "image";
@@ -48,6 +54,13 @@ type Props = {
   label: string;
   /** "Frente", "Verso"… entra nos rótulos de acessibilidade. */
   sideLabel?: string;
+  /**
+   * Painel do gabarito oficial: a área do editor é o corte do painel; a sangria aparece em volta (a imagem
+   * pode cobri-la e o que passa do corte é aparado) e as linhas de corte, sangria e segurança ficam por cima.
+   */
+  template?: TemplatePanel | null;
+  /** Refaz o encaixe automático do arquivo no gabarito ("Voltar ao encaixe automático"). */
+  onAutoFit?: (() => void) | null;
 };
 
 type Pt = { x: number; y: number };
@@ -61,6 +74,8 @@ const SNAP_PX = 7;
 /** Giro gruda em 0°, 90°, 180° e 270° (graus). */
 const ROTATE_SNAP = 4;
 const MAX_STAGE_H = 380;
+/** Folga (px) em volta da folha do gabarito onde as alças continuam visíveis. */
+const CLIP_PX = 14;
 const MIN_STAGE_H = 72;
 
 const LAYER_NAME: Record<EditorLayer, string> = { text: "Texto", image: "Imagem" };
@@ -90,7 +105,7 @@ function snapRotation(deg: number, fine: boolean) {
  * pinça, giram, grudam nas guias do meio e andam com as setas do teclado. Tudo fica dentro da área e sem
  * distorcer; o 3D acompanha ao vivo (grava art.layout).
  */
-export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm = null, surface, ledColors, frontWindow, sample = true, label, sideLabel }: Props) {
+export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm = null, surface, ledColors, frontWindow, sample = true, label, sideLabel, template = null, onAutoFit = null }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -108,13 +123,19 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   const [announcement, setAnnouncement] = useState("");
   const [fontsReady, setFontsReady] = useState("");
   const statusId = useId();
+  // Id seguro para url(#…) (o useId traz caracteres especiais).
+  const maskId = `veu${statusId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const image = useLoadedImage(art.src);
 
   const safeAspect = Number.isFinite(aspect) && aspect > 0 ? Math.min(40, Math.max(0.05, aspect)) : 1;
-  let stageW = available;
+  // Gabarito: o palco (referencial das posições) é o corte; a folha pintada inclui a sangria em volta.
+  const bleed = useMemo(() => (template ? bleedFractions(template) : null), [template]);
+  const bx = bleed ? 1 + bleed.left + bleed.right : 1;
+  const by = bleed ? 1 + bleed.top + bleed.bottom : 1;
+  let stageW = available / bx;
   let stageH = stageW / safeAspect;
-  if (stageH > MAX_STAGE_H) {
-    stageH = MAX_STAGE_H;
+  if (stageH * by > MAX_STAGE_H) {
+    stageH = MAX_STAGE_H / by;
     stageW = stageH * safeAspect;
   }
   if (stageH < MIN_STAGE_H && stageW > 0) {
@@ -124,6 +145,13 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   }
   stageW = Math.round(stageW);
   stageH = Math.round(stageH);
+  const offX = bleed ? Math.round(stageW * bleed.left) : 0;
+  const offY = bleed ? Math.round(stageH * bleed.top) : 0;
+  const sheetW = bleed ? offX + stageW + Math.round(stageW * bleed.right) : stageW;
+  const sheetH = bleed ? offY + stageH + Math.round(stageH * bleed.bottom) : stageH;
+  /** A imagem encaixada no gabarito pode passar do corte (sangria, folha inteira); o texto, nunca. */
+  // A imagem pode passar da área no gabarito e quando o tratador a encaixou preenchendo a área.
+  const overflowOf = (layer: EditorLayer) => layer === "image" && (Boolean(template) || Boolean(art.layout?.overflow));
 
   // Estampa de tecido: imagem sem fundo, como no 3D (o tecido aparece em volta).
   const fabric = family === "apparel";
@@ -166,11 +194,11 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
     if (!canvas || stageW < 2 || stageH < 2) return;
     const frame = requestAnimationFrame(() => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const cw = Math.max(2, Math.round(stageW * dpr));
-      const ch = Math.max(2, Math.round(stageH * dpr));
+      const cw = Math.max(2, Math.round(sheetW * dpr));
+      const ch = Math.max(2, Math.round(sheetH * dpr));
       if (canvas.width !== cw) canvas.width = cw;
       if (canvas.height !== ch) canvas.height = ch;
-      const painted = paintArt(canvas, variant, render, image, label);
+      const painted = paintArt(canvas, variant, render, image, label, bleed ? { bleed } : undefined);
       setInfo(painted);
       // Terminado o gesto, a pintura nova já mostra a posição gravada.
       if (!gestureRef.current) {
@@ -187,9 +215,15 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [render, variant, image, label, fontsReady, stageW, stageH]);
+  }, [render, variant, image, label, fontsReady, stageW, stageH, sheetW, sheetH, bleed]);
 
-  useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(frameRef.current);
+      setArtGesture(false);
+    },
+    [],
+  );
 
   const layers: EditorLayer[] = [];
   if (info?.image) layers.push("image");
@@ -218,7 +252,8 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
       frameRef.current = 0;
       const next = pendingRef.current;
       pendingRef.current = null;
-      if (next) onArt((a) => withPlacement(a, next.layer, next.placement));
+      // A imagem segue podendo passar da área se já podia (gabarito, ou o tratador a encaixou preenchendo).
+      if (next) onArt((a) => withPlacement(a, next.layer, next.placement, next.layer === "image" ? Boolean(template) || Boolean(a.layout?.overflow) : undefined));
     });
   };
 
@@ -226,7 +261,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   const apply = (layer: EditorLayer, next: LayerPlacement) => {
     const base = info?.[layer]?.base;
     if (!base) return;
-    const placement = clampPlacement(next, base, safeAspect);
+    const placement = clampPlacement(next, base, safeAspect, overflowOf(layer));
     setLive({ layer, placement, base });
     commit(layer, placement);
     setAnnouncement(describe(layer, placement));
@@ -257,6 +292,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
         const ids = [...pointersRef.current.keys()].slice(0, 2) as [number, number];
         const points = ids.map((id) => pointersRef.current.get(id) as Pt) as [Pt, Pt];
         gestureRef.current = { mode: "pinch", layer: pinchLayer, ids, origin, base: li.base, start: points };
+        setArtGesture(true);
         stageRef.current?.setPointerCapture(event.pointerId);
         event.preventDefault();
       }
@@ -270,6 +306,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
     const center = { x: origin.x * stageW, y: origin.y * stageH };
     const mode = handle === "scale" ? "scale" : handle === "rotate" ? "rotate" : "move";
     gestureRef.current = { mode, layer, pointerId: event.pointerId, origin, base: info[layer].base, start: pt, center };
+    setArtGesture(true);
     stageRef.current?.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
@@ -297,20 +334,21 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
         },
         g.base,
         safeAspect,
+        overflowOf(g.layer),
       );
     } else if (g.pointerId !== event.pointerId) {
       return;
     } else if (g.mode === "move") {
-      next = clampPlacement({ ...g.origin, x: g.origin.x + (pt.x - g.start.x) / stageW, y: g.origin.y + (pt.y - g.start.y) / stageH }, g.base, safeAspect);
+      next = clampPlacement({ ...g.origin, x: g.origin.x + (pt.x - g.start.x) / stageW, y: g.origin.y + (pt.y - g.start.y) / stageH }, g.base, safeAspect, overflowOf(g.layer));
       snap = { x: Math.abs(next.x - 0.5) * stageW < SNAP_PX, y: Math.abs(next.y - 0.5) * stageH < SNAP_PX };
-      if (snap.x || snap.y) next = clampPlacement({ ...next, x: snap.x ? 0.5 : next.x, y: snap.y ? 0.5 : next.y }, g.base, safeAspect);
+      if (snap.x || snap.y) next = clampPlacement({ ...next, x: snap.x ? 0.5 : next.x, y: snap.y ? 0.5 : next.y }, g.base, safeAspect, overflowOf(g.layer));
       snap = { x: snap.x && next.x === 0.5, y: snap.y && next.y === 0.5 };
     } else if (g.mode === "scale") {
       const ratio = distance(g.center, pt) / Math.max(1, distance(g.center, g.start));
-      next = clampPlacement({ ...g.origin, scale: g.origin.scale * ratio }, g.base, safeAspect);
+      next = clampPlacement({ ...g.origin, scale: g.origin.scale * ratio }, g.base, safeAspect, overflowOf(g.layer));
     } else {
       const turn = angleOf(g.center, pt) - angleOf(g.center, g.start);
-      next = clampPlacement({ ...g.origin, rotation: snapRotation(g.origin.rotation + turn, event.shiftKey) }, g.base, safeAspect);
+      next = clampPlacement({ ...g.origin, rotation: snapRotation(g.origin.rotation + turn, event.shiftKey) }, g.base, safeAspect, overflowOf(g.layer));
     }
     setGuides(snap);
     setLive({ layer: g.layer, placement: next, base: g.base });
@@ -324,6 +362,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
     const involved = g.mode === "pinch" ? g.ids.includes(event.pointerId) : g.pointerId === event.pointerId;
     if (!involved) return;
     gestureRef.current = null;
+    setArtGesture(false);
     setGuides({ x: false, y: false });
     if (live) setAnnouncement(describe(live.layer, live.placement));
   };
@@ -356,8 +395,15 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   };
 
   const resetLayout = () => {
-    onArt((a) => ({ ...a, layout: null, fit: "contain", zoom: 1, offsetX: 0, offsetY: 0, rotation: 0 }));
     setLive(null);
+    // Com imagem, "automático" é o encaixe do tratador: no molde do gabarito (folha, sangria, corte) ou na área
+    // do mockup (foto preenchendo, logo inteiro), não a imagem só contida.
+    if (onAutoFit && art.src) {
+      onAutoFit();
+      setAnnouncement(template ? "Encaixe automático no gabarito restaurado." : "Encaixe automático restaurado.");
+      return;
+    }
+    onArt((a) => ({ ...a, layout: null, fit: "contain", zoom: 1, offsetX: 0, offsetY: 0, rotation: 0 }));
     setAnnouncement("Layout automático restaurado.");
   };
 
@@ -370,33 +416,110 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
     const placedCm = imageInfo.base.w * imagePlacement.scale * areaCm.widthCm;
     if (placedCm > 0) dpi = pixels.w / (placedCm / 2.54);
   }
-  const quality = dpi === null ? null : dpiQuality(dpi);
+  // Vetor (SVG) imprime nítido em qualquer tamanho: sem aviso de resolução.
+  const vector = Boolean(sourceOf(art.src)?.vector);
+  const longCm = areaCm ? Math.max(areaCm.widthCm, areaCm.heightCm) : 0;
+  const quality = dpi === null || vector ? null : dpiQuality(dpi, longCm);
+  const target = dpiTargets(longCm);
 
-  const maxScale = activeInfo && activePlacement ? maxLayerScale(activeInfo.base, activePlacement.rotation, safeAspect) : 1;
+  const activeOverflow = active ? overflowOf(active) : false;
+  const fitScale = activeInfo && activePlacement ? maxLayerScale(activeInfo.base, activePlacement.rotation, safeAspect) : 1;
+  // Imagem no gabarito: o tamanho vai além do encaixe (cobrir a sangria, recortar um pedaço da arte).
+  const maxScale = activeOverflow && activePlacement ? Math.max(fitScale * 3, activePlacement.scale) : fitScale;
   const side = sideLabel ? ` (${sideLabel.toLowerCase()})` : "";
+  const facts = template ? describePanel(template) : null;
+  // Faixa dos controles de posição da imagem no gabarito: até onde o clampPlacement deixa (folha inteira cabe).
+  const extent = activeInfo && activePlacement ? layerExtent(activeInfo.base, activePlacement.scale, activePlacement.rotation, safeAspect) : { w: 1, h: 1 };
+  const slide = { x0: -extent.w / 2 + 0.02, x1: 1 + extent.w / 2 - 0.02, y0: -extent.h / 2 + 0.02, y1: 1 + extent.h / 2 - 0.02 };
+
+  /** Imagem no gabarito: cobre a caixa da sangria ("cover") ou fica inteira na área de segurança ("contain"). */
+  const fitImage = (mode: "cover" | "contain") => {
+    if (!template || !imageInfo) return;
+    const quarter = normalizeRotation(Math.round((imagePlacement?.rotation ?? 0) / 90) * 90);
+    const turned = Math.abs(quarter) === 90;
+    const imageAspect = (imageInfo.base.w * safeAspect) / imageInfo.base.h;
+    const shown = turned ? 1 / imageAspect : imageAspect;
+    const unit = { w: shown * 1000, h: 1000 };
+    const rect = mode === "cover" ? coverBox(unit, template.bleed) : containBox(unit, safeBoxOf(template));
+    // Girada 90°: a caixa sem giro tem os lados trocados, com o mesmo centro.
+    const upright = turned ? { x: rect.x + (rect.w - rect.h) / 2, y: rect.y + (rect.h - rect.w) / 2, w: rect.h, h: rect.w } : rect;
+    apply("image", { ...placementFromBox(upright, template.cut, imageAspect), rotation: quarter });
+    setAnnouncement(mode === "cover" ? "Imagem cobrindo a sangria do gabarito." : "Imagem inteira dentro da área de segurança.");
+  };
+
+  // Texto fora da área de segurança (linha laranja): pode ser cortado.
+  let textOutside = false;
+  const textInfo = info?.text ?? null;
+  const textPlacement = placementOf("text");
+  if (template?.safe && textInfo && textPlacement) {
+    const { cut, safe } = template;
+    const e = layerExtent(textInfo.base, textPlacement.scale, textPlacement.rotation, safeAspect);
+    const tol = 0.004;
+    // Área de segurança em partes (uma de cada lado da dobra): o texto precisa caber inteiro numa delas.
+    const fits = (b: { x: number; y: number; w: number; h: number }) =>
+      textPlacement.x - e.w / 2 >= (b.x - cut.x) / cut.w - tol &&
+      textPlacement.y - e.h / 2 >= (b.y - cut.y) / cut.h - tol &&
+      textPlacement.x + e.w / 2 <= (b.x + b.w - cut.x) / cut.w + tol &&
+      textPlacement.y + e.h / 2 <= (b.y + b.h - cut.y) / cut.h + tol;
+    textOutside = !(safe.parts?.length ? safe.parts.some(fits) : fits(safe));
+  }
 
   return (
     <section aria-label={`Posição da arte na peça${side}`} className="grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="text-[15px] font-bold">Posição na peça</p>
         <p className="text-caption text-muted">
-          {areaCm ? `Área de impressão: ${formatCm(areaCm.widthCm)} × ${formatCm(areaCm.heightCm)}` : "Área de impressão na proporção da peça"}
+          {facts
+            ? `Gabarito: ${facts.final} de tamanho final${facts.bleed ? ` · sangria ${facts.bleed}` : " · sem sangria"}`
+            : areaCm
+              ? `Área de impressão: ${formatCm(areaCm.widthCm)} × ${formatCm(areaCm.heightCm)}`
+              : "Área de impressão na proporção da peça"}
         </p>
       </div>
 
       {/* Faixas compridas rolam de lado; nas demais as alças podem sair do palco. */}
-      <div ref={wrapRef} className={cx("-mx-1 px-1", stageW > available + 1 ? "no-scrollbar overflow-x-auto py-11" : "py-8")}>
+      <div
+        ref={wrapRef}
+        className={cx("-mx-1", template ? "px-4" : "px-1", sheetW > available + 1 ? "no-scrollbar overflow-x-auto py-11" : "py-8")}
+      >
         {stageW > 0 && (
-          <div
-            ref={stageRef}
-            className={cx("relative mx-auto touch-pan-y select-none rounded-[3px] ring-1", darkStage ? "ring-white/35" : "ring-ink/25")}
-            style={{ width: stageW, height: stageH, background: stageColor }}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerEnd}
-            onPointerCancel={onPointerEnd}
-          >
-            <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full rounded-[3px]" />
+          <div className="relative mx-auto" style={{ width: sheetW, height: sheetH, background: template ? stageColor : undefined }}>
+            {template && (
+              <>
+                <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" />
+                {/* O que fica fora do corte (sangria) aparece esmaecido; por cima, as linhas do gabarito. */}
+                <svg
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 size-full overflow-visible"
+                  viewBox={`${template.bleed.x} ${template.bleed.y} ${template.bleed.w} ${template.bleed.h}`}
+                  preserveAspectRatio="none"
+                >
+                  {/* Máscara (união dos contornos do corte): corte com partes aninhadas não fica esmaecido por engano. */}
+                  <defs>
+                    <mask id={`${maskId}-veu`}>
+                      <rect x={template.bleed.x} y={template.bleed.y} width={template.bleed.w} height={template.bleed.h} fill="white" />
+                      {cutParts(outlinePath(template.cut)).map((d, i) => (
+                        <path key={i} d={d} fill="black" />
+                      ))}
+                    </mask>
+                  </defs>
+                  <rect x={template.bleed.x} y={template.bleed.y} width={template.bleed.w} height={template.bleed.h} className="fill-paper" fillOpacity={0.5} mask={`url(#${maskId}-veu)`} />
+                  <PanelLines panel={template} />
+                </svg>
+              </>
+            )}
+            {/* Gabarito: as alças e o contorno de uma imagem maior que a folha param a 14 px dela (sem linha solta). */}
+            <div className={template ? "absolute overflow-hidden" : "contents"} style={template ? { left: -CLIP_PX, top: -CLIP_PX, width: sheetW + 2 * CLIP_PX, height: sheetH + 2 * CLIP_PX } : undefined}>
+            <div
+              ref={stageRef}
+              className={cx("absolute touch-pan-y select-none", !template && cx("rounded-[3px] ring-1", darkStage ? "ring-white/35" : "ring-ink/25"))}
+              style={{ left: offX + (template ? CLIP_PX : 0), top: offY + (template ? CLIP_PX : 0), width: stageW, height: stageH, background: template ? undefined : stageColor }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerEnd}
+              onPointerCancel={onPointerEnd}
+            >
+            {!template && <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full rounded-[3px]" />}
             {guides.x && <span aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-coral" />}
             {guides.y && <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-coral" />}
             {layers.map((layer) => {
@@ -456,6 +579,8 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
                 Escreva um texto ou envie uma imagem para posicionar{side}.
               </p>
             )}
+            </div>
+            </div>
           </div>
         )}
       </div>
@@ -478,13 +603,24 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
             <Button variant="outline" size="sm" onClick={() => apply(active, { ...activePlacement, x: 0.5, y: 0.5 })}>
               Centralizar
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => apply(active, { x: 0.5, y: 0.5, rotation: activePlacement.rotation, scale: maxLayerScale(activeInfo.base, activePlacement.rotation, safeAspect) })}
-            >
-              Ajustar à área
-            </Button>
+            {activeOverflow ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => fitImage("cover")}>
+                  Preencher até a sangria
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => fitImage("contain")}>
+                  Inteira na área segura
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => apply(active, { x: 0.5, y: 0.5, rotation: activePlacement.rotation, scale: maxLayerScale(activeInfo.base, activePlacement.rotation, safeAspect) })}
+              >
+                Ajustar à área
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => apply(active, { ...activePlacement, rotation: normalizeRotation(Math.round(activePlacement.rotation / 90) * 90 + 90) })}>
               Girar 90°
             </Button>
@@ -511,8 +647,8 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
             <Range
               label={`Horizontal · ${LAYER_NAME[active].toLowerCase()}`}
               value={activePlacement.x}
-              min={0}
-              max={1}
+              min={activeOverflow ? slide.x0 : 0}
+              max={activeOverflow ? slide.x1 : 1}
               step={0.005}
               format={(v) => `${Math.round(v * 100)}%`}
               onChange={(x) => apply(active, { ...activePlacement, x })}
@@ -520,8 +656,8 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
             <Range
               label={`Vertical · ${LAYER_NAME[active].toLowerCase()}`}
               value={activePlacement.y}
-              min={0}
-              max={1}
+              min={activeOverflow ? slide.y0 : 0}
+              max={activeOverflow ? slide.y1 : 1}
               step={0.005}
               format={(v) => `${Math.round(v * 100)}%`}
               onChange={(y) => apply(active, { ...activePlacement, y })}
@@ -542,19 +678,45 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
           {quality === "baixa"
             ? ". A impressão pode sair pixelada: diminua a imagem na área ou envie um arquivo maior."
             : quality === "ok"
-              ? ". Boa para a maioria das peças; acima de 300 dpi fica ótima."
+              ? `. Boa para esta peça; acima de ${target.good} dpi fica ótima.`
               : ". Nitidez de impressão garantida nesse tamanho."}
         </p>
       )}
 
+      {/* Região ao vivo sempre montada: o aviso é anunciado quando aparece. */}
+      <div role="status" aria-live="polite" className="empty:hidden">
+        {textOutside && (
+          <p className="rounded-control bg-amber-50 px-3 py-2 text-caption text-ink">
+            <strong>O texto passa da área de segurança</strong> (linha laranja): perto do corte ele pode ser aparado. Diminua ou afaste da borda.
+          </p>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-caption text-muted">Arraste, use as alças ou dois dedos; a imagem nunca passa da área nem distorce.</p>
-        <Button variant="link" size="sm" className="min-h-6 text-caption" onClick={resetLayout} disabled={!anyFree}>
-          Voltar ao layout automático
+        <p className="text-caption text-muted">
+          {template
+            ? [
+                "Arraste, use as alças ou dois dedos.",
+                bleed && Math.max(bleed.left, bleed.top, bleed.right, bleed.bottom) > 0
+                  ? "A imagem pode cobrir a sangria (faixa clara): o que passa do corte é aparado."
+                  : "A imagem pode passar da borda: o que passa do corte é aparado.",
+                template.safe ? "Textos e logos ficam dentro da linha laranja." : "",
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : "Arraste, use as alças ou dois dedos; a imagem nunca passa da área nem distorce."}
+        </p>
+        <Button variant="link" size="sm" className="min-h-6 text-caption" onClick={resetLayout} disabled={!anyFree && !(onAutoFit && art.src)}>
+          {onAutoFit && art.src ? "Voltar ao encaixe automático" : "Voltar ao layout automático"}
         </Button>
       </div>
     </section>
   );
+}
+
+/** Contornos do corte (cada subcaminho "M…"), para a máscara do véu juntar todos. */
+function cutParts(d: string): string[] {
+  return d.split(/(?=M)/).filter((part) => part.trim().length > 1);
 }
 
 function Range({ label, value, min, max, step, format, onChange }: { label: string; value: number; min: number; max: number; step: number; format: (v: number) => string; onChange: (v: number) => void }) {

@@ -59,6 +59,11 @@ export type MockupSpec = {
   /** Verniz localizado: brilho só onde a arte é clara. */
   spotVarnish: boolean;
   label: string;
+  /**
+   * Valores das opções escolhidas, sem acento e em minúsculas, separados por " | " ("p - 10x15,4x6 cm | alca vazada").
+   * Para o modelo ler detalhes que não viram campo próprio (alça, modelo reto/chanfrado, interior kraft…).
+   */
+  details?: string;
 };
 
 export type MockupProduct = {
@@ -74,6 +79,14 @@ type Rule = { kind: MockupKind; test: RegExp };
 // Regras mais específicas vêm antes: "porta copo" antes de "copo", "base … wind banner" antes de "wind banner".
 const RULES: Rule[] = [
   { kind: "neon", test: /\bneon\b/ },
+  // Produtos novos da API própria (/api/novos): nomes que as regras gerais mandariam para o kind errado
+  // ("Embalagem para Caneca" iria para caneca; "Adesivo para Fechar Sacola", para sacola).
+  { kind: "sticker", test: /\badesivo para fechar\b|\blacre\b/ },
+  { kind: "totem", test: /\btotem\b/ },
+  { kind: "box", test: /\bembalagem (para caneca|sacola|para panetone|cesta)\b|\bcaixinha\b|\bcesta\b|\bpanetone\b/ },
+  { kind: "bag", test: /\bsacola plastica\b|\bsaco de papel\b/ },
+  { kind: "hangtag", test: /\bcartela\b/ },
+  { kind: "panel", test: /\bidentificador de porta\b/ },
   { kind: "pen", test: /\bcaneta\b/ },
   { kind: "flipflop", test: /\bchinelo\b/ },
   { kind: "wallpaper", test: /\bpapel de parede\b/ },
@@ -211,6 +224,8 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\bcapa de corte\b/, "barber-cape"],
   ],
   bag: [
+    [/\bsacola plastica\b/, "plastic"],
+    [/\bsaco de papel\b/, "kraft-sack"],
     [/\bpraia\b/, "beach"],
     [/\bcorda\b/, "rope"],
     [/\bpresente\b/, "gift"],
@@ -219,6 +234,10 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\bestojo\b/, "pencil-case"],
   ],
   box: [
+    [/\bembalagem para caneca\b|\bbem.?casado\b/, "carton"],
+    [/\bembalagem sacola\b/, "carton-bag"],
+    [/\bpanetone\b/, "panettone"],
+    [/\bcesta\b/, "basket"],
     [/\bcinema\b/, "cinema"],
     [/\bexecutivo\b/, "executive"],
     [/\bsolapa\b/, "sleeve"],
@@ -226,6 +245,7 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
   ],
   panel: [
     [/\bmosaico\b/, "mosaic"],
+    [/\bidentificador de porta\b/, "door-hook"],
     [/\bporteiro\b/, "door-sign"],
     [/\bpet\b/, "pet-tag"],
     [/\bdisplay de mesa\b|\bquadro de mesa\b/, "desk"],
@@ -245,7 +265,10 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\bimpressao\b/, "print"],
     [/\bflyer\b|\bfilipeta\b|\bfolheto\b|\bpanfleto\b|\bencarte\b/, "flyer"],
   ],
+  hangtag: [[/\bbijuteria\b/, "jewelry"]],
   sticker: [
+    [/\bfechar sacola\b/, "bag-seal"],
+    [/\blacre\b/, "seal"],
     [/\bdtf\b/, "dtf"],
     [/\beletrostatico\b/, "electrostatic"],
     [/\bmicroperfurado\b/, "perforated"],
@@ -346,7 +369,8 @@ function parseSize(text: string): [number, number] | null {
   if (!match) return null;
   let a = Number(match[1].replace(",", "."));
   let b = Number(match[2].replace(",", "."));
-  const unitMeters = match[3] === "m" || (!match[3] && /m\b/.test(lower.slice(match.index)) && a < 10 && b < 10);
+  // "m" solto depois da medida ("2x0,6 m"); o "m" de "cm" não conta ("5,5x3,4x5,5 cm" é em centímetros).
+  const unitMeters = match[3] === "m" || (!match[3] && /(?<![a-z])m\b/.test(lower.slice(match.index)) && a < 10 && b < 10);
   if (unitMeters) {
     a *= 100;
     b *= 100;
@@ -608,6 +632,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b/.test(name),
     spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),
     label: formatSize(widthCm, heightCm),
+    details: allValues,
   };
 }
 

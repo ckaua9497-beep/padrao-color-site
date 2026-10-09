@@ -23,6 +23,7 @@ import { SleepMaskModel, NeckPillowModel, LapDeskModel } from "./comfort";
 import { BackpackModel, DrawstringModel, CoolerModel, DuffelModel } from "./bags";
 import { TowelModel, CurtainModel, BeddingModel, TableclothModel } from "./linens";
 import { WallpaperModel, MagnetModel, CylinderModel } from "./interior";
+import { TotemModel } from "./totem";
 import type { ModelProps } from "./shared";
 
 export type { ModelProps } from "./shared";
@@ -48,6 +49,7 @@ const MODELS: Record<MockupKind, ComponentType<ModelProps>> = {
   banner: BannerModel,
   lightbox: LightboxModel,
   rollup: RollupModel,
+  totem: TotemModel,
   flag: FlagModel,
   hardware: HardwareModel,
   mug: MugModel,

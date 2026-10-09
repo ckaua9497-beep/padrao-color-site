@@ -16,7 +16,6 @@ import {
   THERMAL_WINDOW,
   blankBack,
   contrastRatio,
-  fileToDataUrl,
   flipflopRegion,
   hasArtContent,
   loadArtFont,
@@ -24,6 +23,8 @@ import {
   paintArt,
   readableInk,
   regionAspect,
+  releaseSource,
+  sourceOf,
   styleOf,
   type ArtFamily,
   type ArtRender,
@@ -42,6 +43,11 @@ import type { SizeChartRow } from "@/lib/catalog";
 import { normalizeName, variantOf, type MockupSpec } from "@/lib/mockup";
 import { artArea, type MockupKind } from "@/lib/mockup-kinds";
 import { ArtEditor2D } from "./art-editor/ArtEditor2D";
+import { GabaritoPanel } from "./gabarito/GabaritoPanel";
+import { fitToTemplate, madeForTemplate, type Gabarito } from "./gabarito/jobs";
+import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
+import { ART_ACCEPT } from "@/lib/image-prep";
+import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
 
@@ -56,7 +62,8 @@ type Props = {
   art: ArtSettings;
   onArt: (update: (art: ArtSettings) => ArtSettings) => void;
   artName: string | null;
-  onFile: (file: File | undefined) => void;
+  /** `raw`: "Usar a imagem original" (sem corte de margem nem remoção de fundo). */
+  onFile: (file: File | undefined, options?: { raw?: boolean }) => void;
   uploadError: string | null;
   uploading: boolean;
   artLater: boolean;
@@ -75,6 +82,10 @@ type Props = {
   spec?: Pick<MockupSpec, "kind" | "widthCm" | "heightCm" | "thermal" | "variant" | "baseColor" | "back">;
   /** Lado em edição (Frente | Verso): a página vira o mockup 3D para ele. */
   onSide?: (side: Side) => void;
+  /** Gabarito oficial da seleção (medidas, sangria, corte e segurança): o editor e o PDF seguem ele. */
+  gabarito?: Gabarito | null;
+  /** Slug do produto (nome do PDF de impressão). */
+  slug?: string;
 };
 
 type Side = "front" | "back";
@@ -103,9 +114,10 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide }: Props) {
+export function ArtStep({ step, family, blank = false, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "" }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
-  const twoSided = TWO_SIDED.includes(pieceKind);
+  // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
+  const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
   const [side, setSide] = useState<Side>("front");
   const back = twoSided && side === "back";
   const [modes, setModes] = useState<Record<Side, Mode>>(() => ({ front: art.src ? "imagem" : "texto", back: art.back?.src ? "imagem" : "texto" }));
@@ -144,6 +156,12 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
   const surface = spec?.baseColor;
   const effectiveLeds = art.ledColors?.length ? art.ledColors : ledColors;
   const showMannequin = pieceKind === "tshirt" && !NO_MANNEQUIN_VARIANTS.has(pieceVariant ?? "");
+  // Gabarito do lado em edição: com proporção compatível, o editor trabalha no corte do painel (com sangria).
+  const sideGabarito = back ? (gabarito?.back ?? null) : (gabarito?.front ?? null);
+  // Chinelo: só a palmilha inteira usa o molde; região (dedos, meio, calcanhar) usa a faixa dela.
+  const templatePanel = sideGabarito?.frame && !neon && (!region || region.value === "inteira") ? sideGabarito.ref.panel : null;
+  const stageAspect = templatePanel ? templatePanel.cut.w / templatePanel.cut.h : editorAspect;
+  const stageCm = templatePanel ? { widthCm: templatePanel.cut.w / 10, heightCm: templatePanel.cut.h / 10 } : areaCm;
   const previewExtra: Partial<ArtRender> = { frontWindow, surface, sample: !back };
 
   const pickStyle = (value: ArtStyle) => {
@@ -151,26 +169,66 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
     onSideArt((a) => ({ ...a, style: value, font: fontTouched || neon ? a.font : suggested }));
   };
 
+  // Área de arte do mockup: o tratador encaixa a imagem nela quando a peça não tem gabarito.
+  const fitArea: FitArea | null = spec ? fitAreaFor(spec) : null;
+  const sideFit = templatePanel ? null : fitArea;
+
   // Imagem do verso: lida aqui (a da frente vai pelo onFile da página, que também anexa PDF ao pedido).
-  const onBackFile = async (file: File | undefined) => {
+  // Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
+  const backSeq = useRef(0);
+  const onBackFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
     if (!file) return;
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
       setBackUpload((u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
       return;
     }
-    if (!file.type.startsWith("image/")) {
-      setBackUpload((u) => ({ ...u, error: "No verso, envie PNG, JPG ou WEBP. Arquivos em PDF vão pelo “Enviar arte depois”." }));
-      return;
-    }
+    const seq = ++backSeq.current;
+    const pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
     setBackUpload((u) => ({ ...u, error: null, busy: true }));
     try {
-      const src = await fileToDataUrl(file);
-      onSideArt((a) => ({ ...a, src, zoom: 1, offsetX: 0, offsetY: 0 }));
+      // Verso no gabarito: arquivo feito nele entra como veio; os outros, encaixados nele. Sem gabarito, o
+      // tratador encaixa na área do mockup.
+      const backSide = gabarito?.back ?? null;
+      const src = pdf
+        ? (await (await import("./gabarito/pdf-artwork")).readPdfArtwork(file)).src
+        : (
+            await intakeImage(file, {
+              removeWhite: fitArea?.transparentBase ?? apparel,
+              treat: !raw,
+              madeForTemplate: backSide?.frame ? (px, vector) => madeForTemplate(backSide, px, vector) : null,
+              attachable: false,
+            })
+          ).src;
+      if (seq !== backSeq.current) {
+        releaseSource(src);
+        return;
+      }
+      onSideArt((a) => {
+        const fresh: ArtSettings = { ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null };
+        if (backSide?.frame) return fitToTemplate(fresh, backSide, { transparentBase: fitArea?.transparentBase ?? apparel, frontWindow: gabarito?.fitWindow });
+        return fitArea ? autoFitArt(fresh, fitArea) : fresh;
+      });
       setBackUpload({ name: file.name, error: null, busy: false });
-    } catch {
-      setBackUpload((u) => ({ ...u, error: "Não conseguimos ler essa imagem. Tente PNG, JPG ou WEBP.", busy: false }));
+    } catch (error) {
+      if (seq !== backSeq.current) return;
+      const message =
+        error instanceof IntakeError ? error.message : pdf ? "Não conseguimos ler esse PDF. Tente exportar de novo ou envie PNG/JPG." : "Não conseguimos ler essa imagem. Tente PNG, JPG, WEBP ou SVG.";
+      setBackUpload((u) => ({ ...u, error: message, busy: false }));
     }
   };
+
+  // Imagem tratada (margem cortada ou fundo tirado): o cliente pode voltar ao arquivo como enviou.
+  const source = sourceOf(sideArt.src);
+  const original = source?.original && (source.treatment?.trimmed || source.treatment?.backgroundRemoved) ? source.original : null;
+  // "Preencher a área" / "Imagem inteira": só com a análise do tratador (o PDF não tem).
+  const fitControls =
+    sideFit && sideArt.src && source?.analysis ? { mode: fitModeOf(sideArt), onMode: (mode: "fill" | "whole") => onSideArt((a) => autoFitArt(a, sideFit, mode)) } : null;
+  // "Voltar ao encaixe automático": no gabarito, o encaixe no molde; sem ele, o do tratador na área do mockup.
+  const onAutoFit = templatePanel
+    ? () => onSideArt((a) => fitToTemplate({ ...a, layout: a.layout?.text ? { text: a.layout.text } : null }, sideGabarito, { transparentBase: fitArea?.transparentBase ?? apparel, frontWindow: gabarito?.fitWindow }))
+    : fitControls && sideFit
+      ? () => onSideArt((a) => autoFitArt({ ...a, layout: null }, sideFit))
+      : null;
 
   const upload = back
     ? {
@@ -178,10 +236,17 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
         error: backUpload.error,
         busy: backUpload.busy,
         onFile: onBackFile,
-        accept: "image/png,image/jpeg,image/webp",
-        hint: "PNG, JPG ou WEBP · ou arraste aqui",
+        accept: ART_ACCEPT,
+        hint: gabarito ? "PNG, JPG, WEBP, SVG ou PDF · encaixamos no gabarito · ou arraste aqui" : "PNG, JPG, WEBP, SVG ou PDF · ajustamos na peça · ou arraste aqui",
       }
-    : { name: artName, error: uploadError, busy: uploading, onFile, accept: "image/png,image/jpeg,image/webp,application/pdf", hint: "PNG, JPG ou WEBP aparecem em 3D · PDF também é aceito · ou arraste aqui" };
+    : {
+        name: artName,
+        error: uploadError,
+        busy: uploading,
+        onFile,
+        accept: ART_ACCEPT,
+        hint: gabarito ? "PNG, JPG, WEBP, SVG ou PDF · encaixamos no gabarito e mostramos em 3D · ou arraste aqui" : "PNG, JPG, WEBP, SVG ou PDF · ajustamos na peça e mostramos em 3D · ou arraste aqui",
+      };
 
   return (
     <li id="passo-arte" className="scroll-mt-32">
@@ -388,6 +453,9 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
             canChooseBackground={!neon && !apparel}
             removable={back}
             styleName={styleInfo.label}
+            report={fitReport(sideArt, sideFit)}
+            fitControls={fitControls}
+            onOriginal={original ? () => upload.onFile(original, { raw: true }) : null}
           />
         )}
 
@@ -398,16 +466,24 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
             kind={pieceKind}
             family={family}
             variant={neon ? "neon" : "front"}
-            aspect={editorAspect}
-            areaCm={areaCm}
+            aspect={stageAspect}
+            areaCm={stageCm}
             surface={surface}
             ledColors={effectiveLeds}
-            frontWindow={frontWindow}
+            frontWindow={templatePanel ? gabarito?.frontWindow : frontWindow}
             sample={!back}
             label={label}
             sideLabel={twoSided ? (back ? "Verso" : "Frente") : undefined}
+            template={templatePanel}
+            onAutoFit={onAutoFit}
           />
         </div>
+
+        {gabarito && !blank && (
+          <div className="border-t border-line pt-5">
+            <GabaritoPanel gabarito={gabarito} art={art} side={back ? "back" : "front"} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
+          </div>
+        )}
       </div>
 
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
@@ -435,16 +511,22 @@ type ImagePanelProps = {
   name: string | null;
   error: string | null;
   busy: boolean;
-  onFile: (file: File | undefined) => void;
+  onFile: (file: File | undefined, options?: { raw?: boolean }) => void;
   accept: string;
   hint: string;
   canChooseBackground: boolean;
   removable: boolean;
   styleName: string;
+  /** O que o tratador automático fez com a imagem ("Ajustada automaticamente: …"). */
+  report?: string | null;
+  /** Peça sem gabarito: alternar entre preencher a área e a imagem inteira. */
+  fitControls?: { mode: "fill" | "whole"; onMode: (mode: "fill" | "whole") => void } | null;
+  /** Envia de novo o arquivo como o cliente mandou (sem corte de margem nem remoção de fundo). */
+  onOriginal?: (() => void) | null;
 };
 
 /** Envio da imagem (clique ou arraste) e o fundo atrás dela; a posição fica no editor 2D. */
-function ImagePanel({ art, onArt, name, error, busy, onFile, accept, hint, canChooseBackground, removable, styleName }: ImagePanelProps) {
+function ImagePanel({ art, onArt, name, error, busy, onFile, accept, hint, canChooseBackground, removable, styleName, report = null, fitControls = null, onOriginal = null }: ImagePanelProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   return (
     <div
@@ -466,11 +548,18 @@ function ImagePanel({ art, onArt, name, error, busy, onFile, accept, hint, canCh
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">{name}</p>
-            <p className="text-caption text-muted">{art.src ? "Aplicada no mockup 3D, inteira dentro da área" : "Arquivo anexado ao pedido; a prévia 3D usa a arte de exemplo"}</p>
+            <p className="text-caption text-muted" aria-live="polite">
+              {art.src ? (report ?? (art.layout?.overflow ? "Encaixada no gabarito e aplicada no mockup 3D" : "Aplicada no mockup 3D, inteira dentro da área")) : "Arquivo anexado ao pedido; a prévia 3D usa a arte de exemplo"}
+            </p>
           </div>
           <Button variant="link" size="sm" onClick={() => fileInput.current?.click()}>
             Trocar
           </Button>
+          {onOriginal && !busy && (
+            <Button variant="link" size="sm" onClick={onOriginal}>
+              Usar a imagem original
+            </Button>
+          )}
           {removable && art.src && (
             <Button variant="link" size="sm" onClick={() => onArt((a) => ({ ...a, src: null, layout: a.layout?.text ? { text: a.layout.text } : null }))}>
               Remover
@@ -499,6 +588,17 @@ function ImagePanel({ art, onArt, name, error, busy, onFile, accept, hint, canCh
 
       {art.src && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
+          {fitControls && (
+            <SegmentedControl
+              label="Encaixe da imagem"
+              value={fitControls.mode}
+              onChange={fitControls.onMode}
+              options={[
+                { value: "fill", label: "Preencher a área" },
+                { value: "whole", label: "Imagem inteira" },
+              ]}
+            />
+          )}
           {canChooseBackground && (
             <label className="flex h-11 items-center gap-2 rounded-full border border-line-strong pl-4 pr-1.5 text-[15px] font-bold">
               Fundo

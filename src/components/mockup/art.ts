@@ -1,4 +1,5 @@
 import type { MockupKind } from "@/lib/mockup-kinds";
+import { printQuality, type ImageAnalysis } from "@/lib/image-prep";
 import { ART_FONTS, canvasFont, fontFamilyOf, isScriptFont, type ArtFont } from "./fonts";
 
 /** Estilos de layout dos templates de texto. */
@@ -37,16 +38,46 @@ export type ArtSettings = {
   region?: string | null;
   /** Camisa: manequim no tamanho escolhido e no tipo de corpo (medidas em cm da tabela da API). */
   mannequin?: MannequinSettings | null;
+  /**
+   * Como a imagem enviada entrou no gabarito oficial (encaixe automático no envio): "sheet" = era a folha
+   * inteira do gabarito, "bleed" = já tinha a sangria, "trim" = tamanho final sem sangria (bordas estendidas),
+   * "other" = outra proporção (cobre a sangria). `src` = imagem a que o encaixe se refere.
+   */
+  templateFit?: TemplateFit | null;
+};
+
+/**
+ * Encaixe automático da imagem (gabarito ou área do mockup). Além do reconhecimento e da posição: o modo
+ * (preenchendo a área ou inteira), quanto ficou de fora, se a resolução limitou o tamanho, o modo pedido pelo
+ * cliente ("Preencher a área" / "Imagem inteira") e o fundo que o tratador pôs (cor da borda da arte) junto com
+ * o fundo que estava antes (volta quando entra outra imagem ou o modo vira "preencher").
+ */
+export type TemplateFit = {
+  match: "sheet" | "bleed" | "trim" | "other";
+  src: string;
+  placement?: LayerPlacement;
+  piece?: string;
+  mode?: "fill" | "whole";
+  cropLoss?: number;
+  limitedByDpi?: boolean;
+  chosen?: "fill" | "whole";
+  background?: string | null;
+  userBackground?: string;
 };
 
 /**
  * Posição de um elemento em fração da área de impressão: x/y = centro (0..1); scale 1 = encaixe máximo
- * (cabe inteiro sem girar, sem distorcer); rotation em graus, sentido horário. O paintArt sempre limita
- * à área (clampPlacement): o elemento nunca passa da borda.
+ * (cabe inteiro sem girar, sem distorcer); rotation em graus, sentido horário. O paintArt limita à área
+ * (clampPlacement): o elemento nunca passa da borda — exceto a imagem encaixada num gabarito
+ * (`ArtLayout.overflow`), que pode cobrir a sangria ou ser a folha inteira do gabarito.
  */
 export type LayerPlacement = { x: number; y: number; scale: number; rotation: number };
 
-export type ArtLayout = { text?: LayerPlacement | null; image?: LayerPlacement | null };
+/**
+ * `overflow`: a imagem pode passar da área (a área é o corte do gabarito; o que passa vai para a sangria
+ * e o resto é aparado). O texto continua sempre inteiro dentro da área.
+ */
+export type ArtLayout = { text?: LayerPlacement | null; image?: LayerPlacement | null; overflow?: boolean };
 
 export type BodyType = "magro" | "medio" | "cheio";
 
@@ -201,9 +232,23 @@ export function maxLayerScale(base: { w: number; h: number }, rotation: number, 
   return Math.min(1 / Math.max(e.w, 1e-6), 1 / Math.max(e.h, 1e-6));
 }
 
-/** Mantém o elemento inteiro dentro da área: limita a escala (no giro atual) e depois o centro. */
-export function clampPlacement(p: LayerPlacement, base: { w: number; h: number }, aspect: number): LayerPlacement {
+/** Maior escala da imagem encaixada num gabarito (folha inteira de um gabarito com muitas peças). */
+export const MAX_OVERFLOW_SCALE = 60;
+
+/**
+ * Mantém o elemento inteiro dentro da área: limita a escala (no giro atual) e depois o centro.
+ * `overflow` (imagem num gabarito): pode passar da área, mas continua cobrindo parte dela.
+ */
+export function clampPlacement(p: LayerPlacement, base: { w: number; h: number }, aspect: number, overflow = false): LayerPlacement {
   const rotation = normalizeRotation(p.rotation);
+  if (overflow) {
+    const wanted = Number.isFinite(p.scale) ? p.scale : 1;
+    const scale = Math.min(MAX_OVERFLOW_SCALE, Math.max(MIN_LAYER_SCALE, wanted));
+    const e = layerExtent(base, scale, rotation, aspect);
+    // O centro pode sair da área, mas um pedaço (2%) da imagem sempre fica sobre ela.
+    const keep = (v: number, half: number) => Math.min(1 + half - 0.02, Math.max(-half + 0.02, Number.isFinite(v) ? v : 0.5));
+    return { x: keep(p.x, e.w / 2), y: keep(p.y, e.h / 2), scale, rotation };
+  }
   const max = maxLayerScale(base, rotation, aspect);
   const wanted = Number.isFinite(p.scale) ? p.scale : 1;
   const scale = Math.min(max, Math.max(Math.min(MIN_LAYER_SCALE, max), wanted));
@@ -212,25 +257,89 @@ export function clampPlacement(p: LayerPlacement, base: { w: number; h: number }
   return { x: fit(p.x, e.w / 2), y: fit(p.y, e.h / 2), scale, rotation };
 }
 
-/** Grava a posição livre de um elemento na arte. */
-export function withPlacement(art: ArtSettings, layer: "text" | "image", placement: LayerPlacement | null): ArtSettings {
+/** Grava a posição livre de um elemento na arte (`overflow`: imagem encaixada num gabarito pode passar da área). */
+export function withPlacement(art: ArtSettings, layer: "text" | "image", placement: LayerPlacement | null, overflow?: boolean): ArtSettings {
   const layout: ArtLayout = { ...(art.layout ?? {}), [layer]: placement };
+  if (overflow !== undefined) layout.overflow = overflow || undefined;
   return { ...art, layout: layout.text || layout.image ? layout : null };
 }
 
-// Medida original das imagens enviadas (antes da redução para o 3D), para o cálculo de resolução.
-const SOURCE_SIZES = new Map<string, { w: number; h: number }>();
+// Arquivo original das imagens enviadas (o 3D usa a cópia reduzida): medida em pixels úteis para a resolução,
+// o arquivo para gerar o de impressão (o original, ou o original já tratado: margem cortada, fundo removido;
+// no SVG, o vetor) e, no PDF, a medida física da página (mm). `analysis`: o que o tratador automático viu.
+type SourceInfo = {
+  w: number;
+  h: number;
+  file?: Blob;
+  kind?: "image" | "pdf" | "svg";
+  mm?: { w: number; h: number } | null;
+  alpha?: boolean;
+  /** Vetor (SVG): imprime nítido em qualquer tamanho; o arquivo de impressão é rasterizado no tamanho final. */
+  vector?: boolean;
+  analysis?: ImageAnalysis;
+  /** O que o tratador automático mudou na imagem (para contar ao cliente). */
+  treatment?: { trimmed: boolean; backgroundRemoved: boolean };
+  /** O arquivo como o cliente enviou ("usar a imagem original", sem corte nem remoção de fundo). */
+  original?: File;
+};
+const SOURCES = new Map<string, SourceInfo>();
+/** Imagens em uso agora, por dono (página do produto, vitrine): o despejo nunca tira uma delas. */
+const IN_USE = new Map<string, Set<string>>();
+const inUse = (src: string) => [...IN_USE.values()].some((set) => set.has(src));
 
-/** Pixels do arquivo original de uma imagem enviada por fileToDataUrl; null se não houver registro. */
-export function sourceSizeOf(src: string | null | undefined): { w: number; h: number } | null {
-  return src ? (SOURCE_SIZES.get(src) ?? null) : null;
+/** Libera uma imagem que saiu de uso: depois de um minuto (pintura e PDF em andamento terminam), se ninguém voltou a usar. */
+export function releaseSource(src: string | null | undefined) {
+  if (!src) return;
+  setTimeout(() => {
+    if (inUse(src)) return;
+    SOURCES.delete(src);
+    if (src.startsWith("blob:")) URL.revokeObjectURL(src);
+  }, 60_000);
 }
 
-/** Qualidade de impressão pela resolução efetiva (pontos por polegada na medida colocada). */
-export function dpiQuality(dpi: number): "baixa" | "ok" | "ótima" {
-  if (dpi >= 300) return "ótima";
-  if (dpi >= 150) return "ok";
-  return "baixa";
+/** Registra o original de uma prévia (URL blob: ou data URL); acima de 12, sai a mais antiga que não está em uso. */
+export function registerSource(src: string, info: SourceInfo) {
+  SOURCES.set(src, info);
+  if (SOURCES.size > 12) {
+    const oldest = [...SOURCES.keys()].find((key) => key !== src && !inUse(key));
+    if (oldest) {
+      SOURCES.delete(oldest);
+      if (oldest.startsWith("blob:")) setTimeout(() => !inUse(oldest) && URL.revokeObjectURL(oldest), 60_000);
+    }
+  }
+}
+
+/**
+ * As imagens que um dono usa agora (frente e verso da arte). As que ele largou (troca, remoção, saída da
+ * página: `srcs` vazio) são liberadas se ninguém mais usa.
+ */
+export function retainSources(owner: string, srcs: readonly (string | null | undefined)[]) {
+  const next = new Set(srcs.filter((src): src is string => Boolean(src)));
+  const before = IN_USE.get(owner);
+  if (next.size) IN_USE.set(owner, next);
+  else IN_USE.delete(owner);
+  before?.forEach((src) => {
+    if (!next.has(src)) releaseSource(src);
+  });
+}
+
+/** Pixels úteis do original de uma imagem enviada (image-intake.ts); null se não houver registro. */
+export function sourceSizeOf(src: string | null | undefined): { w: number; h: number } | null {
+  const info = src ? SOURCES.get(src) : undefined;
+  return info ? { w: info.w, h: info.h } : null;
+}
+
+/** Arquivo original (imagem ou PDF) e medida física (PDF) de uma arte enviada; null se não houver. */
+export function sourceOf(src: string | null | undefined): SourceInfo | null {
+  return src ? (SOURCES.get(src) ?? null) : null;
+}
+
+/**
+ * Qualidade de impressão pela resolução efetiva (pontos por polegada na medida colocada) e pelo tamanho da
+ * peça (lado maior em cm): lona e banner, vistos de longe, ficam bons com menos pontos que um cartão.
+ */
+export function dpiQuality(dpi: number, longCm = 0): "baixa" | "ok" | "ótima" {
+  return printQuality(dpi, longCm);
 }
 
 export type ArtFamily = "card" | "wrap" | "apparel" | "sign" | "badge" | "neon" | "home";
@@ -252,6 +361,7 @@ const FAMILY: Record<MockupKind, ArtFamily> = {
   banner: "sign",
   lightbox: "sign",
   rollup: "sign",
+  totem: "sign",
   flag: "sign",
   hardware: "sign",
   cloth: "home",
@@ -2155,7 +2265,7 @@ function drawBlock(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
 }
 
 /** Template do estilo (sem imagem), já com o texto do cliente. */
-function paintTemplate(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, placement: LayerPlacement | null): LayerInfo | null {
+function paintTemplate(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, placement: LayerPlacement | null, fill: Rect): LayerInfo | null {
   const family = artFamily(art.kind);
   // Estampa de tecido: fundo transparente (o tecido aparece).
   const transparent = family === "apparel" && !art.opaque;
@@ -2163,7 +2273,7 @@ function paintTemplate(ctx: CanvasRenderingContext2D, w: number, h: number, art:
   const sample = art.sample !== false;
   if (!transparent) {
     ctx.fillStyle = makeScene(ctx, w, h, art, label, { transparent, sample }).bg;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
   }
   return drawBlock(ctx, w, h, art, label, PAINTERS[styleOf(art.style)], { transparent, sample, surface }, placement);
 }
@@ -2177,8 +2287,11 @@ function paintImage(ctx: CanvasRenderingContext2D, w: number, h: number, image: 
   const ih = Math.max(1, image.naturalHeight);
   const aspect = w / h;
   const base = containBase(iw / ih, aspect);
+  // Redução/ampliação suave (sem serrilhado nem moiré na textura do 3D e no editor).
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   if (placement) {
-    const p = clampPlacement(placement, base, aspect);
+    const p = clampPlacement(placement, base, aspect, Boolean(art.layout?.overflow));
     const dw = base.w * w * p.scale;
     const dh = base.h * h * p.scale;
     ctx.save();
@@ -2246,12 +2359,17 @@ function paintCaption(s: Scene, style: ArtStyle) {
   ctx.restore();
 }
 
-/** Área de arte inteira (ou a região do chinelo): imagem e legenda, ou o template; cada um na sua posição. */
-function paintArea(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, image: HTMLImageElement | null, label: string, info: PaintInfo) {
+type Rect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Área de arte inteira (ou a região do chinelo): imagem e legenda, ou o template; cada um na sua posição.
+ * `fill`: retângulo do fundo no referencial da área (com sangria, maior que a área).
+ */
+function paintArea(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, image: HTMLImageElement | null, label: string, info: PaintInfo, fill: Rect = { x: 0, y: 0, w, h }) {
   const layout = art.layout ?? null;
   if (image) {
     ctx.fillStyle = art.background;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
     info.image = paintImage(ctx, w, h, image, art, layout?.image ?? null);
     if (art.text.trim() || (art.subtext ?? "").trim()) {
       const style = styleOf(art.style);
@@ -2259,7 +2377,7 @@ function paintArea(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
     }
     return;
   }
-  info.text = paintTemplate(ctx, w, h, art, label, layout?.text ?? null);
+  info.text = paintTemplate(ctx, w, h, art, label, layout?.text ?? null, fill);
 }
 
 // ---------------------------------------------------------------------------
@@ -2494,11 +2612,20 @@ function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HT
 }
 
 /**
+ * Sangria em volta da área (frações da largura e da altura da área). Com ela o canvas é a caixa da
+ * sangria: a área (corte do gabarito) fica no meio, o fundo cobre tudo e, onde a arte não chega até a
+ * borda da sangria, a última linha de pixels da área é esticada (`extend`, padrão: sim) — assim o corte
+ * nunca deixa filete branco.
+ */
+export type PaintBleed = { left: number; top: number; right: number; bottom: number };
+
+/**
  * Pinta a arte no canvas da peça e devolve onde ficaram o texto e a imagem (o editor 2D põe as alças ali).
  * No chinelo com região escolhida, a arte vai só na faixa da região (dedos, meio ou calcanhar) e o resto
  * da palmilha fica na cor da peça; a posição livre (art.layout) é relativa à região.
+ * `opts.bleed`: o canvas inclui a sangria do gabarito em volta da área (arquivo de impressão e editor).
  */
-export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string): PaintInfo {
+export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string, opts?: { bleed?: PaintBleed | null; extend?: boolean }): PaintInfo {
   const info: PaintInfo = { text: null, image: null };
   const ctx = canvas.getContext("2d");
   if (!ctx) return info;
@@ -2533,6 +2660,19 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
     ctx.clip();
     paintArea(ctx, w, height, art, image, label, info);
     ctx.restore();
+  } else if (opts?.bleed) {
+    const b = opts.bleed;
+    const aw = w / (1 + b.left + b.right);
+    const ah = h / (1 + b.top + b.bottom);
+    const ax = b.left * aw;
+    const ay = b.top * ah;
+    ctx.save();
+    ctx.translate(ax, ay);
+    paintArea(ctx, aw, ah, art, image, label, info, { x: -ax, y: -ay, w, h });
+    ctx.restore();
+    // Estampa de tecido sem fundo (DTF): nada a estender, o tecido aparece em volta.
+    const transparent = artFamily(art.kind) === "apparel" && !art.opaque && (!image || art.background === "rgba(0,0,0,0)");
+    if (opts.extend !== false && !transparent) extendEdges(ctx, canvas, { x: ax, y: ay, w: aw, h: ah }, uncoveredSides(info.image, { x: ax, y: ay, w: aw, h: ah }, w, h, Boolean(image)));
   } else {
     paintArea(ctx, w, h, art, image, label, info);
   }
@@ -2545,6 +2685,41 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
     ctx.putImageData(data, 0, 0);
   }
   return info;
+}
+
+/** Lados da sangria que a imagem não alcança (sem imagem, todos: o template termina na borda da área). */
+function uncoveredSides(layer: LayerInfo | null, area: Rect, w: number, h: number, hasImage: boolean) {
+  const all = { left: true, top: true, right: true, bottom: true };
+  if (!hasImage || !layer) return all;
+  const { placement: p, base } = layer;
+  const e = layerExtent(base, p.scale, p.rotation, area.w / area.h);
+  const cx = area.x + p.x * area.w;
+  const cy = area.y + p.y * area.h;
+  const hw = (e.w * area.w) / 2;
+  const hh = (e.h * area.h) / 2;
+  const tol = 0.5;
+  return { left: cx - hw > tol, top: cy - hh > tol, right: cx + hw < w - tol, bottom: cy + hh < h - tol };
+}
+
+/** Estica a última linha/coluna de pixels da área até a borda da sangria (os cantos saem das linhas esticadas). */
+function extendEdges(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, area: Rect, sides: { left: boolean; top: boolean; right: boolean; bottom: boolean }) {
+  const W = canvas.width;
+  const H = canvas.height;
+  // Só pixels inteiramente dentro da área: a coluna da borda (fracionária) mistura arte e fundo e desbotaria
+  // a sangria inteira. A coluna parcial fica dentro da faixa reescrita.
+  const x0 = Math.max(0, Math.ceil(area.x - 1e-6));
+  const y0 = Math.max(0, Math.ceil(area.y - 1e-6));
+  const x1 = Math.min(W, Math.floor(area.x + area.w + 1e-6));
+  const y1 = Math.min(H, Math.floor(area.y + area.h + 1e-6));
+  if (x1 - x0 < 2 || y1 - y0 < 2) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  if (sides.left && x0 > 0) ctx.drawImage(canvas, x0, y0, 1, y1 - y0, 0, y0, x0, y1 - y0);
+  if (sides.right && x1 < W) ctx.drawImage(canvas, x1 - 1, y0, 1, y1 - y0, x1, y0, W - x1, y1 - y0);
+  if (sides.top && y0 > 0) ctx.drawImage(canvas, 0, y0, W, 1, 0, 0, W, y0);
+  if (sides.bottom && y1 < H) ctx.drawImage(canvas, 0, y1 - 1, W, 1, 0, y1, W, H - y1);
+  ctx.restore();
 }
 
 /** Fontes que um estilo usa além da escolhida pelo cliente (subtexto e letra do neon). */
@@ -2628,25 +2803,6 @@ export function heartPath(ctx: CanvasRenderingContext2D, w: number, h: number) {
 }
 
 export { canvasFor, ART_FONTS };
-
-export async function fileToDataUrl(file: File, maxSide = 2048): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const image = await loadImage(url);
-    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(image.naturalWidth * scale);
-    canvas.height = Math.round(image.naturalHeight * scale);
-    canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL(file.type === "image/png" ? "image/png" : "image/jpeg", 0.9);
-    // O 3D usa a cópia reduzida; a resolução de impressão é a do arquivo original.
-    SOURCE_SIZES.set(dataUrl, { w: image.naturalWidth, h: image.naturalHeight });
-    if (SOURCE_SIZES.size > 8) SOURCE_SIZES.delete(SOURCE_SIZES.keys().next().value as string);
-    return dataUrl;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

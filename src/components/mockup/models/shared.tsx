@@ -7,6 +7,8 @@ import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { type ArtRender, type ArtVariant, canvasFor, fontFamily, loadArtFont, loadImage, paintArt, shapeMask } from "../art";
 import { useAnimate } from "../viewer-hooks";
+import { useArtGesture } from "../art-gesture";
+import { textureLongSide } from "@/lib/image-prep";
 
 export type MaskPath = (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
 
@@ -24,29 +26,49 @@ function decode(src: string): Promise<HTMLImageElement> {
   return pending;
 }
 
+/** Imagens de arte ainda decodificando: a foto de catálogo (CatalogPhoto) só dispara com zero. */
+let pendingArtImages = 0;
+/** Texturas pintadas sem a imagem que a arte pede (ainda com a arte de exemplo). */
+const waitingTextures = new Set<object>();
+export function artImagesPending(): number {
+  return pendingArtImages + waitingTextures.size;
+}
+
 export function useArtImage(src: string | null) {
   const [loaded, setLoaded] = useState<{ src: string; image: HTMLImageElement } | null>(null);
   useEffect(() => {
     if (!src) return;
     let alive = true;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      pendingArtImages -= 1;
+    };
+    pendingArtImages += 1;
     decode(src)
       .then((image) => alive && setLoaded({ src, image }))
-      .catch(() => alive && setLoaded(null));
+      .catch(() => alive && setLoaded(null))
+      .finally(settle);
     return () => {
       alive = false;
+      settle();
     };
   }, [src]);
   return src && loaded?.src === src ? loaded.image : null;
 }
 
 
-export function createArtTexture(aspect: number) {
-  const canvas = canvasFor(aspect);
+export function createArtTexture(aspect: number, longSide = 1024, anisotropy = 8) {
+  const canvas = canvasFor(aspect, longSide);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
+  texture.anisotropy = anisotropy;
   return { canvas, texture };
 }
+
+/** Celular/tablet (toque): textura menor para caber na memória da GPU. */
+const COARSE = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
 
 
 export function repaintArt(
@@ -70,7 +92,15 @@ export function repaintArt(
 export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRender, label: string, mask?: MaskPath) {
   const image = useArtImage(art.src);
   const invalidate = useThree((state) => state.invalidate);
-  const target = useMemo(() => createArtTexture(aspect), [aspect]);
+  // Com imagem do cliente, a textura acompanha a resolução dela (2048 px no computador, 1536 no celular, sem
+  // esmagar o lado menor de faixas longas); a arte de exemplo, as faces sem impressão e o arraste no editor 2D
+  // (repintado a cada quadro) ficam em 1024.
+  const gl = useThree((state) => state.gl);
+  const dragging = useArtGesture();
+  const hires = Boolean(art.src) && variant !== "blank" && variant !== "gray" && !dragging;
+  const longSide = hires ? textureLongSide(aspect, { maxTexture: gl.capabilities.maxTextureSize, mobile: COARSE }) : 1024;
+  const anisotropy = gl.capabilities.getMaxAnisotropy();
+  const target = useMemo(() => createArtTexture(aspect, longSide, anisotropy), [aspect, longSide, anisotropy]);
   // Repinta quando a fonte escolhida termina de carregar (o canvas não espera por ela sozinho).
   const [fontsLoaded, setFontsLoaded] = useState("");
   // Estilo e subtexto também trocam de fonte: repinta quando ela termina de carregar.
@@ -83,13 +113,22 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
     };
   }, [art, fontKey]);
   useEffect(() => {
+    // Até a imagem chegar e ser pintada, a textura conta como "esperando" (a foto de catálogo aguarda).
+    if (art.src) waitingTextures.add(target);
     const frame = requestAnimationFrame(() => {
       repaintArt(target, variant, art, image, label, mask);
+      if (!art.src || image) waitingTextures.delete(target);
       invalidate();
     });
     return () => cancelAnimationFrame(frame);
   }, [target, variant, art, image, label, mask, fontsLoaded, invalidate]);
-  useEffect(() => () => target.texture.dispose(), [target]);
+  useEffect(
+    () => () => {
+      waitingTextures.delete(target);
+      target.texture.dispose();
+    },
+    [target],
+  );
   return target.texture;
 }
 
