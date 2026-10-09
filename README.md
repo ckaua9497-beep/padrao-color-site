@@ -246,8 +246,15 @@ todas as lojas: a loja é escolhida pelo endereço.
   preço da loja e no base. Comissão = pago pelo cliente − custo base − frete − taxa do pagamento (`src/lib/multiloja/pedido.ts`, testado).
   Fica "a liberar" até a entrega ou `MULTILOJA_DIAS_LIBERACAO` dias após o pagamento; o lojista pede saque (mínimo R$ 20) para a chave Pix.
 - **Pagamento** (`payments.ts`): `simulado` em desenvolvimento (botão "Simular pagamento" na página do pedido); `efi` com Pix (cobrança
-  imediata, QR e copia e cola; certificado .p12) e cartão por link de pagamento da Efí. Webhooks em `/api/multiloja/pagamento/efi/pix`
-  e `/efi/cartao`; o aviso nunca vale sozinho: a cobrança é consultada na Efí antes de marcar "pago". **Não testado no sandbox da Efí.**
+  imediata, QR e copia e cola; certificado .p12, arquivo ou base64) e cartão por link de pagamento da Efí. Rotas conferidas com a
+  documentação e o SDK oficial da Efí. Webhook do Pix cadastrado pelo `/admin/pagamentos` sem mTLS (`x-skip-mtls-checking`), com
+  segredo na URL (`MULTILOJA_EFI_WEBHOOK_SEGREDO`) e IP da Efí; o aviso nunca vale sozinho: a cobrança é consultada na Efí antes de
+  marcar "pago". Cancelar um pedido pago devolve o Pix / estorna o cartão. Pix vencido: o cliente gera outro na página do pedido.
+  `/admin/pagamentos` mostra o diagnóstico (credenciais, certificado, autenticação nas duas APIs, webhook) e, em homologação, cria um
+  Pix de teste de R$ 1,00 (a Efí confirma sozinha até R$ 10,00).
+  **Simulador:** `node scripts/efi-mock.mjs` (launch "efi-mock", porta 3199) imita a Efí; com `MULTILOJA_EFI_MOCK_URL` num
+  `.env.development.local` dá para testar Pix, webhook, cartão, notificação e devolução sem credenciais (`POST /mock/pagar/<txid>`
+  paga Pix acima de R$ 10).
 - **Produção.** Em `/admin`, "Enviar para produção" monta o `gerarpedido` no preço base em nome de `PADRAO_MULTILOJA_CLIENTE_ID`; só chama a
   API com `PADRAO_ORDERS_ENABLED=true`, senão simula e mostra os dados. Status seguintes (enviado, entregue) com nota no histórico.
 - **Painel** (`/painel`): cadastro; início com vendas dos 30 dias, saldo e checklist; vendas e detalhe do pedido (artes, valores,

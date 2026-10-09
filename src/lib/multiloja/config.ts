@@ -51,24 +51,43 @@ export type EfiConfig = {
   sandbox: boolean;
   clientId: string;
   clientSecret: string;
-  /** Certificado .p12 da conta Efí (exigido pela API Pix) e a senha dele. */
+  /** Certificado .p12 da conta Efí (exigido pela API Pix): caminho do arquivo ou o conteúdo em base64. */
   certPath: string;
+  certBase64: string;
+  /** Senha do .p12 (a Efí gera sem senha: vazio). */
   certPassword: string;
   /** Chave Pix da conta que recebe. */
   pixKey: string;
 };
 
+const env = (name: string) => process.env[name]?.trim() ?? "";
+
 export function efiConfig(): EfiConfig | null {
-  const env = (name: string) => process.env[name]?.trim() ?? "";
   const config = {
     sandbox: env("MULTILOJA_EFI_SANDBOX") !== "false",
     clientId: env("MULTILOJA_EFI_CLIENT_ID"),
     clientSecret: env("MULTILOJA_EFI_CLIENT_SECRET"),
     certPath: env("MULTILOJA_EFI_CERTIFICADO"),
-    certPassword: env("MULTILOJA_EFI_CERTIFICADO_SENHA"),
+    certBase64: env("MULTILOJA_EFI_CERTIFICADO_BASE64").replace(/\s+/g, ""),
+    certPassword: process.env.MULTILOJA_EFI_CERTIFICADO_SENHA ?? "",
     pixKey: env("MULTILOJA_EFI_CHAVE_PIX"),
   };
-  return config.clientId && config.clientSecret && config.certPath && config.pixKey ? config : null;
+  return config.clientId && config.clientSecret && (config.certPath || config.certBase64) && config.pixKey ? config : null;
+}
+
+/** Segredo que vai na URL dos webhooks (?hmac=…): sem ele, o aviso é recusado. 24+ caracteres. */
+export function efiWebhookSecret(): string | null {
+  const secret = env("MULTILOJA_EFI_WEBHOOK_SEGREDO");
+  return secret.length >= 24 && /^[A-Za-z0-9_-]+$/.test(secret) ? secret : null;
+}
+
+/** IPs de onde a Efí manda os webhooks (documentação: 34.193.116.226). Vazio = não confere o IP. */
+export function efiWebhookIps(): string[] {
+  const raw = process.env.MULTILOJA_EFI_WEBHOOK_IPS ?? "34.193.116.226";
+  return raw
+    .split(",")
+    .map((ip) => ip.trim())
+    .filter(Boolean);
 }
 
 /** Envio dos pedidos pagos para produção na API Padrão (POST /gerarpedido) com o cliente da multiloja. */

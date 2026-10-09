@@ -119,3 +119,35 @@ export function ArtUpload({ codigo, token, posicao, hasArt }: { codigo: string; 
     </div>
   );
 }
+
+/** Gera outra cobrança (Pix vencido, link expirado ou cobrança que não abriu) e recarrega a página. */
+export function RenewCharge({ codigo, token, label }: { codigo: string; token: string; label: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="space-y-2">
+      <Button
+        type="button"
+        size="sm"
+        loading={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          const res = await fetch(`/api/multiloja/pedido/${codigo}/cobranca?t=${encodeURIComponent(token)}`, { method: "POST" }).catch(() => null);
+          const data = (await res?.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (data?.ok) router.refresh();
+          else setError(data?.error ?? "Não foi possível gerar agora. Tente de novo.");
+          setBusy(false);
+        }}
+      >
+        {label}
+      </Button>
+      {error && (
+        <p role="alert" className="text-caption font-semibold text-coral-700">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}

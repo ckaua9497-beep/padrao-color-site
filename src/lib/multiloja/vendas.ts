@@ -7,8 +7,18 @@ import { getProductById, type Product } from "../catalog";
 import { orderCode, priceProduct, type PaymentKind } from "./core";
 import { padraoProduction, paymentRates } from "./config";
 import { quoteOrder, type CheckoutRequest, type OrderQuote } from "./pedido";
-import { chargeStatus, createCharge } from "./payments";
-import { createPedido, getPedidoByCodigo, listItens, setPedidoPadrao, setPedidoPagamento, setPedidoStatus, type NewPedidoItem, type Pedido } from "./repo-vendas";
+import { chargeStatus, createCharge, refundCharge, type ChargeStatus } from "./payments";
+import {
+  createPedido,
+  getPedidoByCodigo,
+  listItens,
+  mergePedidoPagamento,
+  setPedidoPadrao,
+  setPedidoPagamento,
+  setPedidoStatus,
+  type NewPedidoItem,
+  type Pedido,
+} from "./repo-vendas";
 import type { Loja } from "./repo";
 import { baseFactor, lojaItens, type LojaItem } from "./tenant";
 
@@ -158,6 +168,16 @@ export function confirmPayment(pedido: Pedido, autor: string, nota: string): boo
   return true;
 }
 
+/** Aplica a situação consultada no provedor: pago (guarda o e2eId do Pix) ou cobrança removida. */
+export function applyChargeStatus(pedido: Pedido, result: ChargeStatus, origem: string): void {
+  if (result.status === "pago") {
+    if (result.e2eId) mergePedidoPagamento(pedido.id, { e2eId: result.e2eId });
+    confirmPayment(pedido, "pagamento", `Pagamento confirmado pela Efí (${origem}).`);
+  } else if (result.status === "expirado" && pedido.status === "aguardando_pagamento") {
+    setPedidoStatus(pedido.id, "expirado", "pagamento", "A cobrança foi cancelada ou venceu na Efí.");
+  }
+}
+
 const lastCheck = new Map<string, number>();
 
 /** Confere a cobrança no provedor (no máximo a cada 15 s por pedido) e confirma se já foi paga. */
@@ -167,13 +187,61 @@ export async function refreshPayment(pedido: Pedido): Promise<Pedido> {
   if (now - (lastCheck.get(pedido.codigo) ?? 0) < 15_000) return pedido;
   lastCheck.set(pedido.codigo, now);
   try {
-    const status = await chargeStatus(pedido.pagamentoProvedor, pedido.pagamentoId);
-    if (status === "pago") confirmPayment(pedido, "pagamento", "Pagamento confirmado pela Efí.");
-    if (status === "expirado") setPedidoStatus(pedido.id, "expirado", "pagamento", "A cobrança expirou.");
+    applyChargeStatus(pedido, await chargeStatus(pedido.pagamentoProvedor, pedido.pagamentoId), "consulta");
   } catch (error) {
     console.error("[multiloja] consulta de pagamento:", error instanceof Error ? error.message : error);
   }
   return getPedidoByCodigo(pedido.codigo) ?? pedido;
+}
+
+/** O Pix do pedido já venceu (o cliente pode gerar outro). */
+export function pixExpired(pedido: Pedido, now = new Date()): boolean {
+  return pedido.formaPagamento === "pix" && Boolean(pedido.pagamento.expiresAt) && new Date(pedido.pagamento.expiresAt as string).getTime() <= now.getTime();
+}
+
+/**
+ * Nova cobrança para um pedido que ainda não foi pago (Pix vencido, link do cartão expirado ou cobrança que
+ * não abriu). Mesmo valor: os itens e os preços do pedido não mudam.
+ */
+export async function renewCharge(pedido: Pedido, origin: string, lojaNome: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (pedido.status !== "aguardando_pagamento" && pedido.status !== "expirado") return { ok: false, message: "Este pedido não está esperando pagamento." };
+  // Antes de trocar a cobrança, confere se a antiga não foi paga nesse meio-tempo.
+  if (pedido.pagamentoProvedor === "efi" && pedido.pagamentoId) {
+    const current = await chargeStatus("efi", pedido.pagamentoId).catch(() => null);
+    if (current?.status === "pago") {
+      applyChargeStatus(pedido, current, "consulta");
+      return { ok: true };
+    }
+  }
+  try {
+    const { provider, charge } = await createCharge(pedido.formaPagamento, {
+      codigo: pedido.codigo,
+      total: pedido.total,
+      cliente: pedido.cliente,
+      descricao: `Pedido ${pedido.codigo} — ${lojaNome}`,
+      returnUrl: `${origin}/pedido/${pedido.codigo}?t=${pedido.token}`,
+    });
+    setPedidoPagamento(pedido.id, provider, charge.id, charge.data);
+    if (pedido.status === "expirado") setPedidoStatus(pedido.id, "aguardando_pagamento", "cliente", "Nova cobrança gerada.");
+    return { ok: true };
+  } catch (error) {
+    console.error("[multiloja] nova cobrança:", error instanceof Error ? error.message : error);
+    return { ok: false, message: "Não foi possível gerar a cobrança agora. Tente de novo em instantes." };
+  }
+}
+
+/** Cancela o pedido e, se já foi pago, pede a devolução (Pix) ou o reembolso (cartão) na Efí. */
+export async function cancelOrder(pedido: Pedido, autor: string, nota: string): Promise<{ ok: boolean; message: string }> {
+  const paid = Boolean(pedido.pagoEm) && pedido.status !== "cancelado";
+  if (paid) {
+    const refund = await refundCharge(pedido).catch((error) => ({ ok: false as const, message: error instanceof Error ? error.message : "erro na Efí" }));
+    if (!refund.ok) return { ok: false, message: `${refund.message} O pedido NÃO foi cancelado.` };
+    mergePedidoPagamento(pedido.id, { refund: refund.message });
+    setPedidoStatus(pedido.id, "cancelado", autor, [nota, refund.message].filter(Boolean).join(" "));
+    return { ok: true, message: `Pedido cancelado. ${refund.message}` };
+  }
+  setPedidoStatus(pedido.id, "cancelado", autor, nota);
+  return { ok: true, message: "Pedido cancelado (não havia pagamento)." };
 }
 
 // ---------------------------------------------------------------------------------- produção na Padrão

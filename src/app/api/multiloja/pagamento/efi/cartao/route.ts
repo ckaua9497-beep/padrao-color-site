@@ -1,12 +1,15 @@
-import { getPedidoByCodigo, setPedidoStatus } from "@/lib/multiloja/repo-vendas";
+import { efiWebhookAllowed } from "@/lib/multiloja/http";
 import { chargeStatus, efiCardNotification } from "@/lib/multiloja/payments";
-import { confirmPayment } from "@/lib/multiloja/vendas";
+import { getPedidoByCodigo } from "@/lib/multiloja/repo-vendas";
+import { applyChargeStatus } from "@/lib/multiloja/vendas";
 
 /*
- * Notificação do cartão (API de Cobranças da Efí): chega um token ("notification=<token>"), que é trocado na
- * Efí pelos eventos. Cada cobrança é conferida de novo antes de mudar o pedido.
+ * Notificação do cartão (API de Cobranças da Efí): chega "notification=<token>" (form). O token é trocado na Efí
+ * pelos eventos (GET /v1/notification/:token) e cada cobrança é conferida de novo (GET /v1/charge/:id) antes de
+ * mudar o pedido. A URL leva ?hmac=<segredo> (montada ao criar o link de pagamento).
  */
 export async function POST(request: Request) {
+  if (!efiWebhookAllowed(request)) return new Response(null, { status: 401 });
   let token = "";
   try {
     const form = await request.formData();
@@ -19,12 +22,11 @@ export async function POST(request: Request) {
     for (const { codigo, chargeId } of await efiCardNotification(token)) {
       const pedido = getPedidoByCodigo(codigo);
       if (!pedido || pedido.pagamentoProvedor !== "efi" || pedido.pagamentoId !== chargeId) continue;
-      const status = await chargeStatus("efi", chargeId);
-      if (status === "pago") confirmPayment(pedido, "pagamento", "Cartão aprovado pela Efí.");
-      else if (status === "expirado" && pedido.status === "aguardando_pagamento") setPedidoStatus(pedido.id, "expirado", "pagamento", "Cobrança do cartão cancelada ou vencida.");
+      applyChargeStatus(pedido, await chargeStatus("efi", chargeId), "notificação do cartão");
     }
   } catch (error) {
     console.error("[multiloja] notificação cartão:", error instanceof Error ? error.message : error);
+    return new Response(null, { status: 500 });
   }
   return new Response(null, { status: 200 });
 }

@@ -1,6 +1,8 @@
 import "server-only";
 
+import { timingSafeEqual } from "node:crypto";
 import { clientIp } from "../api/guard";
+import { efiWebhookIps, efiWebhookSecret } from "./config";
 import { createRateLimiter } from "../api/rate-limit";
 import { lojaDoHost } from "./tenant";
 import type { Loja } from "./repo";
@@ -33,4 +35,21 @@ export const vitrineLimits = {
 export function limited(limiter: (typeof vitrineLimits)[keyof typeof vitrineLimits], request: Request, scope: string): boolean {
   const ip = clientIp(request);
   return ip ? !limiter.hit(`${scope}:${ip}`).ok : false;
+}
+
+/**
+ * Aviso da Efí (webhook do Pix ou notificação do cartão) com as checagens que a Efí recomenda quando o servidor
+ * não exige mTLS: segredo na URL (?hmac=) e IP de origem. Mesmo aceito, o aviso só dispara uma consulta à
+ * própria Efí; nada muda no pedido só com o que veio no corpo.
+ */
+export function efiWebhookAllowed(request: Request): boolean {
+  const secret = efiWebhookSecret();
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const given = new URL(request.url).searchParams.get("hmac") ?? "";
+  const a = Buffer.from(given);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+  const allowed = efiWebhookIps();
+  const ip = clientIp(request);
+  return !allowed.length || !ip || allowed.includes(ip.replace(/^::ffff:/i, ""));
 }

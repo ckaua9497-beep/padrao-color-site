@@ -3,13 +3,13 @@ import { notFound } from "next/navigation";
 import { IconCheck } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
-import { ArtUpload, PaymentWatcher, PixBox } from "@/components/vitrine/OrderClient";
+import { ArtUpload, PaymentWatcher, PixBox, RenewCharge } from "@/components/vitrine/OrderClient";
 import { formatCep, formatDocument } from "@/lib/api/validation";
 import { formatBRL } from "@/lib/format";
 import { ORDER_STATUS_LABEL, PAYMENT_LABEL, sqlDate, whatsappLink, type OrderStatus } from "@/lib/multiloja/core";
 import { getPedidoByCodigo, listItens } from "@/lib/multiloja/repo-vendas";
 import { lojaDoHost } from "@/lib/multiloja/tenant";
-import { refreshPayment, tokenMatches } from "@/lib/multiloja/vendas";
+import { pixExpired, refreshPayment, tokenMatches } from "@/lib/multiloja/vendas";
 
 export const metadata: Metadata = { title: "Seu pedido", robots: { index: false } };
 
@@ -36,6 +36,7 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
   if (!loja || !found || found.lojaId !== loja.id || !tokenMatches(found, token)) notFound();
 
   const pedido = await refreshPayment(found);
+  const expired = pixExpired(pedido);
   const itens = listItens(pedido.id);
   const stepIndex = STEPS.indexOf(pedido.status);
   const closed = pedido.status === "cancelado" || pedido.status === "expirado";
@@ -68,12 +69,27 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
           </ol>
         )}
 
+        {pedido.status === "expirado" && (
+          <section className="rounded-card bg-white p-6 shadow-card" aria-labelledby="pagar">
+            <h2 id="pagar" className="text-xl font-bold">
+              A cobrança venceu sem pagamento
+            </h2>
+            <p className="mt-2 text-[15px]">Se ainda quiser o pedido, gere uma nova cobrança de {formatBRL(pedido.total)}.</p>
+            <RenewCharge codigo={pedido.codigo} token={token} label={pedido.formaPagamento === "pix" ? "Gerar novo Pix" : "Gerar novo link do cartão"} />
+          </section>
+        )}
+
         {pedido.status === "aguardando_pagamento" && (
           <section className="rounded-card bg-white p-6 shadow-card" aria-labelledby="pagar">
             <h2 id="pagar" className="mb-4 text-xl font-bold">
               Pague {formatBRL(pedido.total)} {pedido.formaPagamento === "pix" ? "com Pix" : "no cartão"}
             </h2>
-            {pedido.formaPagamento === "pix" && pedido.pagamento.pixCode ? (
+            {expired ? (
+              <div className="space-y-2">
+                <p className="text-[15px]">Este Pix venceu. Gere outro para pagar.</p>
+                <RenewCharge codigo={pedido.codigo} token={token} label="Gerar novo Pix" />
+              </div>
+            ) : pedido.formaPagamento === "pix" && pedido.pagamento.pixCode ? (
               <PixBox code={pedido.pagamento.pixCode} image={pedido.pagamento.pixImage} expiresAt={pedido.pagamento.expiresAt} simulated={pedido.pagamentoProvedor === "simulado"} codigo={pedido.codigo} token={token} />
             ) : pedido.formaPagamento === "cartao" && pedido.pagamento.checkoutUrl && pedido.pagamentoProvedor === "efi" ? (
               <div className="space-y-3">
@@ -85,7 +101,10 @@ export default async function VitrinePedido(props: PageProps<"/vitrine/[host]/pe
             ) : pedido.pagamentoProvedor === "simulado" ? (
               <PixBox code={`CARTAO-DE-TESTE-${pedido.codigo}`} simulated codigo={pedido.codigo} token={token} />
             ) : (
-              <p className="text-[15px]">A cobrança não abriu. Fale com a loja para pagar{contact ? " pelo WhatsApp" : ""}.</p>
+              <div className="space-y-2">
+                <p className="text-[15px]">A cobrança não abriu. Tente gerar de novo ou fale com a loja{contact ? " pelo WhatsApp" : ""}.</p>
+                <RenewCharge codigo={pedido.codigo} token={token} label="Gerar cobrança" />
+              </div>
             )}
             <p className="mt-4 text-caption text-muted">Assim que o pagamento for confirmado, esta página muda sozinha.</p>
           </section>

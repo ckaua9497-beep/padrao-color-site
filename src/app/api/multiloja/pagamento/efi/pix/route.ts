@@ -1,13 +1,16 @@
-import { getPedidoByPagamento, setPedidoStatus } from "@/lib/multiloja/repo-vendas";
+import { efiWebhookAllowed } from "@/lib/multiloja/http";
 import { chargeStatus } from "@/lib/multiloja/payments";
-import { confirmPayment } from "@/lib/multiloja/vendas";
+import { getPedidoByPagamento } from "@/lib/multiloja/repo-vendas";
+import { applyChargeStatus } from "@/lib/multiloja/vendas";
 
 /*
- * Webhook Pix da Efí (a Efí chama <webhookUrl>/pix com {pix: [{txid, …}]}). O corpo só serve de aviso: cada
- * txid é conferido na própria Efí (GET /v2/cob/<txid>) antes de marcar o pedido como pago.
- * Cadastrar na Efí: PUT /v2/webhook/<chave> com webhookUrl = <MULTILOJA_URL_PUBLICA>/api/multiloja/pagamento/efi
+ * Webhook Pix da Efí. Cadastrado pelo /admin/pagamentos com ?hmac=<segredo>&ignorar= (a Efí não acrescenta
+ * /pix) e sem mTLS (x-skip-mtls-checking). Chega {pix: [{txid, endToEndId, valor, …}]}; o corpo só serve de aviso:
+ * cada txid é consultado na Efí (GET /v2/cob/<txid>) antes de mudar o pedido.
+ * No cadastro a Efí manda um aviso de teste sem Pix: responde 200.
  */
 export async function POST(request: Request) {
+  if (!efiWebhookAllowed(request)) return new Response(null, { status: 401 });
   let body: unknown;
   try {
     body = await request.json();
@@ -20,13 +23,12 @@ export async function POST(request: Request) {
     const pedido = getPedidoByPagamento(txid);
     if (!pedido || pedido.pagamentoProvedor !== "efi") continue;
     try {
-      const status = await chargeStatus("efi", txid);
-      if (status === "pago") confirmPayment(pedido, "pagamento", "Pix confirmado pela Efí.");
-      else if (status === "expirado" && pedido.status === "aguardando_pagamento") setPedidoStatus(pedido.id, "expirado", "pagamento", "Cobrança Pix removida.");
+      applyChargeStatus(pedido, await chargeStatus("efi", txid), "webhook Pix");
     } catch (error) {
       console.error("[multiloja] webhook pix:", error instanceof Error ? error.message : error);
+      // 500: a Efí tenta de novo (até 9 vezes).
+      return new Response(null, { status: 500 });
     }
   }
-  // A Efí só precisa do 200; o resultado não volta para ela.
   return new Response(null, { status: 200 });
 }

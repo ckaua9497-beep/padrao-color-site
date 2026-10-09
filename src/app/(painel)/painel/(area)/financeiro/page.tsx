@@ -32,7 +32,7 @@ export default async function PainelFinanceiro() {
       <div>
         <h1 className="text-title">Financeiro</h1>
         <p className="mt-1 max-w-3xl text-muted">
-          A Padrão Color recebe o pagamento do cliente, desconta o custo dos produtos, o frete e a taxa do pagamento (Pix {rates.pix}%, cartão {rates.cartao}%), e o restante é a sua comissão.
+          A Padrão Color recebe o pagamento do cliente, desconta o custo dos produtos, o frete e a taxa do pagamento (Pix {rates.pix.toLocaleString("pt-BR")}%, cartão {rates.cartao.toLocaleString("pt-BR")}%), e o restante é a sua comissão.
         </p>
       </div>
 

@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/admin/pedidos", label: "Pedidos" },
   { href: "/admin/lojas", label: "Lojas" },
   { href: "/admin/saques", label: "Saques" },
+  { href: "/admin/pagamentos", label: "Pagamentos (Efí)" },
 ];
 
 export default function AdminNav({ name, pendingWithdrawals }: { name: string; pendingWithdrawals: number }) {

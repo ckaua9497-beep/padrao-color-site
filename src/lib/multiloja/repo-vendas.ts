@@ -34,6 +34,10 @@ export type PaymentData = {
   expiresAt?: string;
   /** Página de pagamento do cartão (link do provedor). */
   checkoutUrl?: string;
+  /** Identificador do Pix recebido (endToEndId), para a devolução. */
+  e2eId?: string;
+  /** Devolução/reembolso pedido na Efí ao cancelar. */
+  refund?: string;
 };
 
 export type Pedido = {
@@ -274,6 +278,13 @@ export function setPedidoPagamento(pedidoId: number, provedor: string, pagamento
   getDb()
     .prepare("UPDATE pedidos SET pagamento_provedor = ?, pagamento_id = ?, pagamento_dados = ?, atualizado_em = datetime('now') WHERE id = ?")
     .run(provedor, pagamentoId, JSON.stringify(dados), pedidoId);
+}
+
+/** Junta dados novos ao pagamento do pedido (e2eId do Pix, situação da devolução). */
+export function mergePedidoPagamento(pedidoId: number, extra: Partial<PaymentData>) {
+  const row = getDb().prepare("SELECT pagamento_dados FROM pedidos WHERE id = ?").get(pedidoId) as Row | undefined;
+  const current = parseJson<PaymentData>(row?.pagamento_dados, {});
+  getDb().prepare("UPDATE pedidos SET pagamento_dados = ?, atualizado_em = datetime('now') WHERE id = ?").run(JSON.stringify({ ...current, ...extra }), pedidoId);
 }
 
 export function setPedidoPadrao(pedidoId: number, numero: string) {

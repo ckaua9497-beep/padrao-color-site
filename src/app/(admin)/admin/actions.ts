@@ -6,7 +6,8 @@ import { emailError, isOrderStatus, isPlan, ORDER_NEXT } from "@/lib/multiloja/c
 import { endAdminSession, painelLimits, requestIp, requireAdmin, startAdminSession, timingDummy, verifyPassword } from "@/lib/multiloja/auth";
 import { getLoja, setLojistaStatus, updateLoja } from "@/lib/multiloja/repo";
 import { findAdminLogin, getPedidoByCodigo, resolveSaque, setPedidoStatus, touchAdminLogin } from "@/lib/multiloja/repo-vendas";
-import { sendToProduction } from "@/lib/multiloja/vendas";
+import { cancelOrder, sendToProduction } from "@/lib/multiloja/vendas";
+import { chargeStatus, efiDiagnostics, registerPixWebhook, sandboxTestPix } from "@/lib/multiloja/payments";
 import type { FormState } from "@/app/(painel)/painel/actions";
 
 /*
@@ -47,6 +48,12 @@ export async function mudarStatus(codigo: string, status: string, nota: string):
   const pedido = getPedidoByCodigo(codigo);
   if (!pedido) return { ok: false, message: "Pedido não encontrado." };
   if (!isOrderStatus(status) || !ORDER_NEXT[pedido.status].includes(status)) return { ok: false, message: "Mudança de status não permitida." };
+  if (status === "cancelado") {
+    // Pedido pago: devolve o Pix / estorna o cartão na Efí antes de cancelar.
+    const result = await cancelOrder(pedido, `admin:${admin.email}`, nota.trim().slice(0, 300));
+    refresh();
+    return result;
+  }
   setPedidoStatus(pedido.id, status, `admin:${admin.email}`, nota.trim().slice(0, 300));
   refresh();
   return { ok: true, message: "Status atualizado." };
@@ -106,4 +113,34 @@ export async function resolverSaque(id: number, status: "pago" | "recusado", not
   const done = resolveSaque(id, status, nota.trim().slice(0, 200));
   refresh();
   return done ? { ok: true, message: status === "pago" ? "Saque marcado como pago." : "Saque recusado; o valor volta ao saldo do lojista." } : { ok: false, message: "Este saque já foi resolvido." };
+}
+
+// ---------------------------------------------------------------------------------- Efí
+
+export type EfiDiagnostico = Awaited<ReturnType<typeof efiDiagnostics>>;
+
+export async function efiDiagnostico(): Promise<EfiDiagnostico> {
+  await requireAdmin();
+  return efiDiagnostics();
+}
+
+export async function efiCadastrarWebhook(): Promise<AdminResult> {
+  await requireAdmin();
+  return registerPixWebhook();
+}
+
+export async function efiPixTeste(): Promise<Awaited<ReturnType<typeof sandboxTestPix>>> {
+  await requireAdmin();
+  return sandboxTestPix();
+}
+
+export async function efiConsultarTeste(txid: string): Promise<AdminResult> {
+  await requireAdmin();
+  if (!/^[a-zA-Z0-9]{26,35}$/.test(txid)) return { ok: false, message: "Identificador inválido." };
+  try {
+    const result = await chargeStatus("efi", txid);
+    return { ok: true, message: result.status === "pago" ? `Pago (e2eId ${result.e2eId ?? "?"}).` : result.status === "expirado" ? "Cobrança removida." : "Ainda aguardando pagamento." };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Erro ao consultar a Efí." };
+  }
 }

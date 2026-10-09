@@ -40,7 +40,7 @@ export default function AdminOrderActions({ codigo, status }: { codigo: string; 
                 onClick={() => run(() => mudarStatus(codigo, s, nota))}
                 className={s === "cancelado" ? "h-9 rounded-full border border-coral-700 px-4 text-[13px] font-bold text-coral-700 hover:bg-coral-50 disabled:opacity-50" : "h-9 rounded-full border border-line-strong px-4 text-[13px] font-bold hover:border-ink disabled:opacity-50"}
               >
-                Marcar: {ORDER_STATUS_LABEL[s]}
+                {s === "cancelado" && (status === "pago" || status === "em_producao") ? "Cancelar e devolver o pagamento" : `Marcar: ${ORDER_STATUS_LABEL[s]}`}
               </button>
             ))}
           </div>
