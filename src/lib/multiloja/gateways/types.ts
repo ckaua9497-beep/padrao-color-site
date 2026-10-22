@@ -1,14 +1,15 @@
 import type { PaymentKind } from "../core";
 import type { DeliveryAddress } from "../../orders";
+import type { GatewayName } from "../pagamento-rotas";
 import type { PaymentData } from "../repo-vendas";
 
 /*
  * Contrato de um gateway de pagamento da multiloja. Cada pedido grava o gateway que o cobrou
- * (pedidos.pagamento_provedor): trocar o gateway ativo no admin vale para as cobranças novas, e as antigas
+ * (pedidos.pagamento_provedor): trocar o gateway de uma forma no admin vale para as cobranças novas, e as antigas
  * continuam sendo consultadas, devolvidas e canceladas no gateway de origem.
  */
 
-export type GatewayName = "efi" | "cielo" | "simulado";
+export type { GatewayName };
 
 export type ChargeInput = {
   codigo: string;

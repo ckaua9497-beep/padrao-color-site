@@ -6,6 +6,8 @@ import PartyBuilder from "@/components/party/PartyBuilder";
 import { PartyBoundary } from "@/components/party/PartyBoundary";
 import { PARTY_FAQ } from "@/components/party/party-faq";
 import { getProducts } from "@/lib/catalog";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { KITS, resolvePartyItems } from "@/lib/party";
 
 /*
@@ -20,8 +22,8 @@ export const metadata: Metadata = {
     "Monte a sua festa item por item: painel, mesa, convites, lembrancinhas e camisetas com o mesmo tema, as mesmas cores e os seus textos. Preço calculado na hora, inclusive por m², e prévia em 3D.",
 };
 
-export default function CrieSuaFestaPage() {
-  const items = resolvePartyItems(getProducts());
+export default async function CrieSuaFestaPage() {
+  const items = resolvePartyItems(produtosComMidia(getProducts(), await midiaDoSite()));
   const images = ["cilindros", "neon-happy-birthday", "sacola-mochila"]
     .map((id) => items.find((item) => item.id === id)?.product.image)
     .filter((src): src is string => Boolean(src));

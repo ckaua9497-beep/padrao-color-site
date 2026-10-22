@@ -67,7 +67,7 @@ async function catalogFrame(png: string, size: number, margin: number): Promise<
 
 /**
  * Foto de catálogo de um produto: o mockup 3D com a estampa da marca, fotografado no 3/4 do carrinho com fundo
- * transparente e enquadrado em 600×600 como as fotos do site oficial. O resultado fica em `window.__foto`
+ * transparente e enquadrado num quadrado de `size` px (600 na página; 1200 pelo fotos:novos). O resultado fica em `window.__foto`
  * (WebP em data URL) para o scripts/fotos-produtos.mjs gravar em public/.
  */
 export default function CatalogPhoto({ product, selection, brand, turn, size, margin }: CatalogPhotoProps) {

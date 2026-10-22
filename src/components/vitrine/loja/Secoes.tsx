@@ -10,6 +10,7 @@ import { cx } from "@/components/ui/cx";
 import { imageUrl, spectrumAt } from "@/lib/format";
 import { produtosDaSecao, type IconeKey, type Secao, type SecaoBanners, type SecaoCategorias, type SecaoChamada, type SecaoDepoimentos, type SecaoHero, type SecaoPerguntas, type SecaoProdutos, type SecaoTexto, type SecaoVantagens, type Tema } from "@/lib/multiloja/tema";
 import type { VitrineDados } from "@/lib/multiloja/vitrine";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /*
  * Seções da página inicial da loja, desenhadas a partir do tema. O mesmo código desenha a loja de verdade (no
@@ -118,7 +119,7 @@ function Hero({ secao, dados, primeira }: Ctx & { secao: SecaoHero }) {
               <div aria-hidden className="grid grid-cols-2 gap-3">
                 {collage.map((p, i) => (
                   <div key={p.slug} className={cx("relative overflow-hidden rounded-panel", i === 0 ? "row-span-2 aspect-[3/4]" : "aspect-square")} style={{ background: spectrumAt(i).soft }}>
-                    <Image src={imageUrl(p.image)} alt="" fill sizes="(max-width: 768px) 45vw, 25vw" className="object-contain p-5" />
+                    <FotoProduto src={p.image} alt="" sizes="(max-width: 768px) 45vw, 25vw" respiro="p-5" />
                   </div>
                 ))}
               </div>

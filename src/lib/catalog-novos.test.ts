@@ -112,14 +112,14 @@ function webpInfo(buf: Buffer): { w: number; h: number; alpha: boolean } | null 
   return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3), alpha: (buf[20] & 0x10) !== 0 };
 }
 
-test("fotos de catálogo no padrão do site: 600×600, WebP com fundo transparente (npm run fotos:novos)", () => {
+test("fotos de catálogo em 1200×1200 (o dobro das do site oficial), WebP com fundo transparente (npm run fotos:novos)", () => {
   for (const product of novos.products) {
     for (const image of product.images) {
       const file = new URL(`../../public${image}`, import.meta.url);
       assert.ok(existsSync(file), `${product.name}: falta ${image}`);
       const info = webpInfo(readFileSync(file));
       assert.ok(info, `${image}: não é WebP VP8X`);
-      assert.deepEqual(info, { w: 600, h: 600, alpha: true }, image);
+      assert.deepEqual(info, { w: 1200, h: 1200, alpha: true }, image);
     }
   }
 });

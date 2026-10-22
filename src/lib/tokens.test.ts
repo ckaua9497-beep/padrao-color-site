@@ -46,11 +46,12 @@ function over(fg: string, alpha: number, bg: string): string {
 const AA = 4.5;
 const LARGE = 3;
 
-test("tokens de identidade seguem o BRIEFING", () => {
+test("tokens de identidade seguem o BRIEFING e o Figma de outubro de 2026 (laranja e Raleway)", () => {
   assert.equal(color("ink"), "#000000");
   assert.equal(color("ink-soft"), "#141414");
-  assert.equal(color("coral"), "#ff463a");
-  assert.equal(color("coral-600"), "#e03a30");
+  assert.equal(color("coral"), "#ff4d00");
+  assert.equal(color("coral-600"), "#e64500");
+  assert.match(css, /--font-sans:\s*var\(--font-raleway\)/);
   assert.equal(color("mist"), "#f4f4f4");
   assert.equal(color("fog"), "#ededed");
   assert.equal(color("cloud"), "#f0f2f6");
@@ -78,6 +79,10 @@ const PAIRS: [string, string, string, number][] = [
   ["branco sobre preview (hover)", WHITE, "preview", AA],
   ["subtle, só texto grande e ícones", "subtle", "paper", LARGE],
   ["eyebrow coral sobre preto", "coral", "ink", AA],
+  ["texto secundário sobre a faixa cinza da vitrine", "muted", "vitrine", AA],
+  ["laranja grande sobre a faixa cinza da vitrine, só texto grande", "coral", "vitrine", LARGE],
+  ["laranja sobre a faixa escura", "coral", "night", AA],
+  ["branco sobre a faixa escura", WHITE, "night", AA],
 ];
 
 for (const [label, fg, bg, min] of PAIRS) {

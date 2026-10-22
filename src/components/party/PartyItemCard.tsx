@@ -1,14 +1,14 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useId } from "react";
 import { IconCube } from "@/components/icons";
 import QtyStepper from "@/components/ui/QtyStepper";
 import { cx } from "@/components/ui/cx";
-import { formatBRL, imageUrl } from "@/lib/format";
+import { formatBRL } from "@/lib/format";
 import { amountLabel, choiceValues, sizeLimits, type PartyItem, type PricedItem, type SizeLimits } from "@/lib/party";
 import type { ItemState } from "./item-state";
+import { FotoProduto } from "@/components/FotoProduto";
 
 type Props = {
   item: PartyItem;
@@ -34,7 +34,7 @@ export function PartyItemCard({ item, priced, state, onChange, onPreview, previe
     <li className={cx("rounded-card bg-white p-4 shadow-card ring-inset transition-shadow duration-200 sm:p-5", free && included ? "ring-2 ring-ink" : "ring-1 ring-line")}>
       <div className="flex gap-4">
         <div className="relative size-20 shrink-0 overflow-hidden rounded-control bg-mist">
-          <Image src={imageUrl(item.product.image)} alt="" fill sizes="80px" className="object-contain p-1.5" />
+          <FotoProduto src={item.product.image} alt="" sizes="80px" respiro="p-1.5" estudio="cobrir" />
         </div>
         <div className="min-w-0 flex-1">
           <Heading className="text-[15px] font-bold leading-snug">{item.title}</Heading>

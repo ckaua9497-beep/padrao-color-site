@@ -5,13 +5,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ComponentType, type SVGProps } from "react";
 import { sairAdmin } from "@/app/(admin)/admin/actions";
-import { IconCard, IconChart, IconClose, IconGauge, IconLogout, IconMenu, IconReceipt, IconStorefront, IconWallet } from "@/components/icons";
+import { IconCard, IconChart, IconClose, IconGauge, IconImage, IconLogout, IconMenu, IconPanel, IconReceipt, IconStorefront, IconWallet } from "@/components/icons";
 import { Drawer } from "@/components/ui/Drawer";
 import { cx } from "@/components/ui/cx";
 
 /*
  * Menu lateral do admin, agrupado pelo trabalho: operação do dia (pedidos para produzir, saques para pagar), a rede
- * de lojas e a configuração. Os números do lado são a fila de cada área. No celular vira gaveta.
+ * de lojas, as imagens e banners do site da Padrão e a configuração. Os números do lado são a fila de cada área. No celular vira gaveta.
  * Assinatura: a tira de cor C·M·Y·K das folhas impressas, embaixo da marca.
  */
 
@@ -33,6 +33,13 @@ const GROUPS: { label: string; items: Item[] }[] = [
     items: [
       { href: "/admin/lojas", label: "Lojas", icon: IconStorefront, count: (c) => c.lojas },
       { href: "/admin/analises", label: "Análises", icon: IconChart },
+    ],
+  },
+  {
+    label: "Site Padrão Color",
+    items: [
+      { href: "/admin/site/banners", label: "Banners", icon: IconPanel },
+      { href: "/admin/site/imagens", label: "Imagens", icon: IconImage },
     ],
   },
   {

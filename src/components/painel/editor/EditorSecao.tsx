@@ -1,12 +1,11 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 import { IconCheck, IconClock, IconCube, IconGift, IconLayers, IconShield, IconStorefront, IconTruck, IconWhatsApp } from "@/components/icons";
 import { cx } from "@/components/ui/cx";
-import { imageUrl } from "@/lib/format";
 import { ICONES, LIMITES, type IconeKey, type Secao, type SecaoProdutos } from "@/lib/multiloja/tema";
 import { CampoImagem, Chave, Escolha, Grupo, Itens, Lista, Texto, type Opcao } from "./campos";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /* Formulário de cada tipo de seção do editor. Só muda o objeto da seção; quem chama guarda no tema. */
 
@@ -56,7 +55,7 @@ function ProdutosEscolhidos({ secao, set, ctx }: { secao: SecaoProdutos; set: (s
             return (
               <li key={id} className="flex items-center gap-2 rounded-control border border-line bg-white p-1.5 pr-1">
                 <span className="relative size-9 shrink-0 overflow-hidden rounded-thumb bg-mist">
-                  <Image src={imageUrl(p.image)} alt="" fill sizes="36px" className="object-contain p-0.5" />
+                  <FotoProduto src={p.image} alt="" sizes="36px" respiro="p-0.5" estudio="cobrir" />
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{p.name}</span>
                 <button
@@ -88,7 +87,7 @@ function ProdutosEscolhidos({ secao, set, ctx }: { secao: SecaoProdutos; set: (s
               <li key={p.id}>
                 <button type="button" onClick={() => set({ ...secao, escolhidos: [...secao.escolhidos, p.id] })} className="flex w-full items-center gap-2 rounded-control p-1.5 text-left hover:bg-mist">
                   <span className="relative size-9 shrink-0 overflow-hidden rounded-thumb bg-mist">
-                    <Image src={imageUrl(p.image)} alt="" fill sizes="36px" className="object-contain p-0.5" />
+                    <FotoProduto src={p.image} alt="" sizes="36px" respiro="p-0.5" estudio="cobrir" />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[12px]">{p.name}</span>
                   <span className="text-[12px] font-bold text-coral-700">+ Pôr</span>

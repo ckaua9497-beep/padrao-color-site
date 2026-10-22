@@ -1,9 +1,8 @@
-import Image from "next/image";
 import Link from "next/link";
 import { IconArrow, IconClock } from "@/components/icons";
 import { Badge } from "@/components/ui/Badge";
 import { Price } from "@/components/ui/Price";
-import { imageUrl } from "@/lib/format";
+import { FotoProduto } from "@/components/FotoProduto";
 
 export type KitCardData = {
   slug: string;
@@ -30,13 +29,12 @@ export default function KitCard({ kit, eager = false }: { kit: KitCardData; eage
   return (
     <article className="group relative flex h-full flex-col overflow-hidden rounded-card bg-white shadow-card ring-1 ring-line transition-shadow duration-300 hover:shadow-panel">
       <div className="relative aspect-[4/3] overflow-hidden" style={{ background: `linear-gradient(150deg, ${first}55 0%, ${second ?? first}55 100%)` }}>
-        <Image
-          src={imageUrl(kit.image)}
+        <FotoProduto
+          src={kit.image}
           alt=""
-          fill
-          loading={eager ? "eager" : "lazy"}
           sizes="(max-width: 640px) 90vw, (max-width: 1280px) 45vw, 400px"
-          className="object-contain p-6 transition-transform duration-500 ease-card group-hover:scale-[1.04] motion-reduce:transition-none"
+          priority={eager}
+          className="transition-transform duration-500 ease-card group-hover:scale-[1.04] motion-reduce:transition-none"
         />
         <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
           <Badge tone="dark">{kit.summary.length} itens</Badge>

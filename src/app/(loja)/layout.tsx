@@ -3,10 +3,14 @@ import SiteFooter from "@/components/SiteFooter";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
 import CartDrawer from "@/components/cart/CartDrawer";
 import PageTracker from "@/components/PageTracker";
-import { CATALOG_STATS, getCategory } from "@/lib/catalog";
+import { getCategory } from "@/lib/catalog";
 import { MENU_GROUPS } from "@/lib/menu";
+import { categoriaComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 
-export default function LojaLayout({ children }: { children: React.ReactNode }) {
+export default async function LojaLayout({ children }: { children: React.ReactNode }) {
+  // Imagens de categoria trocadas no admin (admin → Site → Imagens) também no menu.
+  const midia = await midiaDoSite();
   const menu: MenuGroup[] = MENU_GROUPS.map((group) => ({
     label: group.label,
     blurb: group.blurb,
@@ -15,16 +19,9 @@ export default function LojaLayout({ children }: { children: React.ReactNode }) 
     categories: group.categories
       .map((slug) => getCategory(slug))
       .filter((c) => c !== undefined)
+      .map((c) => categoriaComMidia(c, midia))
       .map((c) => ({ slug: c.slug, name: c.name, count: c.count, image: c.image, minLeadDays: c.minLeadDays })),
   }));
-
-  const announcements = [
-    "Veja seu produto em 3D antes de imprimir",
-    `${CATALOG_STATS.products} produtos para a sua marca`,
-    `Produção a partir de ${CATALOG_STATS.minLeadDays} ${CATALOG_STATS.minLeadDays === 1 ? "dia útil" : "dias úteis"}`,
-    "Atendimento de segunda a sexta, das 8h às 18h",
-    "Seja um revendedor Padrão Color",
-  ];
 
   return (
     <>
@@ -34,7 +31,7 @@ export default function LojaLayout({ children }: { children: React.ReactNode }) 
       >
         Pular para o conteúdo
       </a>
-      <SiteHeader menu={menu} announcements={announcements} />
+      <SiteHeader menu={menu} />
       <main id="conteudo" tabIndex={-1} className="flex-1 outline-none">
         {children}
       </main>

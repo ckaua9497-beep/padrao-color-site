@@ -1,7 +1,6 @@
-import Image from "next/image";
-import { imageUrl } from "@/lib/format";
 import { cx } from "@/components/ui/cx";
 import { ART_BACK_KEY } from "@/components/product/art-editor/summary-keys";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /**
  * Miniatura do item: o quadro do mockup 3D (com a arte e o estilo escolhidos) quando existe,
@@ -46,7 +45,7 @@ export function CartThumb({
         </>
       ) : (
         <>
-          <Image src={imageUrl(image)} alt={`${name}${twoSided ? ", arte na frente e no verso" : ""}`} fill sizes="80px" className="object-contain p-1" />
+          <FotoProduto src={image} alt={`${name}${twoSided ? ", arte na frente e no verso" : ""}`} sizes="80px" respiro="p-1" estudio="cobrir" />
           {twoSided && (
             <span className="absolute right-1 top-1 rounded-full bg-ink/80 px-1.5 text-[9px] font-bold uppercase leading-4 tracking-wide text-white" aria-hidden>
               F+V

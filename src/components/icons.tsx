@@ -275,3 +275,24 @@ export const IconExternal = (p: IconProps) => (
     <path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" />
   </svg>
 );
+
+export const IconImage = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="m4 17 4.5-4.5a1.5 1.5 0 0 1 2.1 0L15 17m-1.5-1.5 1.9-1.9a1.5 1.5 0 0 1 2.1 0L20 16" />
+  </svg>
+);
+
+export const IconPanel = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M3 10h18M8 15h3" />
+  </svg>
+);
+
+export const IconTrash = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a1.5 1.5 0 0 0 1.5 1.4h7a1.5 1.5 0 0 0 1.5-1.4L18 7M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </svg>
+);

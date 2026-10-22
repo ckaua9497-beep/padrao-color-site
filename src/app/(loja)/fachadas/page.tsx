@@ -123,7 +123,8 @@ export default function FacadesPage() {
         </section>
       </div>
 
-      <section id="arquivos-aceitos" aria-labelledby="arquivos-titulo" className="scroll-mt-28 bg-mist">
+      {/* Faixa de fundo cinza: pela âncora, ela encosta logo abaixo do topo preso (92 px; 136 a partir de 1280). */}
+      <section id="arquivos-aceitos" aria-labelledby="arquivos-titulo" className="scroll-mt-topo bg-mist">
         <div className="container-site py-16">
           <FacadeSpecs />
         </div>

@@ -1,13 +1,13 @@
 "use client";
 
-import Image from "next/image";
 import { useId, useMemo, useState } from "react";
 import { IconCheck, IconPlus, IconSearch } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { formatBRL, imageUrl } from "@/lib/format";
+import { formatBRL } from "@/lib/format";
 import { searchCatalog, searchedKitItem, type KitItem, type KitPlan, type SearchEntry } from "@/lib/kit-builder";
 import type { PartyProduct } from "@/lib/party";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /** Índice leve da busca do topo, baixado uma vez quando o cliente abre a busca. */
 let indexRequest: Promise<SearchEntry[]> | null = null;
@@ -88,7 +88,7 @@ export function KitAddPanel({ suggestions, inKit, onAdd }: Props) {
             {suggestions.map(({ item, plan }) => (
               <li key={item.key} className="flex items-center gap-3 rounded-card bg-white p-3 ring-1 ring-line">
                 <div className="relative size-14 shrink-0 overflow-hidden rounded-control bg-mist">
-                  <Image src={imageUrl(item.product.image)} alt="" fill sizes="56px" className="object-contain p-1" />
+                  <FotoProduto src={item.product.image} alt="" sizes="56px" respiro="p-1" estudio="cobrir" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 text-sm font-bold leading-snug">{item.title}</p>
@@ -138,7 +138,7 @@ export function KitAddPanel({ suggestions, inKit, onAdd }: Props) {
                 return (
                   <li key={entry.s} className="flex items-center gap-3 rounded-card bg-white p-3 ring-1 ring-line">
                     <div className="relative size-12 shrink-0 overflow-hidden rounded-control bg-mist">
-                      <Image src={imageUrl(entry.i)} alt="" fill sizes="48px" className="object-contain p-1" />
+                      <FotoProduto src={entry.i} alt="" sizes="48px" respiro="p-1" estudio="cobrir" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold">{entry.n}</p>

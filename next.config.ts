@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
     serverActions: { bodySizeLimit: "8mb" },
   },
   images: {
+    // AVIF primeiro (mais nítido no mesmo peso), WebP para quem não aceita. Qualidade 75 por padrão e 90 nos
+    // banners (texto miúdo da arte; BannerImagem).
+    formats: ["image/avif", "image/webp"],
+    qualities: [75, 90],
     remotePatterns: [
       {
         protocol: "https",

@@ -1,7 +1,7 @@
 import "server-only";
 
-import { NO_FEES, PAYMENT_KINDS, type PaymentKind, type PaymentRates } from "./core";
-import type { GatewayName } from "./gateways/types";
+import { NO_FEES, PAYMENT_KINDS, type PaymentRates } from "./core";
+import { isRota, rotasSalvas, type Rota, type Rotas } from "./pagamento-rotas";
 import { getSetting, openSecret } from "./settings";
 
 /*
@@ -42,13 +42,12 @@ export async function signupOpen(): Promise<boolean> {
 
 // ---------------------------------------------------------------------------------- pagamento: geral
 
-export type ActiveGateway = GatewayName | "desligado";
-
 export type PaymentSettings = {
-  /** Gateway que cobra os pedidos novos. "desligado": pedidos seguem pelo WhatsApp da loja. */
-  ativo: ActiveGateway;
-  /** Meios oferecidos no checkout (o gateway também precisa saber cobrar o meio). */
-  metodos: Record<PaymentKind, boolean>;
+  /**
+   * Gateway que cobra cada forma nos pedidos novos (ex.: Pix pela Pagar.me, cartão pela Cielo). "desligado" tira a
+   * forma do checkout; com todas desligadas, os pedidos seguem pelo WhatsApp da loja.
+   */
+  rotas: Rotas;
   /** Taxas descontadas da comissão do lojista. */
   taxas: PaymentRates;
   /** Dias para o boleto vencer. */
@@ -57,9 +56,10 @@ export type PaymentSettings = {
 
 export const PAYMENT_SETTINGS_KEY = "pagamento.geral";
 
-function envActive(): ActiveGateway {
+/** Sem nada salvo no admin: MULTILOJA_PAGAMENTO cobra todas as formas (simulação em desenvolvimento). */
+function envActive(): Rota {
   const chosen = env("MULTILOJA_PAGAMENTO").toLowerCase();
-  if (chosen === "efi" || chosen === "cielo" || chosen === "simulado") return chosen;
+  if (isRota(chosen)) return chosen;
   return process.env.NODE_ENV !== "production" ? "simulado" : "desligado";
 }
 
@@ -72,8 +72,8 @@ function envRates(): PaymentRates {
 }
 
 export async function paymentSettings(): Promise<PaymentSettings> {
-  const saved = await getSetting<Partial<PaymentSettings>>(PAYMENT_SETTINGS_KEY);
-  const metodos = Object.fromEntries(PAYMENT_KINDS.map((k) => [k, saved?.metodos?.[k] ?? true])) as Record<PaymentKind, boolean>;
+  // Configuração antiga ({ativo, metodos}: um gateway para tudo) vira uma rota por forma.
+  const saved = await getSetting<Partial<PaymentSettings> & { ativo?: unknown; metodos?: unknown }>(PAYMENT_SETTINGS_KEY);
   const rates = envRates();
   const taxas = Object.fromEntries(
     PAYMENT_KINDS.map((k) => {
@@ -82,8 +82,7 @@ export async function paymentSettings(): Promise<PaymentSettings> {
     }),
   ) as PaymentRates;
   return {
-    ativo: saved?.ativo ?? envActive(),
-    metodos,
+    rotas: rotasSalvas(saved, envActive()),
     taxas,
     boletoDias: saved?.boletoDias && saved.boletoDias >= 1 && saved.boletoDias <= 30 ? saved.boletoDias : 3,
   };
@@ -195,6 +194,30 @@ export async function cieloConfig(): Promise<CieloConfig | null> {
         webhookSecret: env("MULTILOJA_CIELO_WEBHOOK_SEGREDO"),
       };
   return config.merchantId && config.merchantKey ? config : null;
+}
+
+// ---------------------------------------------------------------------------------- Pagar.me
+
+export type PagarmeConfig = {
+  /** Chave secreta da API v5: sk_test_… usa o simulador da Pagar.me; sk_… cobra de verdade. */
+  secretKey: string;
+  teste: boolean;
+  /** Segredo que vai na URL dos avisos (?hmac=…) ou como senha da autenticação básica do webhook. */
+  webhookSecret: string;
+};
+
+export type PagarmeSaved = { secretKey?: string; webhookSecret?: string };
+export const PAGARME_SETTINGS_KEY = "pagamento.pagarme";
+
+/** Chave secreta no formato da Pagar.me (sk_ ou sk_test_ e letras/números). */
+export const isPagarmeSecretKey = (value: string) => /^sk_(test_)?[A-Za-z0-9]{8,}$/.test(value);
+
+/** Pagar.me salva no admin, ou no ambiente (MULTILOJA_PAGARME_*). Null sem a chave secreta. */
+export async function pagarmeConfig(): Promise<PagarmeConfig | null> {
+  const saved = await getSetting<PagarmeSaved>(PAGARME_SETTINGS_KEY);
+  const secretKey = saved?.secretKey ? openSecret(saved.secretKey) : env("MULTILOJA_PAGARME_CHAVE_SECRETA");
+  if (!isPagarmeSecretKey(secretKey)) return null;
+  return { secretKey, teste: secretKey.startsWith("sk_test_"), webhookSecret: openSecret(saved?.webhookSecret) || env("MULTILOJA_PAGARME_WEBHOOK_SEGREDO") };
 }
 
 // ---------------------------------------------------------------------------------- produção na Padrão

@@ -109,6 +109,10 @@ export const APPROVED_PAIRS: { label: string; fg: string; bg: string; min: numbe
   { label: "Branco sobre preview (hover)", fg: "paper", bg: "preview", min: AA },
   { label: "Subtle — só texto grande e ícones", fg: "subtle", bg: "paper", min: AA_LARGE },
   { label: "Eyebrow coral sobre preto", fg: "coral", bg: "ink", min: AA },
+  { label: "Texto secundário sobre a faixa cinza da vitrine", fg: "muted", bg: "vitrine", min: AA },
+  { label: "Laranja sobre a faixa cinza da vitrine — só texto grande", fg: "coral", bg: "vitrine", min: AA_LARGE },
+  { label: "Laranja sobre a faixa escura", fg: "coral", bg: "night", min: AA },
+  { label: "Branco sobre a faixa escura", fg: "paper", bg: "night", min: AA },
 ];
 
 /** Agrupa tokens de papel tipográfico: "text-display" + "text-display--line-height"… */

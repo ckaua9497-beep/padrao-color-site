@@ -217,4 +217,15 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE pedidos ADD COLUMN frete_servico text, ADD COLUMN frete_servico_id integer, ADD COLUMN frete_prazo text,
     ADD COLUMN frete_custo double precision, ADD COLUMN frete_gratis integer NOT NULL DEFAULT 0;
   `,
+  // 4: imagens e banners do site da Padrão trocados no admin (/admin/site): fotos de produto, imagem e banner de
+  // categoria e banners da página inicial, um registro por chave ("produto/<grupo>", "categoria/<slug>",
+  // "banners/<lugar>"). Os arquivos ficam em `arquivos` com dono "site".
+  `
+  CREATE TABLE site_midia (
+    chave text PRIMARY KEY,
+    valor text NOT NULL,
+    atualizado_em text NOT NULL DEFAULT agora(),
+    atualizado_por text
+  );
+  `,
 ];

@@ -1,7 +1,7 @@
 import { fail, json, readJsonBody } from "@/lib/api/guard";
 import { limited, lojaDaRequisicao, requestOrigin, vitrineLimits } from "@/lib/multiloja/http";
 import { parseCheckout } from "@/lib/multiloja/pedido";
-import { activeProvider, availableMethods } from "@/lib/multiloja/payments";
+import { availableMethods } from "@/lib/multiloja/payments";
 import { isPaymentKind } from "@/lib/multiloja/core";
 import { cotarFrete, custoDoFrete, placeOrder, priceCart, quoteFor } from "@/lib/multiloja/vendas";
 import { MAX_ORDER_ITEMS, parseItem, type OrderItemInput } from "@/lib/orders";
@@ -44,15 +44,16 @@ export async function POST(request: Request) {
           : frete.modo === "erro"
             ? { modo: frete.modo, mensagem: frete.mensagem, semMedida: frete.semMedida }
             : { modo: frete.modo },
-      online: (await activeProvider()) !== null && metodos.length > 0,
+      online: metodos.length > 0,
       metodos,
       metodo: method,
     });
   }
 
   if (!parsed.ok) return fail(400, parsed.error, parsed.field ? { field: parsed.field } : undefined);
-  if (!(await activeProvider())) return fail(503, "O pagamento online ainda não está disponível nesta loja. Finalize pelo WhatsApp da loja.");
-  if (!(await availableMethods()).includes(parsed.value.pagamento)) return fail(422, "Esta forma de pagamento não está disponível agora. Escolha outra.");
+  const metodos = await availableMethods();
+  if (!metodos.length) return fail(503, "O pagamento online ainda não está disponível nesta loja. Finalize pelo WhatsApp da loja.");
+  if (!metodos.includes(parsed.value.pagamento)) return fail(422, "Esta forma de pagamento não está disponível agora. Escolha outra.");
   if (limited(vitrineLimits.pedido, request, `pedido:${loja.id}`)) return fail(429, "Muitos pedidos seguidos. Espere alguns minutos e tente de novo.");
 
   const visitante = request.headers.get("x-pc-visitante");

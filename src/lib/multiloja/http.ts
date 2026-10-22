@@ -2,7 +2,7 @@ import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
 import { clientIp } from "../api/guard";
-import { cieloConfig, efiWebhookIps, efiWebhookSecret } from "./config";
+import { cieloConfig, efiWebhookIps, efiWebhookSecret, pagarmeConfig } from "./config";
 import { createRateLimiter } from "../api/rate-limit";
 import { lojaDoHost } from "./tenant";
 import type { Loja } from "./repo";
@@ -71,4 +71,18 @@ export async function cieloWebhookAllowed(request: Request): Promise<boolean> {
   if (!secret) return process.env.NODE_ENV !== "production";
   const given = request.headers.get("x-multiloja-segredo") ?? new URL(request.url).searchParams.get("hmac") ?? "";
   return sameSecret(given, secret);
+}
+
+/**
+ * Aviso da Pagar.me: o segredo vem na URL cadastrada no painel dela (?hmac=) ou como senha da autenticação básica do
+ * webhook (o usuário não importa). Mesmo aceito, o aviso só dispara uma consulta da cobrança na Pagar.me.
+ */
+export async function pagarmeWebhookAllowed(request: Request): Promise<boolean> {
+  const secret = (await pagarmeConfig())?.webhookSecret;
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const query = new URL(request.url).searchParams.get("hmac") ?? "";
+  if (query && sameSecret(query, secret)) return true;
+  const basic = /^Basic\s+([A-Za-z0-9+/=]+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
+  const password = basic ? Buffer.from(basic, "base64").toString("utf8").split(":").slice(1).join(":") : "";
+  return Boolean(password) && sameSecret(password, secret);
 }

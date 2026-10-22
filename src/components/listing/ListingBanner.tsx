@@ -1,6 +1,8 @@
 import Image, { getImageProps } from "next/image";
 import type { ReactNode } from "react";
+import { fotoDeEstudio } from "@/components/FotoProduto";
 import { Breadcrumb, type Crumb } from "@/components/ui/Breadcrumb";
+import { cx } from "@/components/ui/cx";
 import { imageUrl } from "@/lib/format";
 
 const SPOTS = [
@@ -68,7 +70,7 @@ export default function ListingBanner({ title, subtitle, crumbs, banner, images 
         <div className="absolute inset-y-0 right-0 hidden w-1/2 md:block">
           {/* Sem repetir a mesma foto (produtos irmãos da API dividem a imagem, ex.: abadá 1–100 e 101+). */}
           {[...new Set(images)].slice(0, 3).map((src, i) => (
-            <Image key={src} src={imageUrl(src)} alt="" width={300} height={300} className="absolute object-contain drop-shadow-pop" style={SPOTS[i]} />
+            <Image key={src} src={imageUrl(src)} alt="" width={300} height={300} className={cx("absolute object-contain drop-shadow-pop", fotoDeEstudio(src) && "rounded-card")} style={{ ...SPOTS[i], height: "auto" }} />
           ))}
         </div>
       </div>

@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
@@ -8,9 +7,9 @@ import { thumbnailOf } from "@/components/mockup/art";
 import { IconCube, IconGrid } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { imageUrl } from "@/lib/format";
 import type { PartyProduct } from "@/lib/party";
 import type { ItemView, KitShot } from "./kit-art";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /** Espera, depois do modelo pronto e da última mudança na arte, até a foto (a textura termina de pintar). */
 const SETTLE_MS = 1600;
@@ -94,16 +93,17 @@ export default function KitPreview({ id, view, title, product, shot, paused, onS
           ]}
         />
       </div>
+      {/* --lado: lado do quadro, definido pelo painel preso do KitBuilder (encolhe em telas baixas); sem ele, a largura toda. */}
       <div ref={stage}>
         {view && product && mode === "3d" && !paused ? (
-          <Mockup3D lazy spec={view.spec} art={view.art} label={product.name} fallbackImage={product.image} captureRef={captureRef} className="aspect-square w-full overflow-hidden rounded-card" />
+          <Mockup3D lazy spec={view.spec} art={view.art} label={product.name} fallbackImage={product.image} captureRef={captureRef} className="mx-auto aspect-square w-[var(--lado,100%)] overflow-hidden rounded-card" />
         ) : (
-          <div className="relative aspect-square w-full overflow-hidden rounded-card bg-mist">
+          <div className="relative mx-auto aspect-square w-[var(--lado,100%)] overflow-hidden rounded-card bg-mist">
             {mode === "3d" && current ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={current.src} alt={title ? `${title} com a arte` : ""} className="size-full object-cover" />
             ) : product ? (
-              <Image src={imageUrl(product.image)} alt={product.name} fill sizes="(max-width: 1024px) 90vw, 400px" className="object-contain p-8" />
+              <FotoProduto src={product.image} alt={product.name} sizes="(max-width: 1024px) 90vw, 400px" respiro="p-8" />
             ) : null}
           </div>
         )}

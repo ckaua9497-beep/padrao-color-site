@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { useCart } from "@/components/cart/CartProvider";
@@ -9,7 +8,7 @@ import { IconArrow, IconCheck, IconClock } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { Price } from "@/components/ui/Price";
 import { cx } from "@/components/ui/cx";
-import { formatBRL, imageUrl, quantityLabel } from "@/lib/format";
+import { formatBRL, quantityLabel } from "@/lib/format";
 import {
   PARTY_ROLES,
   PARTY_TYPES,
@@ -32,6 +31,7 @@ import { partyArt } from "./party-art";
 import { PartyDetailsForm } from "./PartyDetailsForm";
 import { PartyItemCard } from "./PartyItemCard";
 import PartyPreview from "./PartyPreview";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /*
  * Crie Sua Festa: montagem livre em três passos — (a) a festa (tipo, tema, nome, idade ou data, paleta e
@@ -236,7 +236,7 @@ export default function PartyBuilder({ items }: { items: PartyItem[] }) {
           </ol>
         </nav>
 
-        <h2 ref={headingRef} tabIndex={-1} className="mt-8 scroll-mt-32 text-title font-bold outline-none">
+        <h2 ref={headingRef} tabIndex={-1} className="mt-8 scroll-mt-painel text-title font-bold outline-none">
           {STEPS[step].heading}
         </h2>
 
@@ -356,7 +356,7 @@ export default function PartyBuilder({ items }: { items: PartyItem[] }) {
                   return (
                     <li key={item.key} className="flex gap-4 rounded-card bg-white p-4 ring-1 ring-line">
                       <div className="relative size-16 shrink-0 overflow-hidden rounded-control bg-mist">
-                        <Image src={imageUrl(item.product.image)} alt="" fill sizes="64px" className="object-contain p-1" />
+                        <FotoProduto src={item.product.image} alt="" sizes="64px" respiro="p-1" estudio="cobrir" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
@@ -418,7 +418,15 @@ export default function PartyBuilder({ items }: { items: PartyItem[] }) {
         </div>
       </div>
 
-      <aside aria-label="Resumo da festa" className="min-w-0 lg:sticky lg:top-28 lg:self-start">
+      {/*
+        Preso ao rolar. O resumo é mais alto que a tela de um notebook: o painel fica na altura disponível e rola por
+        dentro (o botão do carrinho sempre ao alcance), e o 3D encolhe (--lado) para a prévia caber inteira.
+        px-1/-mx-1: espaço para o contorno de foco dos botões de largura total, que a rolagem cortaria.
+      */}
+      <aside
+        aria-label="Resumo da festa"
+        className="min-w-0 lg:sticky lg:top-painel lg:-mx-1 lg:max-h-[calc(100dvh-var(--spacing-painel)-1rem)] lg:self-start lg:overflow-y-auto lg:px-1 lg:[--lado:clamp(16rem,calc(100dvh-var(--spacing-painel)-8.5rem),100%)] lg:[scrollbar-width:thin]"
+      >
         <PartyPreview id="festa-previa" item={previewItem} selection={previewPriced?.lines[0]?.selection ?? null} size={previewPriced?.size ?? null} art={art} palette={palette} />
         <div className="mt-5 rounded-card bg-mist p-5">
           {chosen.length ? (

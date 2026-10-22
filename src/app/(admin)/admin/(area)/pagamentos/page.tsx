@@ -1,14 +1,19 @@
 import type { Metadata } from "next";
 import EfiTools from "@/components/admin/EfiTools";
-import { CieloForm, EfiForm, GatewaySwitcher, MeiosForm, RevealSecret } from "@/components/admin/PaymentSettingsForms";
+import { CieloForm, EfiForm, GatewaySwitcher, MeiosForm, PagarmeForm, RevealSecret, type RotaOpcao } from "@/components/admin/PaymentSettingsForms";
 import { cieloMockActive, cieloNotificationUrls } from "@/lib/multiloja/gateways/cielo";
+import { pagarmeMockActive, pagarmeWebhookUrl } from "@/lib/multiloja/gateways/pagarme";
 import { PageHeader, Sheet } from "@/components/admin/ui";
 import { cx } from "@/components/ui/cx";
-import { CIELO_SETTINGS_KEY, EFI_SETTINGS_KEY, cieloConfig, efiConfig, paymentSettings, publicUrl, type CieloSaved, type EfiSaved } from "@/lib/multiloja/config";
+import { CIELO_SETTINGS_KEY, EFI_SETTINGS_KEY, PAGARME_SETTINGS_KEY, cieloConfig, efiConfig, pagarmeConfig, paymentSettings, publicUrl, type CieloSaved, type EfiSaved, type PagarmeSaved } from "@/lib/multiloja/config";
+import { PAYMENT_KINDS, type PaymentKind } from "@/lib/multiloja/core";
+import { FORMAS_DO_GATEWAY, GATEWAY_LABEL, GATEWAY_NAMES } from "@/lib/multiloja/pagamento-rotas";
 import { efiMockActive, gatewaysOverview, pixWebhookUrl, type Check } from "@/lib/multiloja/payments";
 import { getSetting } from "@/lib/multiloja/settings";
 
 export const metadata: Metadata = { title: "Pagamentos" };
+
+const FORMA_ARTIGO: Record<PaymentKind, string> = { pix: "o Pix", boleto: "o boleto", cartao: "o cartão" };
 
 function Checks({ checks }: { checks: Check[] }) {
   return (
@@ -28,36 +33,90 @@ function Checks({ checks }: { checks: Check[] }) {
 }
 
 export default async function AdminPagamentos() {
-  const { ativo, gateways } = await gatewaysOverview();
+  const { rotas, disponiveis, gateways } = await gatewaysOverview();
   const settings = await paymentSettings();
   const efiSaved = (await getSetting<EfiSaved>(EFI_SETTINGS_KEY));
   const cieloSaved = (await getSetting<CieloSaved>(CIELO_SETTINGS_KEY));
+  const pagarmeSaved = await getSetting<PagarmeSaved>(PAGARME_SETTINGS_KEY);
   const efi = await efiConfig();
   const cielo = await cieloConfig();
+  const pagarme = await pagarmeConfig();
   const byName = Object.fromEntries(gateways.map((g) => [g.name, g]));
   const webhook = await pixWebhookUrl();
   const cieloUrls = await cieloNotificationUrls();
+  const pagarmeUrl = await pagarmeWebhookUrl();
+  const dev = process.env.NODE_ENV !== "production";
+  const mocks = [efiMockActive() && "Efí", cieloMockActive() && "Cielo", pagarmeMockActive() && "Pagar.me"].filter(Boolean) as string[];
+
+  // Seletor "Quem cobra" de cada forma: os gateways que cobram a forma nesta integração (a simulação só fora de
+  // produção), com o motivo quando ainda não dá para usar, e Desligado.
+  const opcoes = Object.fromEntries(
+    PAYMENT_KINDS.map((k) => [
+      k,
+      [
+        ...GATEWAY_NAMES.filter((g) => FORMAS_DO_GATEWAY[g].includes(k) && (g !== "simulado" || dev || rotas[k] === g)).map((g): RotaOpcao => {
+          const status = byName[g];
+          const nota = !status?.configured ? "sem credenciais" : !status.methods.includes(k) ? (g === "cielo" ? "falta o Link de Pagamento" : "não cobra esta forma") : undefined;
+          return { value: g, label: g === "simulado" ? "Simulação (teste)" : GATEWAY_LABEL[g], nota };
+        }),
+        { value: "desligado", label: "Desligado" },
+      ],
+    ]),
+  ) as Record<PaymentKind, RotaOpcao[]>;
+  const avisos = Object.fromEntries(
+    PAYMENT_KINDS.flatMap((k) => {
+      const rota = rotas[k];
+      return rota !== "desligado" && !disponiveis.includes(k) ? [[k, `A ${GATEWAY_LABEL[rota]} ainda não pode cobrar ${FORMA_ARTIGO[k]}: a forma não aparece no checkout.`]] : [];
+    }),
+  ) as Partial<Record<PaymentKind, string>>;
 
   return (
     <div className="space-y-6">
       <PageHeader
         group="Configuração"
         title="Pagamentos"
-        description="Escolha o gateway que cobra os pedidos de todas as lojas. A troca vale na hora para as cobranças novas; pedidos antigos continuam no gateway em que foram pagos."
+        description="Escolha quem cobra cada forma de pagamento em todas as lojas (por exemplo, Pix pela Pagar.me e cartão pela Cielo). A troca vale na hora para as cobranças novas; pedidos antigos continuam no gateway em que foram pagos."
       />
-      {(cieloMockActive() || efiMockActive()) && (
+      {mocks.length > 0 && (
         <p className="rounded-card bg-sun-50 px-4 py-3 text-[13px] font-semibold">
-          Simulador local ligado ({[efiMockActive() && "Efí", cieloMockActive() && "Cielo"].filter(Boolean).join(" e ")}): nenhuma cobrança é real.
+          Simulador local ligado ({mocks.join(", ").replace(/, ([^,]*)$/, " e $1")}): nenhuma cobrança é real.
         </p>
       )}
 
       <GatewaySwitcher
-        desligado={ativo === "desligado"}
-        gateways={gateways.map((g) => ({ name: g.name, label: g.label, methods: g.methods, configured: g.configured, active: g.active, problems: g.checks.filter((c) => !c.ok).length }))}
+        desligado={disponiveis.length === 0}
+        gateways={gateways
+          .filter((g) => g.name !== "simulado" || dev || g.cobrando.length > 0)
+          .map((g) => ({ name: g.name, label: g.label, methods: g.methods, configured: g.configured, cobrando: g.cobrando, problems: g.checks.filter((c) => !c.ok).length }))}
       />
 
-      <Sheet title="Formas de pagamento e taxas" description="O checkout oferece só as formas ligadas aqui que o gateway ativo sabe cobrar." id="meios">
-        <MeiosForm metodos={settings.metodos} taxas={settings.taxas} boletoDias={settings.boletoDias} />
+      <Sheet title="Quem cobra cada forma e taxas" description="Cada forma de pagamento tem o seu gateway. O checkout oferece só as formas com um gateway pronto para cobrar." id="meios">
+        <MeiosForm rotas={settings.rotas} opcoes={opcoes} avisos={avisos} taxas={settings.taxas} boletoDias={settings.boletoDias} />
+      </Sheet>
+
+      <Sheet title="Pagar.me" description="Pix pela API da Pagar.me (versão 5): QR Code e copia e cola na página do pedido; o aviso de pagamento confirma o pedido sozinho." id="pagarme">
+        <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
+          <PagarmeForm data={{ hasKey: Boolean(pagarmeSaved?.secretKey || pagarme), teste: pagarme?.teste ?? null }} />
+          <div className="space-y-3 lg:border-l lg:border-line lg:pl-8">
+            <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted">Diagnóstico</p>
+            <Checks checks={byName.pagarme?.checks ?? []} />
+            {pagarme &&
+              (pagarmeUrl ? (
+                <div className="space-y-2 rounded-control bg-page-checkout p-4 text-[13px]">
+                  <p className="font-bold">Cadastre no painel da Pagar.me (Webhooks)</p>
+                  <p>
+                    URL: <RevealSecret value={pagarmeUrl} hidden={pagarmeUrl.replace(/hmac=[^&]+/, "hmac=•••")} />
+                  </p>
+                  <p>
+                    Eventos: <code>charge.paid</code>, <code>charge.payment_failed</code>, <code>charge.refunded</code> e <code>order.canceled</code>.
+                  </p>
+                  <p className="text-caption text-muted">Se o painel pedir autenticação básica, use qualquer usuário e o segredo do fim da URL como senha. O site sempre confere a cobrança na Pagar.me antes de mudar o pedido.</p>
+                </div>
+              ) : (
+                <p className="text-caption text-muted">Para receber os avisos de pagamento, configure MULTILOJA_URL_PUBLICA (https). Sem aviso, o pedido é confirmado quando o cliente abre a página do pedido.</p>
+              ))}
+          </div>
+        </div>
       </Sheet>
 
       <Sheet title="Efí" description="Pix (API Pix com certificado), boleto e cartão (API de Cobranças; o cartão abre a página segura da Efí)." id="efi">

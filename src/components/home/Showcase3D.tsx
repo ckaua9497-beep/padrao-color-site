@@ -10,6 +10,7 @@ import { Marker, Reveal } from "@/components/motion";
 import { StylePicker } from "@/components/product/ArtStep";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { cx } from "@/components/ui/cx";
 import { mockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
 
@@ -22,6 +23,9 @@ export type DemoProduct = {
   image: string;
   options: Record<string, string[]>;
 };
+
+/** Abaixo de sm os botões quebram a linha ("Configurar cartão de visita →" passava de 320 px e a página rolava de lado). */
+const quebraNoCelular = "max-w-full max-sm:h-auto max-sm:min-h-13 max-sm:whitespace-normal max-sm:py-2.5 max-sm:text-center";
 
 /** Fonte sugerida de cada estilo (a vitrine não tem seletor de fonte). */
 function styleFont(style: ArtStyle) {
@@ -55,8 +59,12 @@ export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
   useEffect(() => () => retainSources(owner, []), [owner]);
 
   return (
-    <section id="mockup-3d" className="on-dark scroll-mt-28 bg-ink py-20 text-white md:py-28">
-      <div className="container-site grid items-center gap-12 lg:grid-cols-[0.9fr_1.1fr]">
+    <section id="mockup-3d" className="on-dark scroll-mt-topo bg-ink py-20 text-white md:py-28">
+      {/*
+        Mesma régua do resto da página (container-site). minmax(0, …): sem ele o tamanho próprio do canvas do 3D prendia
+        a coluna da direita e a grade não chegava à margem direita do conteúdo (terminava 46 px antes, a 1280 px).
+      */}
+      <div className="container-site grid items-center gap-12 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Reveal>
           <p className="text-sm font-bold uppercase tracking-[0.2em] text-coral">Novo · Mockup 3D</p>
           <h2 className="mt-4 text-display">
@@ -98,10 +106,10 @@ export default function Showcase3D({ demos }: { demos: DemoProduct[] }) {
             />
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <Button variant="buy" size="md" icon={<IconUpload className="size-5" />} onClick={() => input.current?.click()}>
+            <Button variant="buy" size="md" className={quebraNoCelular} icon={<IconUpload className="size-5" />} onClick={() => input.current?.click()}>
               {fileName ? "Trocar imagem" : "Testar com o meu logo"}
             </Button>
-            <Button href={`/produto/${demo.slug}`} variant="outline" size="md" className="border-white/30 text-white hover:border-white" iconEnd={<IconArrow className="size-5" />}>
+            <Button href={`/produto/${demo.slug}`} variant="outline" size="md" className={cx("border-white/30 text-white hover:border-white", quebraNoCelular)} iconEnd={<IconArrow className="size-5" />}>
               Configurar {demo.tab.toLowerCase()}
             </Button>
             <input

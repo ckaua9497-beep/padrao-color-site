@@ -44,6 +44,7 @@ npm run dev -- -p 3100 # http://localhost:3100
 | `npm run multiloja:migrar-sqlite` | Copia uma vez o banco SQLite antigo (`.data/multiloja.db` + `.data/arquivos`) para o PostgreSQL. |
 | `node scripts/frete-mock.mjs` | Simulador local da API de frete da Padrão (porta 3197) para testar a cotação sem a chave (ver "Frete"). |
 | `node scripts/bunny-mock.mjs` | Simulador local do Bunny Storage (porta 3196) para testar o envio das artes (ver "Arquivos de arte no Bunny"). |
+| `node scripts/pagarme-mock.mjs` | Simulador local da Pagar.me (porta 3195) para testar o Pix da multiloja sem chave (ver "Multiloja"). |
 
 ## Dados reais × demonstração
 
@@ -121,6 +122,55 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   distância pelo CEP) e, no `.env.development.local`, `PADRAO_FRETE_URL=http://localhost:3197/api/v2/melhor-envio/freight/calculate`
   e `PADRAO_FRETE_API_KEY=teste`.
 
+### Imagens e banners do site (admin → Site)
+
+A Padrão troca no próprio painel (`/admin`, grupo "Site Padrão Color") as imagens que o site mostra, mesmo quando a API
+manda outras, e os banners da página inicial. Sem troca, valem as imagens padrão do site e, onde não há padrão, as da API.
+
+**Imagens padrão (Figma "LOJA ONLINE - PADRAOCOLOR"):** ficam em `public/site/` e em `src/lib/midia-padrao.ts`:
+- fotos de estúdio de 23 produtos (600 × 804, fundo cinza; `produtos/<id do catálogo>.webp`);
+- as fotos redondas das 5 categorias da página inicial;
+- os 5 banners do carrossel (2560 × 800 e 2160 × 2700 no celular: os do Figma, de 1280 × 400 e 1080 × 1350, ampliados 2×
+  com super-resolução Real-ESRGAN, como as categorias, de 800 × 800, e o contorno laranja da faixa escura);
+- o banner largo "Cartões de visita e postais".
+
+`comPadrao` (`src/lib/midia.ts`) põe por cima o que o admin salvou: produto por produto, categoria campo a campo e a lista
+de banners de um lugar quando ela existe. No admin, o que ainda é padrão aparece marcado como "Padrão do site", e "Voltar
+ao padrão do site" apaga o registro salvo. O pedido continua levando a foto do catálogo.
+
+- **Imagens → Produtos** (`/admin/site/imagens`): busca, filtro por categoria e "só trocados". Para cada produto: enviar
+  fotos (arrastar e soltar, várias de uma vez), ordenar arrastando (a primeira é a capa dos cards, da busca e do carrinho),
+  reaproveitar fotos da API ("Usar") e, se quiser, "mostrar também as fotos da API depois das minhas". Prévia do card e da
+  galeria; cada produto guarda o seu rascunho até salvar.
+- **Imagens → Categorias** (`?aba=categorias`): a imagem da categoria (menu e "Categorias" da página inicial) e um banner do
+  topo da página da categoria, no computador (1440 × 355 px) e no celular. Sem banner próprio, a categoria mostra o topo
+  ilustrado com os produtos (o banner da API não aparece, como antes).
+- **Banners** (`/admin/site/banners`):
+  - "Carrossel do topo" (1920 × 600 px recomendado no computador, 1080 × 1350 no celular, até 8): passa sozinho a cada 5 s,
+    tem setas (com o mouse em cima ou foco), bolinhas e botão de pausa, arrasta no celular e para com o mouse em cima ou
+    "reduzir movimento". Sem lista salva valem os 5 banners padrão; com todos desligados, a página inicial fica sem carrossel.
+  - "Faixas promocionais" (até 9, depois de "Mais vendidos"): cada faixa tem a sua linha; as da mesma linha ficam lado a
+    lado com a mesma altura, na proporção de cada imagem (como os "botões" do padraocolor.com.br).
+  - Cada banner: imagem do computador e (opcional) do celular, texto alternativo (obrigatório), link (caminho do site ou
+    https), nova aba, ligado/desligado e período no ar (dia de Brasília). Ordem por arrastar ou ↑ ↓. Prévia ao vivo no
+    computador e no celular. "Trazer os banners/botões do site atual" copia os da vitrine da API como ponto de partida.
+- **Envio:** cada imagem vai por Server Action (até 6 MB; banner 7 MB), com o tipo lido dos bytes (PNG, JPG ou WebP) e o
+  tamanho lido do cabeçalho (`dimensoesImagem`), para o site reservar o espaço certo. Fica no banco (`arquivos`, dono
+  "site") e é servida por `GET /api/site/imagem/<nome>` com cache de um ano (o nome muda a cada envio). As que nenhum
+  registro usa são apagadas depois de 7 dias.
+- **Dados:** tabela `site_midia` (migração 4), um registro por chave: `produto/<id do catálogo>`, `categoria/<slug>`,
+  `banners/<lugar>`. Regras puras e testadas em `src/lib/midia.ts` (aplicar no catálogo, validar o que vem do admin,
+  período no ar, linhas das faixas, tamanho da imagem); banco e cache em `src/lib/midia-servidor.ts`; ações em
+  `app/(admin)/admin/site-actions.ts`; telas em `components/admin/site/`; banners da loja em `components/home/`.
+- **Onde vale:** página inicial (topo, faixas, categorias, vitrines), categoria, todos os produtos, produto (galeria e
+  dados do Google), menu, busca do topo (`/produtos/indice.json`), Crie Sua Festa, Monte Seu Kit, Para o seu negócio,
+  gabaritos e as lojas da multiloja. O pedido para a Padrão continua com a foto da API.
+- **Atualização:** as páginas continuam geradas no build. Elas leem as trocas por `midiaDoSite()` (cache do Next com a
+  etiqueta `site-midia`); salvar no admin chama `updateTag` e cada página se refaz no próximo acesso (testado com
+  `next build` + `next start`). A página inicial também se refaz a cada 10 minutos, para o período dos banners. Sem banco
+  no build, as páginas saem com as imagens da API e se corrigem na primeira troca ou em até um dia. Com mais de um
+  servidor, o cache do Next precisa ser compartilhado.
+
 ### Sincronizar o catálogo
 
 ```bash
@@ -176,7 +226,7 @@ npm test
 - **Fotos:** `scripts/fotos-produtos.mjs` abre `/design-system/fotos?p=<slug>&cor=<token>&modo=pattern|mark&giro=…&op=Chave:Valor`,
   que renderiza o mockup 3D com a estampa da marca (`src/components/mockup/brand-art.ts`: fundo chapado no espectro do logo,
   contornos brancos e as peças do símbolo; `mark` é a versão de 1 cor para serigrafia) e captura sem fundo
-  (`CaptureFn({ transparent: true })`), recortada e centralizada em 600×600 WebP como as fotos do site oficial.
+  (`CaptureFn({ transparent: true })`), recortada e centralizada num quadrado WebP de 1200 px (o dobro das fotos de 600 px do site oficial; `-- --tam=` muda).
 
 ### Rotas de dados
 
@@ -347,11 +397,14 @@ todas as lojas: a loja é escolhida pelo endereço.
   multiloja); preço da loja = base × (1 + margem), de 20% a 300%. No pedido, o servidor recalcula cada item duas vezes (`priceLine`): no
   preço da loja e no base. Comissão = pago pelo cliente − custo base − frete − taxa do pagamento (`src/lib/multiloja/pedido.ts`, testado).
   Fica "a liberar" até a entrega ou `MULTILOJA_DIAS_LIBERACAO` dias após o pagamento; o lojista pede saque (mínimo R$ 20) para a chave Pix.
-- **Pagamento** (`payments.ts` + `gateways/`): Pix, boleto e cartão. O gateway ativo é escolhido em `/admin/pagamentos` com um clique
-  (Efí, Cielo, Simulação ou Desligado) e cobra todos os pedidos novos de todas as lojas; cada pedido guarda o gateway que o cobrou
-  (`pagamento_provedor`), então consulta, aviso, devolução e cancelamento de pedidos antigos continuam no gateway original depois da
-  troca. Na mesma tela: formas oferecidas no checkout, taxa por forma (% + valor fixo, descontada da comissão) e dias de vencimento do
-  boleto. Credenciais salvas lá ficam cifradas no banco (`settings.ts`) e valem no lugar das variáveis `MULTILOJA_EFI_*`/`MULTILOJA_CIELO_*`.
+- **Pagamento** (`payments.ts` + `gateways/`): Pix, boleto e cartão. Em `/admin/pagamentos` cada forma tem o seu gateway (Efí, Cielo,
+  Pagar.me, Simulação ou Desligado), para todas as lojas: por exemplo, Pix pela Pagar.me e cartão pela Cielo. O botão "Usar para tudo"
+  de um gateway põe ele em todas as formas que ele sabe cobrar (na Pagar.me, "Usar no Pix"); a tabela "Quem cobra cada forma" troca
+  uma forma por vez e recusa gateway sem credenciais. Regras puras e testadas em `pagamento-rotas.ts`; a configuração antiga (um
+  gateway para tudo) é lida como rota por forma. Cada pedido guarda o gateway que o cobrou (`pagamento_provedor`), então consulta,
+  aviso, devolução e cancelamento de pedidos antigos continuam no gateway original depois da troca. Na mesma tela: taxa por forma
+  (% + valor fixo, descontada da comissão) e dias de vencimento do boleto. Credenciais salvas lá ficam cifradas no banco
+  (`settings.ts`) e valem no lugar das variáveis `MULTILOJA_EFI_*`/`MULTILOJA_CIELO_*`/`MULTILOJA_PAGARME_*`.
   Todo aviso de pagamento é conferido no gateway antes de marcar "pago". Cancelar um pedido pago devolve o Pix / estorna o cartão;
   boleto pago se devolve à parte (o pedido avisa). Pix vencido ou link expirado: o cliente gera outra cobrança na página do pedido.
   - `simulado`: só fora de produção (botão "Simular pagamento" na página do pedido).
@@ -363,12 +416,23 @@ todas as lojas: a loja é escolhida pelo endereço.
     E-commerce 3.0; cartão pelo Link de Pagamento (página segura da Cielo, até 6x; OAuth com Client ID/Secret; sem sandbox, usar o Modo
     Teste). No portal da Cielo cadastram-se a URL de notificação da API (com o cabeçalho `X-Multiloja-Segredo`) e a URL de mudança de
     status do Link (com `?hmac=`); o admin mostra as duas e o segredo.
+  - `pagarme` (`gateways/pagarme.ts`, dados puros e testados em `gateways/pagarme-dados.ts`): só Pix, pela API v5
+    (`https://api.pagar.me/core/v5`, autenticação básica com a chave secreta; conferido em docs.pagar.me em 2026-10-09).
+    `POST /orders` com o cliente (nome, e-mail, CPF/CNPJ, celular e endereço) e o Pix de 1 hora; o QR Code (`qr_code_url`) é
+    guardado como imagem no pedido. `GET /charges/{id}` confirma o pagamento; `DELETE /charges/{id}` cancela o Pix em aberto ou devolve
+    o pago. A chave de teste (`sk_test_…`) cai no simulador da própria Pagar.me (Pix de até R$ 500 é pago sozinho em segundos). Avisos
+    em `POST /api/multiloja/pagamento/pagarme?hmac=<segredo>` (ou o segredo como senha da autenticação básica): o admin mostra a URL
+    para cadastrar no painel da Pagar.me, com os eventos `charge.paid`, `charge.payment_failed`, `charge.refunded` e `order.canceled`.
   - `/admin/pagamentos` mostra o diagnóstico de cada gateway (credenciais, certificado, autenticação, webhook).
   - **Simuladores:** `node scripts/efi-mock.mjs` (launch "efi-mock", porta 3199) e `node scripts/cielo-mock.mjs` ("cielo-mock", 3198).
     Com `MULTILOJA_EFI_MOCK_URL` / `MULTILOJA_CIELO_MOCK_URL` num `.env.development.local` (ignorados em produção) dá para testar tudo sem
     credenciais: Efí `POST /mock/pagar/<txid>` (Pix acima de R$ 10) e `GET /mock/checkout/<id>` (cartão/boleto); Cielo
     `POST /mock/config {apiUrl, linkUrl, segredo}` (para onde avisar), `POST /mock/pagar/<PaymentId>` (Pix/boleto) e
     `GET /mock/link/<id>` (cartão). Testado ponta a ponta nos dois; nenhum dos dois rodou ainda contra o sandbox real.
+    Pagar.me: `node scripts/pagarme-mock.mjs` ("pagarme-mock", porta 3195) com `MULTILOJA_PAGARME_MOCK_URL` e qualquer chave
+    `sk_test_…` no admin; Pix de até R$ 500 é pago sozinho em 8 s (`PAGARME_MOCK_PAGA_EM`), `POST /mock/pagar/<ch_…>` paga na hora e
+    `POST /mock/config {url}` diz para onde mandar os avisos. Testado ponta a ponta (Pix, aviso, confirmação e devolução); ainda não
+    rodou com a chave de teste real.
 - **Frete** pela API de frete da Padrão (ver "Frete"), o mesmo cálculo do site dela: `cotarFrete` (`vendas.ts`) manda o CEP do cliente
   e uma caixa por item do carrinho (embalagem da variação, volumes pelos lotes). O preço que volta é o que a Padrão cobra, sem margem:
   o frete não entra na comissão.
@@ -387,7 +451,8 @@ todas as lojas: a loja é escolhida pelo endereço.
   da loja (frete grátis a partir de; frete fixo só enquanto a API de frete da Padrão não está ligada; domínio próprio); aparência; conta. Server Actions em `painel/actions.ts`; a loja sempre vem
   da sessão.
 - **Admin da Padrão** (`/admin`): visão geral (rede toda: visitantes, pedidos, conversão, abandono, canais, configuração), análises,
-  pedidos de todas as lojas (produção e status), lojas, saques e pagamentos. Em Lojas a Padrão cria o lojista e a loja (senha provisória
+  pedidos de todas as lojas (produção e status), lojas, saques, pagamentos e as imagens e banners do site (ver "Imagens e
+  banners do site"). Em Lojas a Padrão cria o lojista e a loja (senha provisória
   mostrada uma vez), gera senha nova, troca plano, tira do ar, bloqueia, libera domínio e abre ou fecha o cadastro público
   (`/painel/cadastro` fechado = "cadastro por convite"). Cada loja tem um raio-x em `/admin/lojas/<id>` (vendas, saldo do lojista, últimos
   pedidos e as mesmas análises só dela). Conta de admin criada com `MULTILOJA_ADMIN_SENHA=… npm run multiloja:admin -- email "Nome"`.
@@ -412,8 +477,8 @@ todas as lojas: a loja é escolhida pelo endereço.
 - **Demonstração.** `npm run multiloja:seed` recria a loja `atelie-demo` (16 produtos, frete, 2 links) e um admin de teste; e-mails e
   senhas de teste estão no próprio script.
 - **Pendências.** Tabela base da multiloja (`MULTILOJA_FATOR_BASE`), taxas reais dos pagamentos, a chave da API de frete no
-  servidor (`PADRAO_FRETE_API_KEY`) e a embalagem dos produtos que ainda não têm, homologação da Efí e da Cielo
-  (credenciais, Pix e boleto habilitados na conta, URLs de aviso cadastradas), cliente da multiloja na API Padrão, aviso de privacidade
+  servidor (`PADRAO_FRETE_API_KEY`) e a embalagem dos produtos que ainda não têm, homologação da Pagar.me (chave secreta, Pix
+  habilitado, webhook cadastrado) e da Cielo (credenciais do Link de Pagamento para o cartão, URLs de aviso cadastradas), cliente da multiloja na API Padrão, aviso de privacidade
   sobre o rastreamento anônimo e e-mails automáticos ao cliente (hoje ele recebe o link na tela e o lojista pode reenviar pelo painel).
 
 ## Estrutura
@@ -523,8 +588,13 @@ Ficam no grupo `(interno)`, com cabeçalho próprio (sem o menu da loja) e `noin
 
 ## Regras do design system
 
-- Use sempre os tokens (`bg-mist`, `text-coral-700`, `rounded-card`, `shadow-card`, `z-drawer`…), nunca hex solto em classe.
-- Branco sobre coral só em texto ≥ 19px bold; texto pequeno, PIX e erros usam `coral-700`. Os pares aprovados são testados em
+- Identidade do Figma "LOJA ONLINE - PADRAOCOLOR" (outubro de 2026): fonte Raleway (números alinhados) e o laranja #ff4d00
+  nos tokens `coral*` (o nome ficou porque as lojas da multiloja trocam essas variáveis); `vitrine` (#f7f7f7) nas faixas
+  cinza, `foto` atrás das fotos de estúdio e `night` na faixa escura. A Figtree continua para as artes do 3D e as lojas.
+- `container-site` segue a grade do Figma: 1064 px de conteúdo a 1280 px, crescendo até 1300 px.
+- Use sempre os tokens (`bg-mist`, `text-coral-700`, `rounded-card`, `shadow-card`, `shadow-cartao`, `z-drawer`…), nunca hex
+  ou rgb solto em classe.
+- Branco sobre o laranja só em texto grande (≥ 19px bold ou ≥ 24px); texto pequeno, PIX e erros usam `coral-700`. Os pares aprovados são testados em
   `src/lib/tokens.test.ts`.
 - Foco visível em tudo, alvos de toque com 24px ou mais (a loja mira 44px), gavetas e acordeões fechados com `inert`, e toda
   animação com saída para `prefers-reduced-motion`.

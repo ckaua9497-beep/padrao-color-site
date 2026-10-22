@@ -139,7 +139,15 @@ export default function KitConfigurator({ kit, items }: { kit: KitInfo; items: P
         </section>
       </div>
 
-      <aside aria-label="Resumo do kit" className="min-w-0 lg:sticky lg:top-28 lg:self-start">
+      {/*
+        Preso ao rolar. O resumo é mais alto que a tela de um notebook: o painel fica na altura disponível e rola por
+        dentro (o botão do carrinho sempre ao alcance), e o 3D encolhe (--lado) para a prévia caber inteira.
+        px-1/-mx-1: espaço para o contorno de foco dos botões de largura total, que a rolagem cortaria.
+      */}
+      <aside
+        aria-label="Resumo do kit"
+        className="min-w-0 lg:sticky lg:top-painel lg:-mx-1 lg:max-h-[calc(100dvh-var(--spacing-painel)-1rem)] lg:self-start lg:overflow-y-auto lg:px-1 lg:[--lado:clamp(16rem,calc(100dvh-var(--spacing-painel)-8.5rem),100%)] lg:[scrollbar-width:thin]"
+      >
         <PartyPreview id="kit-previa" item={previewItem} selection={previewPriced?.lines[0]?.selection ?? null} size={previewPriced?.size ?? null} art={art} palette={palette} />
         <div className="mt-5 rounded-card bg-mist p-5">
           <p className="text-caption text-muted">

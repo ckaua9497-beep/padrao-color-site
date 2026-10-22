@@ -1,17 +1,17 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useId } from "react";
 import { IconBrush, IconCube } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import QtyStepper from "@/components/ui/QtyStepper";
 import { cx } from "@/components/ui/cx";
-import { formatBRL, imageUrl } from "@/lib/format";
+import { formatBRL } from "@/lib/format";
 import { KIT_CEILING, type KitItem, type KitLine, type KitPlan } from "@/lib/kit-builder";
 import { choiceValues, sizeLimits } from "@/lib/party";
 import { ArtThumb } from "./ArtThumb";
 import type { ArtStatus, ItemView } from "./kit-art";
+import { FotoProduto } from "@/components/FotoProduto";
 
 type Props = {
   item: KitItem;
@@ -63,7 +63,7 @@ export function KitItemCard({ item, plan, line, kits, view, status, shot, onLine
             // eslint-disable-next-line @next/next/no-img-element
             <img src={shot} alt={`${item.title} com a arte`} className="size-full object-cover" />
           ) : (
-            <Image src={imageUrl(plan.item.product.image)} alt="" fill sizes="80px" className="object-contain p-1.5" />
+            <FotoProduto src={plan.item.product.image} alt="" sizes="80px" respiro="p-1.5" estudio="cobrir" />
           )}
         </div>
         <div className="min-w-0 flex-1">

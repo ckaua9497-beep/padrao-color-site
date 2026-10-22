@@ -10,7 +10,7 @@ import { countPedidosByStatus, listPedidos } from "@/lib/multiloja/repo-vendas";
 
 export const metadata: Metadata = { title: "Pedidos" };
 
-const GATEWAY: Record<string, string> = { efi: "Efí", cielo: "Cielo", simulado: "teste" };
+const GATEWAY: Record<string, string> = { efi: "Efí", cielo: "Cielo", pagarme: "Pagar.me", simulado: "teste" };
 
 function tabHref(status: OrderStatus | "", busca: string, loja: number | null) {
   const params = new URLSearchParams();

@@ -4,6 +4,8 @@ import Link from "next/link";
 import ListingBanner from "@/components/listing/ListingBanner";
 import { IconArrow } from "@/components/icons";
 import { getBusinessProducts, getBusinessTypes } from "@/lib/catalog";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl } from "@/lib/format";
 
 export const metadata: Metadata = {
@@ -11,9 +13,9 @@ export const metadata: Metadata = {
   description: "Impressos, brindes e comunicação visual escolhidos para cada tipo de negócio: salões, barbearias, clínicas, escolas, eventos, pontos de venda e mais.",
 };
 
-export default function BusinessIndexPage() {
+export default async function BusinessIndexPage() {
   const types = getBusinessTypes();
-  const images = getBusinessProducts(types[0]).slice(0, 3).map((p) => p.image);
+  const images = produtosComMidia(getBusinessProducts(types[0]).slice(0, 3), await midiaDoSite()).map((p) => p.image);
 
   return (
     <div className="container-site pb-20">

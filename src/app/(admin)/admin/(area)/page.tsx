@@ -9,7 +9,7 @@ import { channels, kpis, products } from "@/lib/multiloja/analytics";
 import { padraoProduction, signupOpen } from "@/lib/multiloja/config";
 import { dayKeyDaysAgo, formatDateTime, plural, sqlDaysAgo } from "@/lib/multiloja/core";
 import { funnelRates } from "@/lib/multiloja/eventos";
-import { activeGateway } from "@/lib/multiloja/payments";
+import { paymentSummary } from "@/lib/multiloja/payments";
 import { listLojasAdmin, listPedidos, listSaques, salesSummary } from "@/lib/multiloja/repo-vendas";
 
 export const metadata: Metadata = { title: "Visão geral" };
@@ -34,7 +34,7 @@ export default async function AdminInicio() {
   const saques = (await listSaques(null)).filter((s) => s.status === "solicitado");
   const lojas = await listLojasAdmin();
   const dominios = lojas.filter((l) => l.dominio && !l.dominioVerificado);
-  const gateway = await activeGateway();
+  const pagamento = await paymentSummary();
   const production = padraoProduction();
   const rede = await kpis("todas", desde);
   const taxas = funnelRates(rede);
@@ -95,11 +95,11 @@ export default async function AdminInicio() {
           <ul className="space-y-3.5 text-[14px]">
             <li className="flex items-start gap-2.5">
               <span className="mt-1.5">
-                <Dot tone={gateway && gateway.name !== "simulado" ? "ok" : "warn"} />
+                <Dot tone={pagamento.live ? "ok" : "warn"} />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[12px] font-semibold text-muted">Pagamento online</span>
-                <strong className="font-semibold">{gateway ? (gateway.name === "simulado" ? "Simulação (nada é cobrado)" : gateway.label) : "Desligado (pedidos pelo WhatsApp)"}</strong>
+                <strong className="font-semibold">{pagamento.detail}</strong>
               </span>
               <Link href="/admin/pagamentos" className="text-[13px] font-semibold underline underline-offset-2">
                 trocar

@@ -7,7 +7,7 @@ import StatusBadge from "./StatusBadge";
 
 /* Detalhe do pedido, igual no painel do lojista e no admin da Padrão (o admin acrescenta as ações em `actions`). */
 
-const GATEWAY_LABEL: Record<string, string> = { efi: "Efí", cielo: "Cielo" };
+const GATEWAY_LABEL: Record<string, string> = { efi: "Efí", cielo: "Cielo", pagarme: "Pagar.me" };
 
 function Row({ label, value, strong = false }: { label: string; value: ReactNode; strong?: boolean }) {
   return (

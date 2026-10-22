@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { useDeferredValue, useMemo, useState, useTransition } from "react";
 import { ativarProdutos, definirMargem, desativarProdutos, marcarDestaque, type ProdutosResult } from "@/app/(painel)/painel/actions";
+import { FotoProduto } from "@/components/FotoProduto";
 import { cx } from "@/components/ui/cx";
-import { formatBRL, imageUrl, quantityLabel } from "@/lib/format";
+import { formatBRL, quantityLabel } from "@/lib/format";
 import { MARGIN_MAX, MARGIN_MIN, marginError, normalizeText as normalize, parseMargin, salePrice } from "@/lib/multiloja/core";
 
 /*
@@ -278,7 +278,9 @@ function ProductRow({
     <li className="rounded-panel bg-white p-3 shadow-card md:p-4">
       <div className="flex items-center gap-3">
         <input type="checkbox" checked={checked} onChange={onCheck} aria-label={`Selecionar ${row.name}`} className="size-4 shrink-0 accent-ink" />
-        <Image src={imageUrl(row.image)} alt="" width={56} height={56} className="size-14 shrink-0 rounded-thumb bg-mist object-contain p-1" />
+        <span className="relative size-14 shrink-0 overflow-hidden rounded-thumb bg-mist">
+          <FotoProduto src={row.image} alt="" sizes="56px" respiro="p-1" estudio="cobrir" />
+        </span>
         <div className="min-w-0 flex-1">
           <p className="line-clamp-2 font-bold leading-snug">{row.name}</p>
           <p className="text-caption text-muted">

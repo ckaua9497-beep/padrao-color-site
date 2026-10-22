@@ -18,3 +18,17 @@ export const STORE = {
     tiktok: "https://www.tiktok.com/@padraocolorbr",
   },
 } as const;
+
+/**
+ * Cupom de boas-vindas da faixa laranja do topo (Figma "LOJA ONLINE - PADRAOCOLOR").
+ * - O checkout deste site ainda não aplica cupom: a faixa só divulga o código. Com `ativo: false` ela some inteira; o
+ *   dono do site decide com a Padrão se e como o desconto entra no pedido.
+ * - Sem link de regras: a página que a loja oficial usava (/institucional/cupom-novos-clientes) hoje redireciona para
+ *   a página inicial deles.
+ */
+export const CUPOM_BOAS_VINDAS: { readonly ativo: boolean; readonly codigo: string; readonly chamada: string; readonly acao: string } = {
+  ativo: true,
+  codigo: "BEMVINDO20",
+  chamada: "20% de desconto na sua primeira compra",
+  acao: "Use o cupom",
+};

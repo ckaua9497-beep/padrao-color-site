@@ -1,10 +1,12 @@
 // Fotos de catálogo dos produtos novos (API própria, src/data/novos/fonte.json): o mockup 3D de cada produto com a
-// estampa da marca, fotografado com fundo transparente em 600×600 WebP, como as fotos do site oficial.
+// estampa da marca, fotografado com fundo transparente em WebP quadrado de 1200 px (o dobro das fotos de 600 px do site
+// oficial: nítido na página do produto em telas de alta densidade).
 //
 // Uso (com o site no ar, `npm run dev`):
 //   npm run fotos:novos                       todas as fotos
 //   npm run fotos:novos -- --only=900006      só um grupo
 //   npm run fotos:novos -- --base=http://localhost:3100
+//   npm run fotos:novos -- --tam=600              outro tamanho (lado, em px)
 //
 // Precisa do Google Chrome (CHROME_PATH para outro caminho). Cada foto abre /design-system/fotos?… num Chrome sem
 // janela, espera o 3D e grava o arquivo que o grupo/variação cita em `imagem`, `imagem_1` e `imagem_2`.
@@ -19,6 +21,7 @@ const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const BASE = flag("base") ?? "http://localhost:3100";
 const ONLY = flag("only")?.split(",").map(Number);
+const TAM = Number(flag("tam") ?? 1200) || 1200;
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 /**
@@ -69,6 +72,7 @@ for (const grupo of fonte.grupos) {
       modo: shot.modo ?? plan.modo ?? "pattern",
       seed: String(shot.seed ?? 7),
       giro: String(shot.giro ?? 0),
+      tam: String(TAM),
       ...(shot.op ? { op: shot.op } : {}),
     });
     jobs.push({ name: `${grupo.id} ${grupo.nome} #${i + 1}`, url: `${BASE}/design-system/fotos?${query}`, file: resolve(root, "public", files[i].slice(1)) });
@@ -117,8 +121,9 @@ const send = (method, params = {}) =>
 const evaluate = async (expression) => (await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result?.result?.value;
 await send("Runtime.enable");
 await send("Page.enable");
-// Escala 2: a foto sai de um canvas com o dobro de pixels e é reduzida para 600×600 (bordas suaves).
-await send("Emulation.setDeviceMetricsOverride", { width: 1800, height: 1200, deviceScaleFactor: 2, mobile: false });
+// Escala 3: o canvas do 3D (900 px de largura na página) sai com 2700 px e a foto é reduzida para TAM × TAM (bordas
+// suaves; sobra resolução mesmo depois do recorte em volta do produto).
+await send("Emulation.setDeviceMetricsOverride", { width: 1800, height: 1200, deviceScaleFactor: 3, mobile: false });
 await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
 
 let failed = 0;

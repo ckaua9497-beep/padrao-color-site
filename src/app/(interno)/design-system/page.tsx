@@ -361,7 +361,7 @@ export default function DesignSystemPage() {
             id="tipografia"
             index={3}
             eyebrow="Tipografia"
-            title={`Figtree em ${roles.length} papéis`}
+            title={`Raleway em ${roles.length} papéis`}
             intro={
               <>
                 Cada papel é uma classe (<TokenName>text-display</TokenName>, <TokenName>text-caption</TokenName>…) que já traz altura de linha, espaçamento e peso.

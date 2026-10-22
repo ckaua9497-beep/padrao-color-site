@@ -4,6 +4,8 @@ import TemplateList, { type TemplateItem } from "@/components/listing/TemplateLi
 import { IconCube, IconLayers, IconUpload } from "@/components/icons";
 import { getTemplateProducts } from "@/lib/catalog";
 import { spectrumAt } from "@/lib/format";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { describePanel, formatMm, panelFor, type Mm, type TemplatePanel } from "@/lib/templates";
 import { productTemplate } from "@/lib/templates-data";
 
@@ -74,8 +76,8 @@ function templateFacts(productId: string): string | null {
   return joinFacts([range.length <= FACTS_MAX ? range : `${sizes.length} tamanhos`, sameBleed && bleed && `sangria ${bleed}`]);
 }
 
-export default function TemplatesPage() {
-  const products = getTemplateProducts();
+export default async function TemplatesPage() {
+  const products = produtosComMidia(getTemplateProducts(), await midiaDoSite());
   const items: TemplateItem[] = products.map((p) => ({
     id: p.id,
     slug: p.slug,

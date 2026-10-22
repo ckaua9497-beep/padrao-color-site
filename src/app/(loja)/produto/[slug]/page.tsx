@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
-import ProductCard from "@/components/ProductCard";
-import Rail from "@/components/Rail";
+import VitrineCard from "@/components/VitrineCard";
+import { GRADE_CARDS, SIZES_CARDS, visivelEmLinhasCompletas } from "@/components/listing/grade";
 import ProductExperience from "@/components/product/ProductExperience";
 import ProductInfo from "@/components/product/ProductInfo";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { IconClock, IconCube, IconShield } from "@/components/icons";
 import { getProduct, getProductById, getProducts, getRelated, seoTitle, toSummary } from "@/lib/catalog";
+import { produtoComMidia, produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl, spectrumAt } from "@/lib/format";
 import { cleanOptionLabel, optionKeys } from "@/lib/pricing";
 import { productTemplate } from "@/lib/templates-data";
@@ -23,8 +25,9 @@ function shortDescription(product: { metaDescription?: string; summary?: string;
 
 export async function generateMetadata(props: PageProps<"/produto/[slug]">): Promise<Metadata> {
   const { slug } = await props.params;
-  const product = getProduct(slug);
-  if (!product) return {};
+  const found = getProduct(slug);
+  if (!found) return {};
+  const product = produtoComMidia(found, await midiaDoSite());
   const description = shortDescription(product);
   return {
     title: seoTitle(product.metaTitle, product.name),
@@ -42,16 +45,19 @@ export async function generateMetadata(props: PageProps<"/produto/[slug]">): Pro
 
 export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
   const { slug } = await props.params;
-  const product = getProduct(slug);
-  if (!product) {
+  const found = getProduct(slug);
+  if (!found) {
     // Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-preto"): o ID do começo do slug leva ao atual.
     const id = /^(\d+)-/.exec(slug)?.[1];
     const moved = id ? getProductById(id) : undefined;
     if (moved) permanentRedirect(`/produto/${moved.slug}`);
     notFound();
   }
+  // Fotos trocadas no admin (admin → Site → Imagens) no lugar das da API.
+  const midia = await midiaDoSite();
+  const product = produtoComMidia(found, midia);
   // "Veja também" da API primeiro; completa com a mesma categoria.
-  const related = getRelated(product).map(toSummary);
+  const related = produtosComMidia(getRelated(product).map(toSummary), midia);
   const keys = optionKeys(product.options);
   const prices = product.variations.map((v) => v.p).filter((p) => p > 0);
 
@@ -169,15 +175,18 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
       </section>
 
       {related.length > 0 && (
-        <section className="container-site py-16" aria-labelledby="veja-tambem">
+        <section className="container-site @container py-16" aria-labelledby="veja-tambem">
           <h2 id="veja-tambem" className="mb-6 text-title font-bold">
             Você também pode gostar
           </h2>
-          <Rail label="Produtos relacionados" itemClassName="w-[70%] sm:w-[40%] md:w-[30%] lg:w-[calc((100%-4*16px)/5)]">
+          {/* Grade do Figma (5 colunas a 1280 px); em cada largura só linhas completas (até 10 cards). */}
+          <ul className={GRADE_CARDS}>
             {related.map((p, i) => (
-              <ProductCard key={p.slug} product={p} tone={spectrumAt(i).soft} />
+              <li key={p.slug} className={visivelEmLinhasCompletas(i, related.length)}>
+                <VitrineCard product={p} sizes={SIZES_CARDS} />
+              </li>
             ))}
-          </Rail>
+          </ul>
         </section>
       )}
     </>

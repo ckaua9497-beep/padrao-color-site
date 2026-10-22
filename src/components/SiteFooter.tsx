@@ -1,110 +1,153 @@
 import Link from "next/link";
-import Logo from "@/components/Logo";
-import { IconFacebook, IconInstagram, IconLinkedin, IconTiktok, IconYoutube } from "@/components/icons";
-import { Marquee } from "@/components/motion";
-import { Button } from "@/components/ui/Button";
-import { getCategories } from "@/lib/catalog";
+import type { ComponentType, SVGProps } from "react";
+import ColunaRodape from "@/components/footer/ColunaRodape";
+import { IconeEmail, IconeFacebook, IconeInstagram, IconeLinkedin, IconeLocal, IconeTelefone, IconeTiktok, IconeYoutube } from "@/components/footer/icones";
 import { STORE } from "@/lib/store";
 
-// Sobre o preto, rótulos e textos pequenos ficam em branco a 60% ou mais (≥ 7:1).
-const LINK = "text-white/60 transition-colors hover:text-white";
+/*
+ * Rodapé do Figma (captura do rodapé do padraocolor.com.br): fundo branco, quatro colunas (Institucional, Informações,
+ * Comercial e Contato) e a faixa cinza com os direitos, o CNPJ e as redes em laranja.
+ * Os links institucionais levam às páginas do site oficial (endereços conferidos com resposta 200 em 15/10/2026) e
+ * abrem na mesma aba; só o blog abre em outra.
+ */
+
+const OFICIAL = "https://padraocolor.com.br";
+
+type LinkRodape = { label: string; href: string; /** Blog: abre em outra aba. */ novaAba?: boolean };
+
+const COLUNAS: { titulo: string; links: LinkRodape[] }[] = [
+  {
+    titulo: "Institucional",
+    links: [
+      { label: "Sobre Nós", href: `${OFICIAL}/institucional/sobre-nos` },
+      { label: "Política de Privacidade", href: `${OFICIAL}/institucional/politica-de-privacidade` },
+      { label: "Nossas Lojas", href: `${OFICIAL}/institucional/nossas-lojas` },
+      { label: "Contatos", href: `${OFICIAL}/institucional/contato` },
+      { label: "Faça Parte da Nossa Equipe", href: `${OFICIAL}/institucional/faca-parte-de-nossa-equipe` },
+    ],
+  },
+  {
+    titulo: "Informações",
+    links: [
+      { label: "Central de Ajuda", href: `${OFICIAL}/ajuda` },
+      { label: "Dicas e Tutoriais", href: `${STORE.blog}?cat=7`, novaAba: true },
+      // No site oficial, "Pontos de retirada" leva à mesma página de "Nossas Lojas".
+      { label: "Pontos de retirada", href: `${OFICIAL}/institucional/nossas-lojas` },
+      { label: "Downloads", href: `${OFICIAL}/institucional/downloads` },
+      { label: "Glossário", href: `${OFICIAL}/institucional/glossario` },
+      { label: "Gabaritos", href: "/gabaritos" },
+      { label: "Criação de Arte", href: `${OFICIAL}/institucional/criacao-de-arte` },
+      { label: "Tratamento de Arquivo", href: `${OFICIAL}/institucional/tratamento-de-arquivo` },
+      { label: "Normas de Envio de Arte", href: `${OFICIAL}/institucional/normas-de-envio-de-arte` },
+      { label: "Blog", href: STORE.blog, novaAba: true },
+    ],
+  },
+  {
+    titulo: "Comercial",
+    links: [
+      { label: "Venda Corporativa", href: `${OFICIAL}/institucional/venda-corporativa` },
+      { label: "Seja um Fornecedor", href: `${OFICIAL}/institucional/seja-um-fornecedor` },
+      { label: "Seja um Revendedor", href: `${OFICIAL}/institucional/seja-um-revendedor` },
+      { label: "Entrega Personalizada", href: `${OFICIAL}/institucional/entrega-personalizada` },
+      { label: "Categorias de Revendedor", href: `${OFICIAL}/institucional/categorias-de-revendedor` },
+    ],
+  },
+];
+
+const REDES: { href: string; label: string; Icone: ComponentType<SVGProps<SVGSVGElement>> }[] = [
+  { href: STORE.social.youtube, label: "YouTube", Icone: IconeYoutube },
+  { href: STORE.social.facebook, label: "Facebook", Icone: IconeFacebook },
+  { href: STORE.social.instagram, label: "Instagram", Icone: IconeInstagram },
+  { href: STORE.social.linkedin, label: "LinkedIn", Icone: IconeLinkedin },
+  { href: STORE.social.tiktok, label: "TikTok", Icone: IconeTiktok },
+];
+
+// Celular e tablet: linhas de 44 px (alvo de toque). A partir de lg (mouse), a lista compacta do Figma.
+const LINK = "flex min-h-11 items-center text-[14px] leading-5 text-muted transition-colors hover:text-ink hover:underline underline-offset-2 lg:min-h-0";
+
+function LinkDoRodape({ label, href, novaAba }: LinkRodape) {
+  if (href.startsWith("/")) {
+    return (
+      <Link href={href} className={LINK}>
+        {label}
+      </Link>
+    );
+  }
+  return (
+    <a href={href} className={LINK} {...(novaAba ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
+      {label}
+      {novaAba && <span className="sr-only"> (abre em outra aba)</span>}
+    </a>
+  );
+}
 
 export default function SiteFooter() {
-  const top = getCategories().slice(0, 8);
-  const social = [
-    { href: STORE.social.instagram, label: "Instagram", Icon: IconInstagram },
-    { href: STORE.social.facebook, label: "Facebook", Icon: IconFacebook },
-    { href: STORE.social.youtube, label: "YouTube", Icon: IconYoutube },
-    { href: STORE.social.linkedin, label: "LinkedIn", Icon: IconLinkedin },
-    { href: STORE.social.tiktok, label: "TikTok", Icon: IconTiktok },
-  ];
   return (
-    <footer className="on-dark overflow-hidden bg-ink text-white">
-      <div className="container-site grid gap-12 pb-10 pt-20 lg:grid-cols-[1.1fr_1fr_1fr]">
-        <div>
-          <Logo onDark />
-          <p className="mt-8 max-w-sm text-title font-bold">Sua arte, impressa do jeito que você viu em 3D.</p>
-          <Button href="/produtos" variant="buy" size="md" className="mt-8">
-            Começar meu pedido
-          </Button>
-          <ul className="mt-10 flex gap-2">
-            {social.map(({ href, label, Icon }) => (
+    <footer className="border-t border-line bg-white">
+      <div className="container-site grid pb-8 pt-2 md:grid-cols-2 md:gap-x-8 md:gap-y-10 md:pt-10 lg:grid-cols-4 lg:pb-8">
+        {COLUNAS.map((coluna) => (
+          <ColunaRodape key={coluna.titulo} titulo={coluna.titulo}>
+            <ul className="lg:space-y-1.5">
+              {coluna.links.map((link) => (
+                <li key={link.label}>
+                  <LinkDoRodape {...link} />
+                </li>
+              ))}
+            </ul>
+          </ColunaRodape>
+        ))}
+
+        <div className="pt-6 md:pt-0">
+          <h2 className="text-[15px] font-semibold leading-5 text-ink">Contato</h2>
+          <ul className="mt-2 text-[14px] leading-5 text-muted md:mt-3 lg:space-y-1.5">
+            <li>
+              <a href={STORE.phoneHref} className="flex min-h-11 items-center gap-2.5 transition-colors hover:text-ink lg:min-h-0">
+                <IconeTelefone aria-hidden className="size-4 shrink-0 text-coral" />
+                {STORE.phone}
+              </a>
+            </li>
+            <li>
+              <a href={`mailto:${STORE.email}`} className="flex min-h-11 items-center gap-2.5 break-all transition-colors hover:text-ink lg:min-h-0">
+                <IconeEmail aria-hidden className="size-4 shrink-0 text-coral" />
+                {STORE.email}
+              </a>
+            </li>
+            <li className="flex gap-2.5 pt-2 lg:pt-0">
+              <IconeLocal aria-hidden className="mt-0.5 size-4 shrink-0 text-coral" />
+              <address className="not-italic">
+                {STORE.address}
+                <br />
+                Horário de Atendimento:
+                <br />
+                {STORE.hours}
+              </address>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div className="border-t border-line bg-mist">
+        {/*
+          Embaixo e à esquerda fica o WhatsApp flutuante (56 px a 20 px da borda, até x = 76). Abaixo de xl a margem
+          lateral é menor que isso: a faixa ganha 96 px embaixo para o texto ficar acima do botão no fim da página, sem
+          recuo (alinhado com as colunas). A partir de xl a margem é de 108 px e o texto já passa ao lado dele.
+        */}
+        <div className="container-site flex flex-col gap-3 pb-24 pt-5 md:flex-row md:items-center md:justify-between md:gap-8 md:pt-6 xl:pb-6">
+          <div>
+            <p className="text-[14px] leading-5 text-ink">Padrão Color - Todos os Direitos Reservados</p>
+            <p className="mt-1 text-micro leading-4 text-muted">CNPJ: 14.572.530/0001-19 - Razão Social: APEL GRAFICA E EDITORA LTDA</p>
+          </div>
+          <ul className="-ml-3 flex md:ml-0 md:-mr-3 lg:-mr-1.5">
+            {REDES.map(({ href, label, Icone }) => (
               <li key={label}>
-                <a href={href} target="_blank" rel="noreferrer" aria-label={label} className="grid size-11 place-items-center rounded-full bg-white/10 transition-colors hover:bg-coral hover:text-ink">
-                  <Icon aria-hidden className="size-[18px]" />
+                <a href={href} aria-label={label} className="grid size-11 place-items-center text-coral transition-colors hover:text-coral-700 lg:size-8">
+                  <Icone aria-hidden className="size-5 lg:size-[18px]" />
                 </a>
               </li>
             ))}
           </ul>
         </div>
-
-        <nav aria-labelledby="rodape-categorias">
-          <h2 id="rodape-categorias" className="text-sm font-semibold uppercase tracking-widest text-white/60">
-            Categorias
-          </h2>
-          <ul className="mt-5 space-y-3">
-            {top.map((c) => (
-              <li key={c.slug}>
-                <Link href={`/categoria/${c.slug}`} className={`text-lg font-bold ${LINK}`}>
-                  {c.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-white/60">Atendimento</h2>
-          <ul className="mt-5 space-y-3 text-lg font-bold">
-            <li>
-              <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className={LINK}>
-                WhatsApp
-              </a>
-            </li>
-            <li>
-              <a href={STORE.phoneHref} className={LINK}>
-                {STORE.phone}
-              </a>
-            </li>
-            <li>
-              <a href={`mailto:${STORE.email}`} className={LINK}>
-                {STORE.email}
-              </a>
-            </li>
-            <li>
-              <a href={STORE.blog} target="_blank" rel="noreferrer" className={LINK}>
-                Blog da Padrão
-              </a>
-            </li>
-            <li>
-              <Link href="/gabaritos" className={LINK}>
-                Gabaritos
-              </Link>
-            </li>
-          </ul>
-          <p className="mt-8 text-caption text-white/60">
-            {STORE.address}
-            <br />
-            {STORE.hours}
-            <br />
-            {STORE.legal}
-          </p>
-        </div>
       </div>
-
-      <div aria-hidden>
-        <Marquee
-          slow
-          className="select-none pb-6"
-          itemClassName="pr-10"
-          items={["Padrão Color", "Gráfica e Comunicação Visual", "Mockup 3D", "Sua marca impressa"].map((t) => (
-            <span key={t} className="text-outline whitespace-nowrap text-[clamp(64px,9vw,135px)] font-normal leading-none">
-              {t} <span className="text-coral [-webkit-text-stroke:0]">•</span>
-            </span>
-          ))}
-        />
-      </div>
-      <p className="border-t border-white/10 py-5 text-center text-caption text-white/60">Padrão Color © {new Date().getFullYear()}. Todos os direitos reservados.</p>
     </footer>
   );
 }

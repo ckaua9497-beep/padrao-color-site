@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
@@ -10,8 +9,9 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { cx } from "@/components/ui/cx";
-import { formatBRL, imageUrl } from "@/lib/format";
+import { formatBRL } from "@/lib/format";
 import type { ArtStatus, ItemView, KitShot } from "./kit-art";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /** Espera depois do modelo pronto até a foto (a arte termina de pintar na textura). */
 const SETTLE_MS = 1100;
@@ -137,14 +137,18 @@ export function KitGallery({ items, shots, onShot, adding, onAdd, onAddWhenReady
                     <div aria-hidden className="absolute inset-0 opacity-0">
                       <Mockup3D spec={item.view.spec} art={item.view.art} label={item.productName} fallbackImage={item.image} captureRef={captureRef} className="size-full" />
                     </div>
-                    <Image src={imageUrl(item.image)} alt="" fill sizes="(max-width: 640px) 45vw, 260px" className="pointer-events-none object-contain p-6 opacity-50" />
+                    <span className="pointer-events-none absolute inset-0 overflow-hidden opacity-50">
+                      <FotoProduto src={item.image} alt="" sizes="(max-width: 640px) 45vw, 260px" />
+                    </span>
                     <span className="pointer-events-none absolute inset-x-2 bottom-2 flex items-center justify-center gap-2 rounded-full bg-white/90 px-2 py-1 text-caption font-semibold">
                       <Spinner /> Fotografando
                     </span>
                   </>
                 ) : (
                   <>
-                    <Image src={imageUrl(item.image)} alt="" fill sizes="(max-width: 640px) 45vw, 260px" className={cx("object-contain p-6", !missed && "opacity-50")} />
+                    <span className={cx("absolute inset-0 overflow-hidden", !missed && "opacity-50")}>
+                      <FotoProduto src={item.image} alt="" sizes="(max-width: 640px) 45vw, 260px" />
+                    </span>
                     <span className="absolute inset-x-2 bottom-2 rounded-full bg-white/90 px-2 py-1 text-center text-caption font-semibold text-ink/80">
                       {missed ? "Foto do catálogo" : "Na fila"}
                     </span>

@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { track } from "@/lib/tracking";
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
@@ -22,7 +21,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
 import { useCustomerVariations } from "@/lib/customer";
-import { formatBRL, imageUrl, leadLabel, quantityLabel } from "@/lib/format";
+import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
 import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
 import { formatSize, mockupSpec } from "@/lib/mockup";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
@@ -55,6 +54,7 @@ import SizeBreakdown from "./SizeBreakdown";
 import SizeInput, { type SizeText } from "./SizeInput";
 import TemplateDownload from "./TemplateDownload";
 import { fitToTemplate, madeForTemplate, needsRefit, printFileName, printSheets, type Gabarito, type GabaritoSide } from "./gabarito/jobs";
+import { FotoProduto } from "@/components/FotoProduto";
 
 export type ClientProduct = {
   /** ID do catálogo ("35", "tags"): baixa o gabarito em /api/gabarito/[id]. Sem ele, vale o slug. */
@@ -478,7 +478,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
   return (
     <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] xl:gap-14">
-      <div className="lg:sticky lg:top-28 lg:self-start">
+      {/* Preso ao rolar: o quadro do 3D encolhe em telas baixas (notebooks) para a barra dele não sair da tela. */}
+      <div className="lg:sticky lg:top-painel lg:self-start lg:[--lado:min(100%,calc(100dvh-var(--spacing-painel)-7.5rem))]">
         <SegmentedControl
           label="Visualização do produto"
           className="mb-3"
@@ -498,7 +499,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
         />
         {tab === "3d" ? (
           preview ? (
-            <div className="aspect-square w-full overflow-hidden rounded-card bg-mist">
+            <div className="aspect-square w-full overflow-hidden rounded-card bg-mist lg:mx-auto lg:w-(--lado)">
               {pageShot ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={pageShot} alt="" className="size-full object-cover" />
@@ -507,10 +508,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
               )}
             </div>
           ) : (
-            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full" />
+            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
           )
         ) : (
-          <div className="flex gap-3">
+          <div className="flex gap-3 lg:mx-auto lg:w-[min(100%,calc(var(--lado)+4.75rem))]">
             <div className="flex w-16 shrink-0 flex-col gap-2">
               {product.images.map((src, i) => (
                 <button
@@ -521,12 +522,13 @@ export default function ProductExperience({ product }: { product: ClientProduct 
                   onClick={() => setPhoto(i)}
                   className={cx("relative aspect-square overflow-hidden rounded-thumb bg-mist ring-offset-2", photo === i ? "ring-2 ring-ink" : "ring-1 ring-line")}
                 >
-                  <Image src={imageUrl(src)} alt="" fill sizes="64px" className="object-contain p-1" />
+                  <FotoProduto src={src} alt="" sizes="64px" respiro="p-1" estudio="cobrir" />
                 </button>
               ))}
             </div>
-            <div className="relative aspect-square flex-1 overflow-hidden rounded-card bg-mist">
-              <Image src={imageUrl(product.images[photo] ?? product.image)} alt={product.name} fill sizes="(max-width: 1024px) 90vw, 560px" className="object-contain p-6" loading="eager" />
+            {/* self-start: com muitas fotos, a coluna de miniaturas passa da altura do quadro, que continua quadrado como o 3D. */}
+            <div className="relative aspect-square flex-1 self-start overflow-hidden rounded-card bg-mist">
+              <FotoProduto src={product.images[photo] ?? product.image} alt={product.name} sizes="(max-width: 1024px) 90vw, 560px" priority />
             </div>
           </div>
         )}
@@ -572,14 +574,14 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           })}
 
           {area && product.customSize && (
-            <li id="passo-medida" className="scroll-mt-32">
+            <li id="passo-medida" className="scroll-mt-painel">
               <StepTitle n={sizeStep} total={artStep} title="Medida (largura × altura)" />
               <SizeInput value={size} onChange={setSize} limits={product.customSize} presets={presets} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
             </li>
           )}
 
           {apparel && (
-            <li id="passo-tamanhos" className="scroll-mt-32">
+            <li id="passo-tamanhos" className="scroll-mt-painel">
               <StepTitle n={gridStep} total={artStep} title="Tamanhos e quantidades" />
               <SizeBreakdown
                 sizes={sizes}

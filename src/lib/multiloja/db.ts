@@ -16,7 +16,9 @@ export function getDb(): Promise<Db> {
   holder.__multilojaPg ??= {};
   const h = holder.__multilojaPg;
   h.ready ??= (async () => {
-    const db = connect();
+    // No build o Next gera as páginas em vários processos ao mesmo tempo: uma conexão por processo basta (as imagens do
+    // admin são lidas uma vez e ficam no cache) e não estoura o limite de conexões do banco.
+    const db = connect(undefined, process.env.NEXT_PHASE === "phase-production-build" ? { max: 1 } : {});
     await migrate(db);
     return db;
   })().catch((error) => {

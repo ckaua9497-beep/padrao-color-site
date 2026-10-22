@@ -1,22 +1,21 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { ProductSummary } from "@/lib/catalog";
-import { imageUrl } from "@/lib/format";
 import { CardPrice, CardResellerBadge } from "@/components/CardPrice";
 import { IconCube } from "@/components/icons";
 import { Badge } from "@/components/ui/Badge";
+import { FotoProduto } from "@/components/FotoProduto";
 
 export default function ProductCard({ product, tone = "var(--color-mist)", priority = false }: { product: ProductSummary; tone?: string; priority?: boolean }) {
   return (
     <Link href={`/produto/${product.slug}`} className="group flex h-full flex-col overflow-hidden rounded-card bg-white shadow-card">
       <div className="relative aspect-square overflow-hidden rounded-card" style={{ background: tone }}>
-        <Image
-          src={imageUrl(product.image)}
+        <FotoProduto
+          src={product.image}
           alt=""
-          fill
-          loading={priority ? "eager" : "lazy"}
           sizes="(max-width: 768px) 70vw, (max-width: 1280px) 33vw, 300px"
-          className="object-contain p-4 transition-transform duration-400 ease-card group-hover:scale-[1.04] motion-reduce:transition-none"
+          respiro="p-4"
+          priority={priority}
+          className="transition-transform duration-400 ease-card group-hover:scale-[1.04] motion-reduce:transition-none"
         />
         <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
           {product.bestSeller && <Badge tone="brand">Mais vendido</Badge>}

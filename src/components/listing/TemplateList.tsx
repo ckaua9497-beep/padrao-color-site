@@ -1,11 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { IconSearch } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
-import { imageUrl } from "@/lib/format";
+import { FotoProduto } from "@/components/FotoProduto";
 
 export type TemplateItem = {
   id: string;
@@ -100,7 +99,7 @@ export default function TemplateList({ items }: { items: TemplateItem[] }) {
           {filtered.slice(0, limit).map((item) => (
             <li key={item.id} className="flex items-center gap-3 rounded-card bg-white p-3 shadow-card">
               <span className="relative size-16 shrink-0 overflow-hidden rounded-thumb bg-mist">
-                <Image src={imageUrl(item.image)} alt="" fill sizes="64px" className="object-contain p-1" />
+                <FotoProduto src={item.image} alt="" sizes="64px" respiro="p-1" estudio="cobrir" />
               </span>
               <span className="min-w-0 flex-1">
                 <Link href={`/produto/${item.slug}`} className="line-clamp-2 text-[15px] font-semibold leading-snug underline-offset-2 hover:underline">

@@ -4,6 +4,8 @@ import Listing from "@/components/listing/Listing";
 import ListingBanner from "@/components/listing/ListingBanner";
 import { businessNav } from "@/components/listing/nav";
 import { getBusinessProducts, getBusinessType, getBusinessTypes, seoTitle, toSummary } from "@/lib/catalog";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl } from "@/lib/format";
 
 // "Para o seu negócio": os produtos de cada tipo de negócio (GET /tiposnegocio), na ordem da API.
@@ -31,7 +33,7 @@ export default async function BusinessPage({ params }: Props) {
   const { slug } = await params;
   const type = getBusinessType(slug);
   if (!type) notFound();
-  const products = getBusinessProducts(type);
+  const products = produtosComMidia(getBusinessProducts(type), await midiaDoSite());
   const art = type.banner || type.image;
 
   return (

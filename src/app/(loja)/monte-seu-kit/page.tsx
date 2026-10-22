@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/Button";
 import { PartyBoundary } from "@/components/party/PartyBoundary";
 import { PARTY_FAQ } from "@/components/party/party-faq";
 import { getProducts } from "@/lib/catalog";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { spectrumAt } from "@/lib/format";
 import { KIT_GOALS } from "@/lib/kit-builder";
 import { KITS, amountLabel, defaultConfig, getPalette, kitQuote, priceItem, resolveKitItems } from "@/lib/party";
@@ -32,8 +34,8 @@ const STEPS = [
   { title: "Ajuste e leve", text: "Mude quantidades e medidas e adicione o kit inteiro ao carrinho." },
 ];
 
-export default function MonteSeuKitPage() {
-  const products = getProducts();
+export default async function MonteSeuKitPage() {
+  const products = produtosComMidia(getProducts(), await midiaDoSite());
   const kits: KitCardData[] = KITS.flatMap((kit) => {
     const items = resolveKitItems(kit, products);
     const cover = items.find((item) => item.id === kit.cover) ?? items[0];

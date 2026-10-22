@@ -2,12 +2,13 @@
 
 /*
  * Design system Padrão Color — tokens.
- * Identidade fixa (padrao-loja/BRIEFING.md, "não trocar"): coral #ff463a para comprar e preço,
- * hover #e03a30, texto #000/#141414, faixas #ededed/#f4f4f4/#f0f2f6, card 15px, header 92px, Figtree.
+ * Identidade: o laranja e a Raleway vêm do Figma "LOJA ONLINE - PADRAOCOLOR" (outubro de 2026), que substituiu o
+ * coral #ff463a e a Figtree do BRIEFING. Seguem do BRIEFING: texto #000/#141414, faixas #ededed/#f4f4f4/#f0f2f6,
+ * card 15px, header 92px. A Figtree continua carregada para as artes do 3D e as lojas da multiloja.
  * `static`: todas as variáveis vão para o CSS, inclusive as usadas só via var() em style inline.
  */
 @theme static {
-  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-raleway), ui-sans-serif, system-ui, sans-serif;
 
   /* Neutros */
   --color-ink: #000000;
@@ -23,16 +24,18 @@
   --color-page-cart: #f9f9f9;
   --color-page-checkout: #f4f6f8;
   --color-graphite: #282e34; /* faixa escura com foto */
-  --color-night: #17171c; /* cena escura do 3D (neon) */
+  --color-night: #17171c; /* cena escura do 3D (neon) e faixa "projeto especial" */
+  --color-vitrine: #f7f7f7; /* faixas cinza da página inicial (categorias, benefícios) e a busca do topo */
+  --color-foto: #c4c6c7; /* cinza das fotos de produto (fundo atrás das fotos em proporção diferente) */
 
-  /* Coral da Padrão */
-  --color-coral: #ff463a;
-  --color-coral-600: #e03a30;
-  --color-coral-700: #c4241b; /* 5,8:1 sobre branco: texto pequeno, erro, linha do PIX */
-  --color-coral-50: #fff1f0;
-  --color-coral-100: #ffe0dd;
+  /* Laranja da Padrão (os nomes "coral" ficaram: as lojas da multiloja trocam essas variáveis pela paleta delas) */
+  --color-coral: #ff4d00;
+  --color-coral-600: #e64500;
+  --color-coral-700: #c43c00; /* 5,3:1 sobre branco: texto pequeno, erro, linha do PIX */
+  --color-coral-50: #fff1eb;
+  --color-coral-100: #ffe4d9;
 
-  /* Papéis. Branco sobre coral dá 3,39:1: só em texto ≥ 19px bold (texto grande). */
+  /* Papéis. Branco sobre o laranja dá 3,33:1: só em texto ≥ 19px bold ou ≥ 24px (texto grande). */
   --color-buy: var(--color-coral);
   --color-buy-hover: var(--color-coral-600);
   --color-price: var(--color-coral); /* preço a partir de 19px bold */
@@ -78,6 +81,10 @@
   /* Folha do admin: anel de 1px + duas profundidades suaves (uma estratégia só de profundidade no admin). */
   --shadow-sheet: 0 0 0 1px rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 2px 4px rgb(0 0 0 / 0.03);
   --drop-shadow-pop: 0 30px 40px rgb(0 0 0 / 0.16);
+  /* Página inicial (Figma): sombra dos cartões de vantagens (DROP_SHADOW 0 4 4 a 25%) e contorno das bolinhas do
+     carrossel (anel de 1px a 50%: ≥ 3:1 sobre os banners claros #f1f1f1 e #cecece). */
+  --shadow-cartao: 0 4px 4px rgb(0 0 0 / 0.25);
+  --shadow-ponto: 0 0 0 1px rgb(0 0 0 / 0.5);
 
   /* Escala tipográfica (tamanho / altura de linha / peso) */
   --text-display: clamp(2.5rem, 4.4vw, 3.5rem); /* 40 → 56 */
@@ -123,6 +130,9 @@
   /* Medidas de layout (viram h-header, top-header, scroll-mt-header…) */
   --spacing-header: 92px;
   --spacing-swatch: 55px;
+  --spacing-menu-topo: 44px; /* linha do menu de categorias, presa sob a do logo a partir de xl */
+  --spacing-topo: 92px; /* altura presa do topo: 92px, e 92 + 44 = 136px a partir de xl (redefinida em @layer base) */
+  --spacing-painel: calc(var(--spacing-topo) + 20px); /* "top" dos painéis laterais presos (prévia 3D, resumos) */
 
   /* Movimento (curvas da Tapz) */
   --ease-reveal: cubic-bezier(0.25, 1, 0.5, 1);
@@ -168,16 +178,19 @@
   }
 }
 
+/*
+ * Largura do conteúdo. A partir de 1280 px segue a grade do Figma (conteúdo de 1064 px com margens de 108 px a
+ * 1280) e cresce com a tela até 1300 px, como antes.
+ */
 @utility container-site {
   width: 100%;
-  max-width: 1440px;
   margin-inline: auto;
   padding-inline: 1.25rem;
   @media (width >= 48rem) {
     padding-inline: 2.5rem;
   }
   @media (width >= 80rem) {
-    padding-inline: 70px;
+    padding-inline: max(108px, calc((100% - 1300px) / 2));
   }
 }
 
@@ -188,6 +201,13 @@
 @layer base {
   html {
     scroll-behavior: smooth;
+  }
+
+  /* A partir de xl a linha do menu de categorias também fica presa no topo (SiteHeader). */
+  @media (width >= 80rem) {
+    :root {
+      --spacing-topo: calc(var(--spacing-header) + var(--spacing-menu-topo));
+    }
   }
 
   /*
@@ -203,6 +223,8 @@
     background: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
+    /* A Raleway desenha os números "antigos" (com descida) por padrão: preços e medidas usam os alinhados. */
+    font-feature-settings: "lnum" 1;
     overflow-x: clip;
   }
 
@@ -364,11 +386,13 @@
  */
 .loja-tema {
   background: var(--loja-fundo, var(--color-paper));
+  /* As lojas seguem com a Figtree (a Raleway é da loja da Padrão). */
+  font-family: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
 }
 
 .loja-tema :is(h1, h2, h3),
 .font-titulo {
-  font-family: var(--font-titulo, var(--font-sans));
+  font-family: var(--font-titulo, var(--font-figtree), ui-sans-serif, system-ui, sans-serif);
 }
 
 .loja-tema[data-fonte="oswald"] :is(h1, h2) {

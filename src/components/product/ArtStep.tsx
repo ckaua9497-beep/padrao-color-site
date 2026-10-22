@@ -255,7 +255,7 @@ export function ArtStep({ step, family, blank = false, art, onArt, artName, onFi
       };
 
   return (
-    <li id="passo-arte" className="scroll-mt-32">
+    <li id="passo-arte" className="scroll-mt-painel">
       {heading ?? (
         <p className="mb-3 flex items-center gap-2 text-[15px] font-bold">
           {step !== undefined && <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>}

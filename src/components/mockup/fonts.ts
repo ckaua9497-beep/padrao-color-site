@@ -59,12 +59,13 @@ function info(font: ArtFont): FontInfo {
   return ART_FONTS[font] ?? ART_FONTS.figtree;
 }
 
-/** Família CSS da fonte; a Figtree é a fonte do site (variável --font-figtree). */
+/** Família CSS da fonte; a Figtree vem do next/font (variável --font-figtree, a fonte do site é outra). */
 export function fontFamilyOf(font: ArtFont): string {
   const family = info(font).family;
   if (family) return family;
   if (typeof document === "undefined") return "Arial, sans-serif";
-  return getComputedStyle(document.body).fontFamily || "Arial, sans-serif";
+  const figtree = getComputedStyle(document.documentElement).getPropertyValue("--font-figtree").trim();
+  return figtree ? `${figtree}, Arial, sans-serif` : "Arial, sans-serif";
 }
 
 /** A fonte é caligráfica (sem caixa alta, sem espaçamento). */

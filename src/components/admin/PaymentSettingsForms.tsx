@@ -1,18 +1,19 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ativarGateway, salvarCielo, salvarEfi, salvarMeios, type AdminResult } from "@/app/(admin)/admin/actions";
+import { ativarGateway, salvarCielo, salvarEfi, salvarMeios, salvarPagarme, type AdminResult } from "@/app/(admin)/admin/actions";
 import { Field, FormMessage } from "@/components/painel/fields";
 import { useFormAction } from "@/components/painel/useFormAction";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { PAYMENT_KINDS, PAYMENT_LABEL, type PaymentKind, type PaymentRates } from "@/lib/multiloja/core";
+import { listaFormas } from "@/lib/multiloja/pagamento-rotas";
 
-/* Formulários do admin → Pagamentos: gateway ativo, meios e taxas, credenciais da Efí e da Cielo. */
+/* Formulários do admin → Pagamentos: gateway de cada forma, taxas, credenciais da Efí, da Cielo e da Pagar.me. */
 
-export type GatewayCard = { name: string; label: string; methods: readonly PaymentKind[]; configured: boolean; active: boolean; problems: number };
+export type GatewayCard = { name: string; label: string; methods: readonly PaymentKind[]; configured: boolean; cobrando: readonly PaymentKind[]; problems: number };
 
-/** Um clique: todas as cobranças novas passam pelo gateway escolhido. */
+/** Um clique: o gateway passa a cobrar todas as formas que sabe cobrar (a Pagar.me, só o Pix). */
 export function GatewaySwitcher({ gateways, desligado }: { gateways: GatewayCard[]; desligado: boolean }) {
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminResult | null>(null);
@@ -21,27 +22,34 @@ export function GatewaySwitcher({ gateways, desligado }: { gateways: GatewayCard
   const pick = "h-9 rounded-full px-3.5 text-[13px] font-bold transition-colors disabled:opacity-50";
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="list" aria-label="Gateways de pagamento">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" role="list" aria-label="Gateways de pagamento">
         {gateways.map((g) => {
           const tone = g.configured ? (g.problems ? "bg-coral" : "bg-lime-700") : "bg-line-strong";
+          const active = g.cobrando.length > 0;
+          const everything = g.methods.every((m) => g.cobrando.includes(m));
           return (
-            <div key={g.name} role="listitem" className={card(g.active)}>
+            <div key={g.name} role="listitem" className={card(active)}>
               <div className="flex items-start justify-between gap-2">
                 <p className="text-[16px] font-extrabold">{g.label}</p>
-                {g.active && <span className="rounded-full bg-ink px-2.5 py-0.5 text-[12px] font-bold text-white">Ativo</span>}
+                {active && <span className="rounded-full bg-ink px-2.5 py-0.5 text-[12px] font-bold text-white">Ativo</span>}
               </div>
               <p className="mt-0.5 text-[12px] text-muted">{g.methods.map((m) => PAYMENT_LABEL[m]).join(" · ")}</p>
               <p className="mt-3 flex items-center gap-2 text-[13px] font-semibold">
                 <span aria-hidden className={cx("size-2 rounded-full", tone)} />
                 {g.configured ? (g.problems ? `${g.problems} ${g.problems === 1 ? "alerta" : "alertas"} no diagnóstico` : "Configurado e funcionando") : "Sem credenciais"}
               </p>
-              <div className="mt-auto pt-4">
-                {g.active ? (
-                  <p className="text-[12px] text-muted">Todas as cobranças novas passam por aqui.</p>
+              <div className="mt-auto space-y-2 pt-4">
+                {active && <p className="text-[12px] text-muted">Cobra agora: {listaFormas(g.cobrando)}.</p>}
+                {!g.configured ? (
+                  <a href={`#${g.name}`} className={cx(pick, "inline-flex items-center border border-line-strong text-muted hover:border-ink hover:text-ink")}>
+                    Configure abaixo
+                  </a>
                 ) : (
-                  <button type="button" disabled={pending || !g.configured} onClick={() => choose(g.name)} className={cx(pick, g.configured ? "bg-ink text-white hover:bg-coral-700" : "border border-line-strong text-muted")}>
-                    {g.configured ? "Usar este gateway" : "Configure abaixo"}
-                  </button>
+                  !everything && (
+                    <button type="button" disabled={pending} onClick={() => choose(g.name)} className={cx(pick, "bg-ink text-white hover:bg-coral-700")}>
+                      {g.methods.length === PAYMENT_KINDS.length ? "Usar para tudo" : `Usar no ${listaFormas(g.methods)}`}
+                    </button>
+                  )
                 )}
               </div>
             </div>
@@ -53,10 +61,11 @@ export function GatewaySwitcher({ gateways, desligado }: { gateways: GatewayCard
             {desligado && <span className="rounded-full bg-ink px-2.5 py-0.5 text-[12px] font-bold text-white">Ativo</span>}
           </div>
           <p className="mt-0.5 text-[12px] text-muted">Sem pagamento online: o pedido vai pronto para o WhatsApp da loja.</p>
+          {!desligado && <p className="mt-3 text-[12px] text-muted">Desliga todas as formas de uma vez.</p>}
           <div className="mt-auto pt-4">
             {!desligado && (
               <button type="button" disabled={pending} onClick={() => choose("desligado")} className={cx(pick, "border border-line-strong hover:border-ink")}>
-                Desligar pagamento online
+                Desligar tudo
               </button>
             )}
           </div>
@@ -73,18 +82,22 @@ export function GatewaySwitcher({ gateways, desligado }: { gateways: GatewayCard
 
 const fmt = (n: number) => (n ? n.toFixed(2).replace(".", ",") : "0");
 
-export function MeiosForm({ metodos, taxas, boletoDias }: { metodos: Record<PaymentKind, boolean>; taxas: PaymentRates; boletoDias: number }) {
+/** Opção do seletor "Quem cobra": `nota` explica por que ainda não dá para usar (sem credenciais, falta o Link…). */
+export type RotaOpcao = { value: string; label: string; nota?: string };
+
+/** Quem cobra cada forma (gateway ou Desligado), taxas e vencimento do boleto. */
+export function MeiosForm({ rotas, opcoes, avisos, taxas, boletoDias }: { rotas: Record<PaymentKind, string>; opcoes: Record<PaymentKind, RotaOpcao[]>; avisos: Partial<Record<PaymentKind, string>>; taxas: PaymentRates; boletoDias: number }) {
   const { state, submit, pending } = useFormAction(salvarMeios);
   const errors = state?.errors ?? {};
   return (
     <form onSubmit={submit} className="space-y-4" noValidate>
       <FormMessage state={state} />
       <div className="relative overflow-x-auto">
-        <table className="w-full min-w-[520px] text-left text-[15px]">
+        <table className="w-full min-w-[620px] text-left text-[15px]">
           <thead className="text-caption text-muted">
             <tr>
               <th className="py-2 pr-4 font-semibold">Forma</th>
-              <th className="py-2 pr-4 font-semibold">Oferecer no checkout</th>
+              <th className="py-2 pr-4 font-semibold">Quem cobra</th>
               <th className="py-2 pr-4 font-semibold">Taxa (%)</th>
               <th className="py-2 font-semibold">Taxa fixa (R$)</th>
             </tr>
@@ -92,16 +105,27 @@ export function MeiosForm({ metodos, taxas, boletoDias }: { metodos: Record<Paym
           <tbody className="divide-y divide-line">
             {PAYMENT_KINDS.map((k) => (
               <tr key={k}>
-                <td className="py-2 pr-4 font-bold">{PAYMENT_LABEL[k]}</td>
-                <td className="py-2 pr-4">
-                  <label className="inline-flex items-center gap-2">
-                    <input type="checkbox" name={`metodo_${k}`} defaultChecked={metodos[k]} className="size-4 accent-ink" /> Ligado
-                  </label>
+                <td className="py-2 pr-4 align-top font-bold leading-10">{PAYMENT_LABEL[k]}</td>
+                <td className="py-2 pr-4 align-top">
+                  <select
+                    key={rotas[k]}
+                    name={`rota_${k}`}
+                    aria-label={`Quem cobra o ${PAYMENT_LABEL[k]}`}
+                    defaultValue={rotas[k]}
+                    className={cx("h-10 w-full max-w-72 rounded-control border bg-white px-3 text-[15px]", errors[`rota_${k}`] ? "border-coral-700" : "border-line")}
+                  >
+                    {opcoes[k].map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.nota ? `${o.label} (${o.nota})` : o.label}
+                      </option>
+                    ))}
+                  </select>
+                  {(errors[`rota_${k}`] || avisos[k]) && <p className="mt-1 max-w-72 text-caption font-semibold text-coral-700">{errors[`rota_${k}`] ?? avisos[k]}</p>}
                 </td>
-                <td className="py-2 pr-4">
+                <td className="py-2 pr-4 align-top">
                   <input aria-label={`Taxa percentual do ${PAYMENT_LABEL[k]}`} name={`taxa_${k}_pct`} inputMode="decimal" defaultValue={fmt(taxas[k].pct)} className={cx("h-10 w-24 rounded-control border px-3", errors[`taxa_${k}_pct`] ? "border-coral-700" : "border-line")} />
                 </td>
-                <td className="py-2">
+                <td className="py-2 align-top">
                   <input aria-label={`Taxa fixa do ${PAYMENT_LABEL[k]}`} name={`taxa_${k}_fixo`} inputMode="decimal" defaultValue={fmt(taxas[k].fixed)} className={cx("h-10 w-24 rounded-control border px-3", errors[`taxa_${k}_fixo`] ? "border-coral-700" : "border-line")} />
                 </td>
               </tr>
@@ -110,7 +134,7 @@ export function MeiosForm({ metodos, taxas, boletoDias }: { metodos: Record<Paym
         </table>
       </div>
       <Field className="max-w-48" label="Vencimento do boleto (dias)" name="boletoDias" inputMode="numeric" defaultValue={String(boletoDias)} error={errors.boletoDias} />
-      <p className="text-caption text-muted">As taxas são descontadas da comissão do lojista (o cliente não paga a mais). O Pix tem o desconto de 5% do site.</p>
+      <p className="text-caption text-muted">Forma desligada não aparece no checkout. As taxas são descontadas da comissão do lojista (o cliente não paga a mais). O Pix tem o desconto de 5% do site.</p>
       <Button type="submit" size="sm" loading={pending}>
         Salvar formas e taxas
       </Button>
@@ -179,12 +203,39 @@ export function CieloForm({ data }: { data: CieloFormData }) {
   );
 }
 
-/** Segredo dos avisos (para cadastrar no portal do gateway), escondido até clicar. */
-export function RevealSecret({ value }: { value: string }) {
+export type PagarmeFormData = { hasKey: boolean; teste: boolean | null };
+
+/** Chave secreta da API v5 da Pagar.me (só Pix nesta integração). */
+export function PagarmeForm({ data }: { data: PagarmeFormData }) {
+  const { state, submit, pending } = useFormAction(salvarPagarme);
+  const errors = state?.errors ?? {};
+  return (
+    <form key={state?.ok ? "salvo" : "form"} onSubmit={submit} className="space-y-4" noValidate>
+      <FormMessage state={state} />
+      <Field
+        label="Chave secreta (sk_…)"
+        name="secretKey"
+        type="password"
+        autoComplete="new-password"
+        spellCheck={false}
+        placeholder={data.hasKey ? `•••••• salva${data.teste ? " (de teste)" : ""}: em branco mantém` : "sk_test_… ou sk_…"}
+        hint="A de teste (sk_test_) usa o simulador da Pagar.me; a de produção (sk_) cobra de verdade."
+        error={errors.secretKey}
+      />
+      <p className="text-caption text-muted">A chave fica cifrada no banco e nunca volta para a tela. A conta precisa estar com o Pix habilitado na Pagar.me.</p>
+      <Button type="submit" size="sm" loading={pending}>
+        Salvar Pagar.me
+      </Button>
+    </form>
+  );
+}
+
+/** Segredo dos avisos (para cadastrar no portal do gateway), escondido até clicar. `hidden`: o que aparece fechado. */
+export function RevealSecret({ value, hidden = "••••••••••••" }: { value: string; hidden?: string }) {
   const [shown, setShown] = useState(false);
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <code className="break-all rounded bg-mist px-2 py-0.5 text-[13px]">{shown ? value : "••••••••••••"}</code>
+      <code className="break-all rounded bg-mist px-2 py-0.5 text-[13px]">{shown ? value : hidden}</code>
       <button type="button" onClick={() => setShown((v) => !v)} className="text-caption font-bold underline underline-offset-2">
         {shown ? "Esconder" : "Mostrar"}
       </button>

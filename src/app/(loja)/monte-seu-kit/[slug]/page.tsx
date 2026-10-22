@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IconCheck, IconClock } from "@/components/icons";
@@ -9,8 +8,11 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
 import { Price } from "@/components/ui/Price";
 import { getProducts } from "@/lib/catalog";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl } from "@/lib/format";
 import { KITS, amountLabel, defaultConfig, getKit, getPalette, getPartyType, kitQuote, priceItem, resolveKitItems } from "@/lib/party";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /*
  * Página do kit: composição fechada (os itens não mudam), textos escritos uma vez, quantidades e medidas
@@ -30,7 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const kit = getKit(slug);
   if (!kit) return {};
-  const cover = resolveKitItems(kit, getProducts()).find((item) => item.id === kit.cover);
+  const cover = resolveKitItems(kit, produtosComMidia(getProducts(), await midiaDoSite())).find((item) => item.id === kit.cover);
   return {
     title: kit.name,
     description: `${kit.tagline} ${kit.audience}. Valor calculado item a item.`,
@@ -42,7 +44,7 @@ export default async function KitPage({ params }: Props) {
   const { slug } = await params;
   const kit = getKit(slug);
   if (!kit) notFound();
-  const items = resolveKitItems(kit, getProducts());
+  const items = resolveKitItems(kit, produtosComMidia(getProducts(), await midiaDoSite()));
   const cover = items.find((item) => item.id === kit.cover) ?? items[0];
   if (!cover) notFound();
   const quote = kitQuote(items);
@@ -63,7 +65,7 @@ export default async function KitPage({ params }: Props) {
 
       <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center xl:gap-14">
         <div className="relative aspect-[4/3] overflow-hidden rounded-card" style={{ background: `linear-gradient(150deg, ${first}55 0%, ${second ?? first}55 100%)` }}>
-          <Image src={imageUrl(cover.product.image)} alt={`${cover.title}, um dos itens do ${kit.name}`} fill loading="eager" sizes="(max-width: 1024px) 90vw, 640px" className="object-contain p-8" />
+          <FotoProduto src={cover.product.image} alt={`${cover.title}, um dos itens do ${kit.name}`} sizes="(max-width: 1024px) 90vw, 640px" respiro="p-8" priority />
         </div>
         <div>
           <p className="text-sm font-bold uppercase tracking-[0.2em] text-coral-700">Monte Seu Kit — Festas</p>
@@ -104,7 +106,7 @@ export default async function KitPage({ params }: Props) {
         </ul>
       </section>
 
-      <div id="personalizar" className="mt-14 scroll-mt-32">
+      <div id="personalizar" className="mt-14 scroll-mt-painel">
         <KitConfigurator
           kit={{ slug: kit.slug, name: kit.name, partyType: kit.partyType, theme: kit.theme, palette: kit.palette, phrase: kit.phrase, cover: kit.cover }}
           items={items}

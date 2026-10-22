@@ -501,10 +501,10 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
         ref={previewRef}
         aria-labelledby="fachada-visualizacao"
         className={cx(
-          "min-w-0 scroll-mt-28",
+          "min-w-0 scroll-mt-painel",
           // O 3D acompanha a edição: preso ao lado no computador e no topo no celular. A foto (cantos, fotos e ajustes) rola com a página.
-          view === "3d" && "lg:sticky lg:top-28 lg:self-start",
-          view === "3d" && compact && "sticky top-header z-20 -mx-5 border-b border-line bg-white px-5 pb-3 pt-3 md:-mx-10 md:px-10",
+          view === "3d" && "lg:sticky lg:top-painel lg:self-start",
+          view === "3d" && compact && "sticky top-topo z-20 -mx-5 border-b border-line bg-white px-5 pb-3 pt-3 md:-mx-10 md:px-10",
         )}
       >
         <h3 id="fachada-visualizacao" className="sr-only">
@@ -553,15 +553,16 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
 
         {view === "3d" ? (
           <>
-            <div ref={viewerRef} className="scroll-mt-28">
+            <div ref={viewerRef} className="scroll-mt-painel">
               <Mockup3D
                 spec={spec}
                 art={art}
                 label={LABEL}
                 captureRef={captureRef}
                 focus={focus}
-                // No computador a prévia cabe na altura da tela (com os botões e a legenda); no celular, um terço dela.
-                className={cx("w-full lg:aspect-auto lg:h-[clamp(20rem,calc(100dvh-15rem),40rem)]", compact ? "h-[34svh]" : "aspect-[4/3]")}
+                // No computador a prévia presa cabe na tela abaixo do topo (--spacing-painel), com os botões de cima (52 px),
+                // a legenda (52 px) e 16 px de folga; no celular, um terço dela.
+                className={cx("w-full lg:aspect-auto lg:h-[clamp(20rem,calc(100dvh-var(--spacing-painel)-7.5rem),40rem)]", compact ? "h-[34svh]" : "aspect-[4/3]")}
               />
             </div>
             <p className={cx("mt-3 text-caption text-muted", compact && "hidden")}>
@@ -710,7 +711,7 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
           </li>
         </ol>
 
-        <div ref={summaryRef} className="mt-10 scroll-mt-32 rounded-card bg-mist p-5">
+        <div ref={summaryRef} className="mt-10 scroll-mt-painel rounded-card bg-mist p-5">
           {size && priced && !priced.error ? (
             <>
               <p className="text-caption text-muted">

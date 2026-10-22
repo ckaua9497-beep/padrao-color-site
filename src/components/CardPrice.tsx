@@ -26,6 +26,26 @@ export function CardPrice({ product, className }: { product: Priced; className?:
   );
 }
 
+/**
+ * Preço do card do Figma (VitrineCard): "A partir de:" numa linha, o valor grande em laranja na outra (≥ 24px, texto
+ * grande: o laranja passa no contraste) e a unidade sempre numa terceira linha. Com a mesma estrutura em todos os cards,
+ * o "A partir de:" fica na mesma altura nos vizinhos (a unidade ao lado do valor quebrava só em alguns e desalinhava).
+ * Sem a linha do PIX (ela fica na página do produto).
+ */
+export function VitrinePrice({ product, className }: { product: Priced; className?: string }) {
+  const from = useFromPrices([product.groupId])(product.groupId);
+  const value = from?.p ?? product.price;
+  const qty = from?.q ?? product.priceQty;
+  const unit = product.perM2 ? "por m²" : quantityLabel(qty);
+  return (
+    <div aria-busy={from === undefined || undefined} className={cx("tabular-nums transition-opacity motion-reduce:transition-none", from === undefined && "opacity-50", className)}>
+      <p className="text-base leading-tight">A partir de:</p>
+      <p className="text-xl font-black leading-tight text-price min-[360px]:text-2xl">{formatBRL(value)}</p>
+      <p className="text-caption text-muted">{unit}</p>
+    </div>
+  );
+}
+
 /** Selo do card quando o preço mostrado é o da tabela de revenda. */
 export function CardResellerBadge({ groupId }: { groupId?: number }) {
   const from = useFromPrices([groupId])(groupId);

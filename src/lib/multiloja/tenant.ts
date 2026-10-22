@@ -3,6 +3,8 @@ import "server-only";
 import { headers } from "next/headers";
 import { cache } from "react";
 import { getProducts, toSummary, type Product, type ProductSummary } from "../catalog";
+import { produtosComMidia } from "../midia";
+import { midiaDoSite } from "../midia-servidor";
 import { parseTenantHost, priceProduct, priceSummary } from "./core";
 import { getLojaByDomain, getLojaBySubdomain, listLojaProdutos, type Loja } from "./repo";
 
@@ -52,9 +54,9 @@ export async function lojaUrl(loja: Pick<Loja, "subdominio" | "dominio">): Promi
 
 export type LojaItem = { product: Product; margin: number; featured: boolean; ativadoEm: string };
 
-/** Produtos ativos da loja que existem no catálogo, com a margem que vale para cada um. */
+/** Produtos ativos da loja que existem no catálogo, com a margem que vale para cada um (e as fotos trocadas no admin). */
 export const lojaItens = cache(async (lojaId: number, margemPadrao: number): Promise<LojaItem[]> => {
-  const byId = new Map(getProducts().map((p) => [p.id, p]));
+  const byId = new Map(produtosComMidia(getProducts(), await midiaDoSite()).map((p) => [p.id, p]));
   return (await listLojaProdutos(lojaId)).flatMap((row) => {
     const product = byId.get(row.produtoId);
     return product ? [{ product, margin: row.margem ?? margemPadrao, featured: row.destaque, ativadoEm: row.ativadoEm }] : [];

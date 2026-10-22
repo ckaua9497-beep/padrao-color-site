@@ -1,15 +1,14 @@
 "use client";
 
-import Image from "next/image";
 import { useMemo, useState } from "react";
 import Mockup3D from "@/components/mockup/Mockup3D";
 import type { ArtSettings } from "@/components/mockup/art";
 import { IconCube } from "@/components/icons";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { imageUrl } from "@/lib/format";
 import { formatSize, mockupSpec } from "@/lib/mockup";
 import type { PartyItem, PartyPalette, Size } from "@/lib/party";
 import type { Selection } from "@/lib/pricing";
+import { FotoProduto } from "@/components/FotoProduto";
 
 type Props = {
   item: Pick<PartyItem, "title" | "product"> | null;
@@ -70,8 +69,9 @@ export default function PartyPreview({
           ]}
         />
       </div>
+      {/* --lado: lado do quadro, definido pelo painel preso da página (encolhe em telas baixas); sem ele, a largura toda. */}
       {mode === "3d" && item && spec ? (
-        <Mockup3D lazy spec={spec} art={art} label={item.title} fallbackImage={item.product.image} className="aspect-square w-full overflow-hidden rounded-card" />
+        <Mockup3D lazy spec={spec} art={art} label={item.title} fallbackImage={item.product.image} className="mx-auto aspect-square w-[var(--lado,100%)] overflow-hidden rounded-card" />
       ) : (
         <PhotoPreview item={item} art={art} palette={palette} />
       )}
@@ -83,8 +83,8 @@ export default function PartyPreview({
 function PhotoPreview({ item, art, palette }: { item: Pick<PartyItem, "product"> | null; art: ArtSettings; palette: PartyPalette }) {
   const [first, second] = palette.colors;
   return (
-    <div className="relative aspect-square w-full overflow-hidden rounded-card" style={{ background: `linear-gradient(150deg, ${first} 0%, ${second ?? first} 100%)` }}>
-      {item && <Image src={imageUrl(item.product.image)} alt={item.product.name} fill sizes="(max-width: 1024px) 90vw, 400px" className="object-contain p-8 pb-28" />}
+    <div className="relative mx-auto aspect-square w-[var(--lado,100%)] overflow-hidden rounded-card" style={{ background: `linear-gradient(150deg, ${first} 0%, ${second ?? first} 100%)` }}>
+      {item && <FotoProduto src={item.product.image} alt={item.product.name} sizes="(max-width: 1024px) 90vw, 400px" respiro="p-8 pb-28" />}
       <div className="absolute inset-x-4 bottom-4 rounded-control px-4 py-3 text-center shadow-card" style={{ background: art.background, color: art.textColor }}>
         <p className="truncate text-lg font-black leading-tight">{art.text}</p>
         {art.subtext && <p className="mt-0.5 truncate text-sm">{art.subtext}</p>}

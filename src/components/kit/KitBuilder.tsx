@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -16,7 +15,7 @@ import QtyStepper from "@/components/ui/QtyStepper";
 import { TextField } from "@/components/ui/TextField";
 import { cx } from "@/components/ui/cx";
 import { useCustomerPriceList } from "@/lib/customer";
-import { formatBRL, imageUrl, spectrumAt } from "@/lib/format";
+import { formatBRL, spectrumAt } from "@/lib/format";
 import {
   KIT_COUNTS,
   KIT_GOALS,
@@ -62,6 +61,7 @@ import { KitArtPanel } from "./KitArtPanel";
 import { KitGallery, type GalleryItem } from "./KitGallery";
 import { KitItemCard, perKitUnit } from "./KitItemCard";
 import KitPreview from "./KitPreview";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /*
  * Monte o seu kit: assistente em quatro perguntas (para que é, quantos kits, quanto investir por kit e o que
@@ -447,7 +447,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
       "Já deixamos marcados os que cabem no orçamento. Toque para tirar ou incluir; dá para buscar outros depois.",
     ];
     return (
-      <div ref={rootRef} className="scroll-mt-28">
+      <div ref={rootRef} className="scroll-mt-painel">
         <section aria-labelledby="kit-pergunta" className="mx-auto max-w-5xl rounded-card bg-white p-5 shadow-card ring-1 ring-line sm:p-8 lg:p-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm font-bold uppercase tracking-[0.2em] text-coral-700">Monte o seu kit</p>
@@ -586,7 +586,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
                           )}
                         >
                           <span className="relative size-16 shrink-0 overflow-hidden rounded-control bg-mist">
-                            <Image src={imageUrl(item.product.image)} alt="" fill sizes="64px" className="object-contain p-1" />
+                            <FotoProduto src={item.product.image} alt="" sizes="64px" respiro="p-1" estudio="cobrir" />
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block pr-7 text-sm font-bold leading-snug">{item.title}</span>
@@ -648,7 +648,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
 
   // ---------------------------------------------------------------------------------- kit montado
   return (
-    <div ref={rootRef} className="scroll-mt-28">
+    <div ref={rootRef} className="scroll-mt-painel">
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)] xl:gap-14">
         <div className="min-w-0">
           <header>
@@ -669,7 +669,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
             </div>
           </header>
 
-          <section id="kit-arte" aria-labelledby="kit-arte-titulo" className="mt-10 scroll-mt-28">
+          <section id="kit-arte" aria-labelledby="kit-arte-titulo" className="mt-10 scroll-mt-painel">
             <h3 id="kit-arte-titulo" className="text-title font-bold">
               Personalize todos os itens de uma vez
             </h3>
@@ -740,7 +740,15 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
 
         </div>
 
-        <aside aria-label="Resumo do kit" className="min-w-0 lg:sticky lg:top-28 lg:self-start">
+        {/*
+          Preso ao rolar. O resumo é mais alto que a tela de um notebook: o painel fica na altura disponível e rola por
+          dentro (o botão do carrinho sempre ao alcance), e o 3D encolhe (--lado) para a prévia caber inteira.
+          px-1/-mx-1: espaço para o contorno de foco dos botões de largura total, que a rolagem cortaria.
+        */}
+        <aside
+          aria-label="Resumo do kit"
+          className="min-w-0 lg:sticky lg:top-painel lg:-mx-1 lg:max-h-[calc(100dvh-var(--spacing-painel)-1rem)] lg:self-start lg:overflow-y-auto lg:px-1 lg:[--lado:clamp(16rem,calc(100dvh-var(--spacing-painel)-10.75rem),100%)] lg:[scrollbar-width:thin]"
+        >
           <KitPreview
             id="kit-previa"
             view={previewView}

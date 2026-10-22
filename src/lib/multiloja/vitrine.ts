@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getCategory, type ProductSummary } from "../catalog";
+import { categoriaComMidia } from "../midia";
+import { midiaDoSite } from "../midia-servidor";
 import { whatsappLink } from "./core";
 import type { Loja } from "./repo";
 import { lojaCategorias, lojaItens, lojaSummary } from "./tenant";
@@ -26,7 +28,11 @@ export type VitrineDados = {
 };
 
 export async function vitrineDados(loja: Loja): Promise<VitrineDados> {
-  const items = await lojaItens(loja.id, loja.margemPadrao);
+  const [items, midia] = await Promise.all([lojaItens(loja.id, loja.margemPadrao), midiaDoSite()]);
+  const imagemDaCategoria = (slug: string) => {
+    const c = getCategory(slug);
+    return c ? categoriaComMidia(c, midia).image : null;
+  };
   return {
     lojaId: loja.id,
     nome: loja.nome,
@@ -34,6 +40,6 @@ export async function vitrineDados(loja: Loja): Promise<VitrineDados> {
     sobre: loja.sobre,
     whatsapp: loja.whatsapp ? whatsappLink(loja.whatsapp, `Olá! Vim pela loja ${loja.nome}.`) : null,
     produtos: items.map((item) => ({ ...lojaSummary(item), featured: item.featured, ativadoEm: item.ativadoEm })),
-    categorias: lojaCategorias(items, loja.categoriasDestaque).map((c) => ({ ...c, image: getCategory(c.slug)?.image ?? null })),
+    categorias: lojaCategorias(items, loja.categoriasDestaque).map((c) => ({ ...c, image: imagemDaCategoria(c.slug) })),
   };
 }

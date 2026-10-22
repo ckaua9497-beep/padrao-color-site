@@ -2,27 +2,26 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
 import Logo from "@/components/Logo";
-import { Marquee } from "@/components/motion";
-import { IconArrow, IconBag, IconBalloon, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconSearch, IconShield, IconStorefront, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
+import { IconArrow, IconBalloon, IconBag, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconShield, IconStorefront, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
 import { useCart } from "@/components/cart/CartProvider";
 import { AccordionItem } from "@/components/ui/Accordion";
 import { Drawer } from "@/components/ui/Drawer";
 import { IconButton } from "@/components/ui/IconButton";
 import { cx } from "@/components/ui/cx";
-import { useFromPrices } from "@/lib/customer";
-import { formatBRL, imageUrl, spectrumAt } from "@/lib/format";
+import { imageUrl, spectrumAt } from "@/lib/format";
 import type { BenefitIcon, MenuBenefit, TabIcon } from "@/lib/menu";
 import { EXTRA_TABS } from "@/lib/menu";
 import { STORE } from "@/lib/store";
-import { AccountLink } from "@/components/account/AccountLink";
+import { BuscaTopo, PainelBusca } from "./Busca";
+import { ContaLink } from "./ContaLink";
+import { FaixaCupom } from "./FaixaCupom";
+import { IconCarrinho, IconGrade, IconLupa } from "./icones";
 
 export type MenuCategory = { slug: string; name: string; count: number; image: string; minLeadDays: number | null };
 export type MenuGroup = { label: string; blurb: string; categories: MenuCategory[]; benefits: MenuBenefit[]; more?: { href: string; label: string } };
-
-type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number; g?: number };
 
 const TAB_ICONS: Record<TabIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   balloon: IconBalloon,
@@ -41,15 +40,28 @@ const BENEFIT_ICONS: Record<BenefitIcon, ComponentType<SVGProps<SVGSVGElement>>>
   headset: IconHeadset,
 };
 
-const normalize = (v: string) =>
-  v
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
+/**
+ * Mesma largura do conteúdo das páginas (container-site, globals.css): a partir de 1280 px, margens de 108 px (logo em
+ * x = 108 e conteúdo de 1064 px a 1280, como no Figma) até o conteúdo chegar a 1300 px; abaixo disso, margens de
+ * 20 px (celular) e 40 px (tablet). Nada no topo depende de 1064: a busca tem largura máxima e os ícones ficam
+ * presos à direita.
+ */
+const LARGURA = "container-site";
 
+// Linha do menu (Figma: faixa cinza com itens de 14px escuros e setinha).
+const itemMenu = "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[14px] font-semibold transition-colors duration-200";
+// Linha das abas (festa, kit, fachadas, produtos novos).
 const navItem = "flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-2 text-[14px] font-bold transition-colors duration-200 min-[1440px]:px-3.5 min-[1440px]:text-[15px] 2xl:text-nav";
 
-export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[]; announcements: string[] }) {
+/**
+ * Topo da loja (Figma "LOJA ONLINE - PADRAOCOLOR"):
+ * 1. faixa laranja do cupom (rola com a página);
+ * 2. linha presa: logo, busca em pílula (a partir de lg; abaixo, a lupa abre o painel), conta e carrinho;
+ * 3. linha presa do menu de categorias com os mega-menus (a partir de xl; abaixo, a gaveta do hambúrguer);
+ * 4. abas de festa, kit, fachadas e produtos novos (rolam com a página).
+ * A parte presa mede var(--spacing-topo): 92px, ou 136px com a linha do menu (globals.css).
+ */
+export default function SiteHeader({ menu }: { menu: MenuGroup[] }) {
   const pathname = usePathname();
   const { count, setOpen: openCart } = useCart();
   const [scrolled, setScrolled] = useState(false);
@@ -58,6 +70,14 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
   const [searchOpen, setSearchOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
   const triggers = useRef<(HTMLButtonElement | null)[]>([]);
+  const lupa = useRef<HTMLButtonElement>(null);
+
+  // Painel de busca fechado (Esc, X, Enter ou toque num resultado): o foco volta para a lupa que o abriu, senão cairia
+  // no body junto com o painel que some.
+  const fecharBusca = () => {
+    setSearchOpen(false);
+    lupa.current?.focus();
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -96,22 +116,15 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
     closeTimer.current = window.setTimeout(() => setOpenGroup(null), 160);
   };
+  // Ponteiro na linha do logo ou foco na busca: o mega menu (que abre abaixo da linha do menu) fecha na hora.
+  const closeNow = () => {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    setOpenGroup(null);
+  };
 
   return (
     <>
-      {/* Texto pequeno sobre coral: preto passa AA (6,2:1); branco não passaria. */}
-      <div className="bg-coral text-ink">
-        <Marquee
-          className="h-9 items-center text-[13px] font-semibold"
-          itemClassName="gap-6 pr-6"
-          items={announcements.map((text, i) => (
-            <>
-              <span key={`t${i}`}>{text}</span>
-              <span key={`d${i}`} aria-hidden className="size-1.5 rounded-full bg-ink/40" />
-            </>
-          ))}
-        />
-      </div>
+      <FaixaCupom />
 
       <header
         className={cx("sticky top-0 z-header bg-white transition-shadow duration-300", (scrolled || openGroup !== null) && "shadow-header")}
@@ -120,12 +133,70 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpenGroup(null);
         }}
       >
-        <div className="container-site flex h-header items-center gap-6">
-          <Logo />
+        <div onMouseEnter={closeNow}>
+          <div className={cx(LARGURA, "flex h-header items-center gap-2 min-[360px]:gap-3 lg:gap-6 xl:gap-[39px]")}>
+            <Logo />
 
-          <nav aria-label="Menu principal" className="hidden flex-1 items-center gap-0.5 xl:flex">
+            <BuscaTopo onFocus={closeNow} className="hidden min-w-0 flex-1 lg:block xl:max-w-[732px]" />
+
+            {/*
+              Ícones presos à direita do conteúdo em qualquer largura. A margem negativa alinha o desenho (não a área de
+              toque de 44 px) com a borda: o traço do hambúrguer fica a 14 px da borda do botão e o carrinho, a 4 px.
+            */}
+            <div className="-mr-3.5 ml-auto flex items-center gap-0.5 lg:gap-2 xl:-mr-1 xl:gap-5">
+              <button
+                ref={lupa}
+                type="button"
+                aria-label="Buscar produtos"
+                title="Buscar produtos"
+                aria-expanded={searchOpen}
+                aria-controls="busca"
+                onClick={() => setSearchOpen((v) => !v)}
+                className="grid size-11 shrink-0 place-items-center rounded-full transition-colors duration-200 hover:bg-ink/5 lg:hidden"
+              >
+                <IconLupa className="size-6" />
+              </button>
+              <ContaLink />
+              <IconButton label={`Abrir carrinho, ${count} ${count === 1 ? "item" : "itens"}`} variant="ghost" onClick={() => openCart(true)} className="relative">
+                <IconCarrinho className="size-7 lg:size-9" />
+                {count > 0 && (
+                  <span aria-hidden className="absolute -right-0.5 top-0 grid min-w-5 place-items-center rounded-full bg-coral px-1 text-[11px] font-bold leading-5 text-ink">
+                    {count}
+                  </span>
+                )}
+              </IconButton>
+              <IconButton
+                label="Abrir menu"
+                variant="ghost"
+                aria-expanded={mobileOpen}
+                aria-controls="menu-mobile"
+                onClick={() => {
+                  setSearchOpen(false);
+                  setMobileOpen(true);
+                }}
+                className="xl:hidden"
+              >
+                <IconMenu className="size-6" />
+              </IconButton>
+            </div>
+          </div>
+        </div>
+
+        <nav aria-label="Menu principal" className="hidden h-menu-topo border-t border-line bg-mist xl:block">
+          <ul className={cx(LARGURA, "flex h-full items-center justify-between")}>
+            <li>
+              <Link
+                href="/produtos"
+                onMouseEnter={leave}
+                aria-current={pathname === "/produtos" ? "page" : undefined}
+                className={cx(itemMenu, "-ml-3", pathname === "/produtos" ? "bg-ink text-white" : "text-ink-soft hover:bg-white")}
+              >
+                <IconGrade aria-hidden className="size-[18px]" />
+                Todos os produtos
+              </Link>
+            </li>
             {menu.map((group, i) => (
-              <div key={group.label} onMouseEnter={() => enter(i)}>
+              <li key={group.label} onMouseEnter={() => enter(i)}>
                 <button
                   ref={(node) => {
                     triggers.current[i] = node;
@@ -134,65 +205,41 @@ export default function SiteHeader({ menu, announcements }: { menu: MenuGroup[];
                   aria-expanded={openGroup === i}
                   aria-controls={`mega-${i}`}
                   onClick={() => setOpenGroup(openGroup === i ? null : i)}
-                  className={cx(navItem, activeGroup === i ? "bg-ink text-white" : openGroup === i ? "bg-mist" : "hover:bg-mist")}
+                  className={cx(itemMenu, activeGroup === i ? "bg-ink text-white" : openGroup === i ? "bg-white text-ink" : "text-ink-soft hover:bg-white")}
                 >
                   {group.label}
-                  <IconChevron aria-hidden className={cx("size-4 transition-transform duration-300", openGroup === i && "rotate-180")} />
+                  <IconChevron aria-hidden className={cx("size-3.5 transition-transform duration-300", openGroup === i && "rotate-180")} />
                 </button>
-              </div>
+              </li>
             ))}
-            <Link href="/#mockup-3d" onMouseEnter={leave} title="Mockup 3D" className={cx(navItem, "hover:bg-mist")}>
-              <IconCube aria-hidden className="size-4 text-coral-700" />
-              <span className="max-[1439px]:sr-only">Mockup 3D</span>
-            </Link>
-            <Link href="/produtos" onMouseEnter={leave} aria-current={pathname === "/produtos" ? "page" : undefined} className={cx(navItem, pathname === "/produtos" ? "bg-ink text-white" : "hover:bg-mist")}>
-              Todos os produtos
-            </Link>
-          </nav>
-
-          <div className="ml-auto flex items-center gap-1 xl:ml-0">
-            <IconButton label="Buscar produtos" variant="ghost" aria-expanded={searchOpen} aria-controls="busca" onClick={() => setSearchOpen((v) => !v)} className="hover:bg-mist">
-              <IconSearch className="size-5.5" />
-            </IconButton>
-            <a
-              href={STORE.whatsapp}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Ajuda pelo WhatsApp"
-              title="Ajuda pelo WhatsApp"
-              className="hidden size-11 place-items-center rounded-full transition-colors hover:bg-mist xl:grid"
-            >
-              <IconHeadset aria-hidden className="size-5" />
-            </a>
-            <AccountLink />
-            <IconButton label={`Abrir carrinho, ${count} ${count === 1 ? "item" : "itens"}`} variant="ghost" onClick={() => openCart(true)} className="relative hover:bg-mist">
-              <IconBag className="size-5.5" />
-              {count > 0 && (
-                <span aria-hidden className="absolute right-0.5 top-0.5 grid min-w-5 place-items-center rounded-full bg-coral px-1 text-[11px] font-bold leading-5 text-ink">
-                  {count}
-                </span>
-              )}
-            </IconButton>
-            <IconButton label="Abrir menu" variant="ghost" aria-expanded={mobileOpen} aria-controls="menu-mobile" onClick={() => setMobileOpen(true)} className="hover:bg-mist xl:hidden">
-              <IconMenu className="size-6" />
-            </IconButton>
-          </div>
-        </div>
+            <li>
+              <Link href="/#mockup-3d" onMouseEnter={leave} className={cx(itemMenu, "-mr-3 text-ink-soft hover:bg-white")}>
+                <IconCube aria-hidden className="size-[18px] text-coral-700" />
+                Mockup 3D
+              </Link>
+            </li>
+          </ul>
+        </nav>
 
         {menu.map((group, i) => (
           <MegaPanel key={group.label} id={`mega-${i}`} group={group} index={i} open={openGroup === i} onEnter={() => enter(i)} />
         ))}
 
-        <SearchPanel open={searchOpen} onClose={() => setSearchOpen(false)} />
+        <PainelBusca open={searchOpen} onClose={fecharBusca} />
       </header>
 
-      <nav aria-label="Festas, kits e fachadas" className="hidden border-y border-line bg-white xl:block">
-        <div className="container-site flex h-12 items-center gap-1">
-          {EXTRA_TABS.map((tab) => {
+      <nav aria-label="Festas, kits e fachadas" className="hidden border-b border-line bg-white xl:block">
+        <div className={cx(LARGURA, "flex h-12 items-center gap-1")}>
+          {EXTRA_TABS.map((tab, i) => {
             const Icon = TAB_ICONS[tab.icon];
             const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
             return (
-              <Link key={tab.href} href={tab.href} aria-current={pathname === tab.href ? "page" : undefined} className={cx(navItem, "gap-2", active ? "bg-ink text-white" : "hover:bg-mist")}>
+              <Link
+                key={tab.href}
+                href={tab.href}
+                aria-current={pathname === tab.href ? "page" : undefined}
+                className={cx(navItem, "gap-2", i === 0 && "-ml-2.5 min-[1440px]:-ml-3.5", active ? "bg-ink text-white" : "hover:bg-mist")}
+              >
                 <Icon aria-hidden className={cx("size-[18px]", active ? "text-white" : "text-coral-700")} />
                 {tab.label}
               </Link>
@@ -215,13 +262,17 @@ function MegaPanel({ id, group, index, open, onEnter }: { id: string; group: Men
       onMouseEnter={onEnter}
       className={cx("container-site absolute inset-x-0 top-full hidden transition-all duration-300 ease-button xl:block", open ? "visible translate-y-0 opacity-100" : "invisible -translate-y-2 opacity-0")}
     >
-      <div className="mx-auto flex max-w-[1180px] gap-8 rounded-menu bg-white p-5 shadow-menu">
+      <div className="flex gap-8 rounded-menu bg-white p-5 shadow-menu">
+        {/*
+          A imagem fica no fluxo, acima do texto: as fotos redondas das categorias (admin → Site) cobriam o título quando
+          eram absolutas e o cartão era baixo (grupo com poucas categorias).
+        */}
         {cover && (
-          <Link href={`/categoria/${cover.slug}`} className="group relative flex w-[260px] shrink-0 flex-col justify-end overflow-hidden rounded-control p-5" style={{ background: tone.soft }}>
-            <Image src={imageUrl(cover.image)} alt="" width={260} height={260} className="absolute -right-6 -top-4 size-[220px] object-contain transition-transform duration-500 ease-card group-hover:scale-105" />
-            <p className="relative text-lg font-bold leading-tight">{group.label}</p>
-            <p className="relative mt-1 text-caption text-ink/75">{group.blurb}</p>
-            <span className="relative mt-4 inline-flex w-fit items-center gap-2 rounded-full bg-white px-4 py-2 text-caption font-bold">
+          <Link href={`/categoria/${cover.slug}`} className="group flex w-[260px] shrink-0 flex-col overflow-hidden rounded-control p-5" style={{ background: tone.soft }}>
+            <Image src={imageUrl(cover.image)} alt="" width={260} height={260} className="-mr-3 -mt-3 mb-3 ml-auto size-[160px] object-contain transition-transform duration-500 ease-card group-hover:scale-105" />
+            <p className="mt-auto text-lg font-bold leading-tight">{group.label}</p>
+            <p className="mt-1 text-caption text-ink/75">{group.blurb}</p>
+            <span className="mt-4 inline-flex w-fit items-center gap-2 rounded-full bg-white px-4 py-2 text-caption font-bold">
               Ver {cover.name.toLowerCase()} <IconArrow aria-hidden className="size-4" />
             </span>
           </Link>
@@ -267,95 +318,6 @@ function MegaPanel({ id, group, index, open, onEnter }: { id: string; group: Men
           })}
         </ul>
       </div>
-    </div>
-  );
-}
-
-function SearchPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter();
-  const [term, setTerm] = useState("");
-  const [index, setIndex] = useState<SearchEntry[] | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  });
-
-  // Foco só quando a busca abre (antes o efeito rodava a cada render e roubava o foco).
-  useEffect(() => {
-    if (open) input.current?.focus();
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || index) return;
-    fetch("/produtos/indice.json")
-      .then((r) => r.json())
-      .then(setIndex)
-      .catch(() => setIndex([]));
-  }, [open, index]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCloseRef.current();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  const results = useMemo(() => {
-    const words = normalize(term).split(/\s+/).filter(Boolean);
-    if (!index || words.length === 0) return [];
-    return index.filter((e) => words.every((w) => normalize(`${e.n} ${e.c}`).includes(w))).slice(0, 8);
-  }, [index, term]);
-  // Revendedor logado: o "a partir de" da tabela de revenda (o mesmo dos cards).
-  const fromPrice = useFromPrices(results.map((r) => r.g));
-
-  return (
-    <div id="busca" className={cx("absolute inset-x-0 top-full border-t border-line bg-white transition-all duration-300 ease-button", open ? "visible opacity-100 shadow-header" : "invisible -translate-y-2 opacity-0")}>
-      <form
-        role="search"
-        className="mx-auto max-w-[1100px] px-5 py-6"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (term.trim()) router.push(`/produtos?busca=${encodeURIComponent(term.trim())}`);
-        }}
-      >
-        <div className="flex items-center gap-3 rounded-full bg-mist px-5 focus-within:ring-2 focus-within:ring-ink">
-          <IconSearch aria-hidden className="size-5 text-muted" />
-          <input
-            ref={input}
-            type="search"
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="O que você quer imprimir? Ex.: cartão de visita, caneca, banner"
-            className="h-14 flex-1 bg-transparent text-base placeholder:text-muted focus-visible:outline-none"
-            aria-label="Buscar produtos"
-          />
-          <IconButton label="Fechar busca" variant="ghost" size="sm" onClick={onClose} className="hover:bg-white">
-            <IconClose className="size-4" />
-          </IconButton>
-        </div>
-        <p aria-live="polite" className="sr-only">
-          {term.trim() && index ? `${results.length} produtos encontrados` : ""}
-        </p>
-        {results.length > 0 && (
-          <ul className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-            {results.map((r) => (
-              <li key={r.s}>
-                <Link href={`/produto/${r.s}`} className="group flex items-center gap-3 rounded-control p-2 transition-colors hover:bg-mist">
-                  <span className="relative size-14 shrink-0 overflow-hidden rounded-thumb bg-mist">
-                    <Image src={imageUrl(r.i)} alt="" fill sizes="56px" className="object-contain p-1" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="line-clamp-2 text-caption font-semibold leading-snug group-hover:underline">{r.n}</span>
-                    <span className="text-caption text-muted">a partir de {formatBRL(fromPrice(r.g)?.p ?? r.p)}</span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-        {term.trim() && index && results.length === 0 && <p className="mt-5 text-sm text-muted">Nenhum produto encontrado para “{term}”.</p>}
-      </form>
     </div>
   );
 }
@@ -411,11 +373,12 @@ function MobileMenu({ open, onClose, menu }: { open: boolean; onClose: () => voi
             Minha conta
           </Link>
         </nav>
-        <div className="mt-auto grid gap-2 pt-8 text-[15px]">
-          <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-semibold">
+        {/* Alvos de toque de 44 px. */}
+        <div className="mt-auto grid gap-1 pt-8 text-[15px]">
+          <a href={STORE.whatsapp} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center gap-2 font-semibold hover:underline">
             <IconWhatsApp aria-hidden className="size-5" /> Ajuda pelo WhatsApp
           </a>
-          <a href={STORE.phoneHref} className="text-white/80">
+          <a href={STORE.phoneHref} className="flex min-h-11 items-center text-white/80 hover:text-white">
             {STORE.phone} · {STORE.hours}
           </a>
         </div>

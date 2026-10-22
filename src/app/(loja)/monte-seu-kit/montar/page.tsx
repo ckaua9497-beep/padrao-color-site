@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import KitBuilder from "@/components/kit/KitBuilder";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { getProducts } from "@/lib/catalog";
+import { produtosComMidia } from "@/lib/midia";
+import { midiaDoSite } from "@/lib/midia-servidor";
 import { resolveKitCatalog } from "@/lib/kit-builder";
 
 /*
@@ -36,8 +38,8 @@ function BuilderSkeleton() {
   );
 }
 
-export default function MontarKitPage() {
-  const catalog = resolveKitCatalog(getProducts());
+export default async function MontarKitPage() {
+  const catalog = resolveKitCatalog(produtosComMidia(getProducts(), await midiaDoSite()));
   return (
     <div className="container-site pb-20 pt-8">
       <Breadcrumb

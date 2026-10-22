@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Canvas, useFrame, useThree, type RootState } from "@react-three/fiber";
 import { Environment, Lightformer, OrbitControls } from "@react-three/drei";
@@ -10,7 +9,6 @@ import { HorizontalBlurShader } from "three/examples/jsm/shaders/HorizontalBlurS
 import { VerticalBlurShader } from "three/examples/jsm/shaders/VerticalBlurShader.js";
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
-import { imageUrl } from "@/lib/format";
 import type { ArtSettings } from "./art";
 import { MockupModel } from "./models";
 import { sizeLabels } from "./models/shared";
@@ -20,6 +18,7 @@ import { PRESETS, environmentFor, roomBackdropColor, roomsFor, type RoomEnvironm
 import { RoomLights, RoomScene } from "./environments/Room";
 import { RoomDims } from "./environments/RoomDims";
 import { measureBox, placeInRoom } from "./environments/placement";
+import { FotoProduto } from "@/components/FotoProduto";
 
 /**
  * Foto do estúdio no ângulo 3/4 do carrinho: JPEG com o fundo da tela. `transparent`: PNG sem fundo (só a peça e a
@@ -1023,7 +1022,7 @@ class MockupBoundary extends Component<{ fallback: ReactNode; children: ReactNod
 function ViewerFallback({ image, label, onRetry }: { image?: string; label: string; onRetry?: () => void }) {
   return (
     <div className="absolute inset-0 flex flex-col">
-      {image && <Image src={imageUrl(image)} alt={label} fill sizes="(max-width: 1024px) 90vw, 560px" className="object-contain p-8" />}
+      {image && <FotoProduto src={image} alt={label} sizes="(max-width: 1024px) 90vw, 560px" respiro="p-8" />}
       <div role="status" className="relative z-10 m-3 mt-auto rounded-control bg-white/90 p-4 text-center shadow-float ring-1 ring-ink/5 backdrop-blur-md">
         <p className="text-sm font-semibold">Não foi possível abrir o 3D neste aparelho.</p>
         <p className="mt-0.5 text-[13px] text-muted">Mostramos a foto do produto. Você pode continuar o pedido normalmente.</p>

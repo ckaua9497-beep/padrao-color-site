@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import ProductCard from "@/components/ProductCard";
+import VitrineCard from "@/components/VitrineCard";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { useMediaQuery } from "@/components/ui/useMediaQuery";
 import type { ProductSummary } from "@/lib/catalog";
-import { spectrumAt } from "@/lib/format";
+import { GRADE_CARDS, SIZES_CARDS } from "./grade";
 
 /** Navegação lateral da listagem: categorias (catálogo) ou tipos de negócio. */
 export type ListingNav = {
@@ -34,7 +34,8 @@ type SortKey = keyof typeof SORTS;
  */
 type FiltersState = "auto" | "open" | "closed";
 
-const PAGE = 24;
+/** Cards por "Carregar mais": 40 fecha linhas inteiras com 2, 4 e 5 colunas (as larguras mais comuns da grade). */
+const PAGE = 40;
 
 export default function Listing({ products, nav }: { products: ProductSummary[]; nav: ListingNav }) {
   const [filters, setFilters] = useState<FiltersState>("auto");
@@ -129,14 +130,15 @@ export default function Listing({ products, nav }: { products: ProductSummary[];
           </ul>
         </aside>
 
-        <div>
+        {/* @container: as colunas da grade seguem a largura que sobra ao lado do filtro (ver grade.ts). */}
+        <div className="@container">
           {sorted.length === 0 ? (
             <p className="rounded-card bg-mist p-10 text-center text-ink/75">Nenhum produto encontrado.</p>
           ) : (
-            <ul className={cx("grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-5", !sidebarOnDesktop && "xl:grid-cols-4")}>
+            <ul className={GRADE_CARDS}>
               {sorted.slice(0, limit).map((p, i) => (
-                <li key={p.slug} className="animate-fade-up" style={{ animationDelay: `${(i % PAGE) * 25}ms` }}>
-                  <ProductCard product={p} tone={spectrumAt(i).soft} priority={i < 6} />
+                <li key={p.slug} className="animate-fade-up" style={{ animationDelay: `${Math.min(i % PAGE, 15) * 25}ms` }}>
+                  <VitrineCard product={p} priority={i < 5} sizes={SIZES_CARDS} />
                 </li>
               ))}
             </ul>

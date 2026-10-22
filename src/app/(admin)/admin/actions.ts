@@ -9,8 +9,9 @@ import { findAdminLogin, getPedidoByCodigo, resolveSaque, setPedidoStatus, touch
 import { cancelOrder, sendToProduction } from "@/lib/multiloja/vendas";
 import { randomBytes } from "node:crypto";
 import { chargeStatus, GATEWAYS, registerPixWebhook, sandboxTestPix } from "@/lib/multiloja/payments";
-import { CIELO_SETTINGS_KEY, EFI_SETTINGS_KEY, PAYMENT_SETTINGS_KEY, SIGNUP_OPEN_KEY, paymentSettings, type CieloSaved, type EfiSaved, type PaymentSettings } from "@/lib/multiloja/config";
+import { CIELO_SETTINGS_KEY, EFI_SETTINGS_KEY, PAGARME_SETTINGS_KEY, PAYMENT_SETTINGS_KEY, SIGNUP_OPEN_KEY, isPagarmeSecretKey, paymentSettings, type CieloSaved, type EfiSaved, type PagarmeSaved, type PaymentSettings } from "@/lib/multiloja/config";
 import { PAYMENT_KINDS, type PaymentRates } from "@/lib/multiloja/core";
+import { GATEWAY_LABEL, isGatewayName, isRota, listaFormas, ROTAS_DESLIGADAS, usarParaTudo, type Rotas } from "@/lib/multiloja/pagamento-rotas";
 import { getSetting, sealSecret, setSetting } from "@/lib/multiloja/settings";
 import type { FormState } from "@/app/(painel)/painel/actions";
 
@@ -119,19 +120,31 @@ export async function resolverSaque(id: number, status: "pago" | "recusado", not
   return done ? { ok: true, message: status === "pago" ? "Saque marcado como pago." : "Saque recusado; o valor volta ao saldo do lojista." } : { ok: false, message: "Este saque já foi resolvido." };
 }
 
-// ---------------------------------------------------------------------------------- pagamentos (gateway, meios, taxas)
+// ---------------------------------------------------------------------------------- pagamentos (gateway por forma, taxas)
 
-/** Liga um gateway para TODAS as cobranças novas (ou desliga o pagamento online). */
+/**
+ * "Usar para tudo": o gateway passa a cobrar todas as formas que sabe cobrar (a Pagar.me só o Pix); as outras formas
+ * continuam como estavam. "desligado" tira o pagamento online de todas as formas.
+ */
 export async function ativarGateway(nome: string): Promise<AdminResult> {
   const admin = await requireAdmin();
-  if (nome !== "desligado" && !(nome in GATEWAYS)) return { ok: false, message: "Gateway desconhecido." };
-  if (nome !== "desligado" && !(await GATEWAYS[nome as keyof typeof GATEWAYS].configured())) return { ok: false, message: "Preencha e salve as credenciais deste gateway antes de ativar." };
-  if (nome === "simulado" && process.env.NODE_ENV === "production") return { ok: false, message: "A simulação não pode cobrar em produção." };
   const current = await paymentSettings();
-  await setSetting(PAYMENT_SETTINGS_KEY, { ...current, ativo: nome as PaymentSettings["ativo"] } satisfies PaymentSettings);
-  console.info(`[multiloja] gateway ativo: ${nome} (por ${admin.email})`);
+  if (nome === "desligado") {
+    await setSetting(PAYMENT_SETTINGS_KEY, { ...current, rotas: ROTAS_DESLIGADAS } satisfies PaymentSettings);
+    console.info(`[multiloja] pagamento online desligado (por ${admin.email})`);
+    refresh();
+    return { ok: true, message: "Pagamento online desligado: os pedidos seguem pelo WhatsApp das lojas." };
+  }
+  if (!isGatewayName(nome)) return { ok: false, message: "Gateway desconhecido." };
+  if (nome === "simulado" && process.env.NODE_ENV === "production") return { ok: false, message: "A simulação não pode cobrar em produção." };
+  const gateway = GATEWAYS[nome];
+  if (!(await gateway.configured())) return { ok: false, message: "Preencha e salve as credenciais deste gateway antes de usar." };
+  const formas = await gateway.methods();
+  await setSetting(PAYMENT_SETTINGS_KEY, { ...current, rotas: usarParaTudo(current.rotas, nome, formas) } satisfies PaymentSettings);
+  console.info(`[multiloja] ${nome} passa a cobrar ${formas.join(", ")} (por ${admin.email})`);
   refresh();
-  return { ok: true, message: nome === "desligado" ? "Pagamento online desligado: os pedidos seguem pelo WhatsApp das lojas." : `Pronto: as cobranças novas passam pela ${GATEWAYS[nome as keyof typeof GATEWAYS].label}.` };
+  const resto = formas.length < PAYMENT_KINDS.length ? " As outras formas continuam como estavam." : "";
+  return { ok: true, message: `Pronto: ${listaFormas(formas)} ${formas.length === 1 ? "passa" : "passam"} pela ${gateway.label}.${resto}` };
 }
 
 const money = (raw: FormDataEntryValue | null) => {
@@ -139,13 +152,26 @@ const money = (raw: FormDataEntryValue | null) => {
   return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) / 100 : NaN;
 };
 
+/** Quem cobra cada forma, taxas e vencimento do boleto. Gateway sem credenciais ou que não cobra a forma é recusado. */
 export async function salvarMeios(_prev: FormState, form: FormData): Promise<FormState> {
   await requireAdmin();
   const current = await paymentSettings();
-  const metodos = Object.fromEntries(PAYMENT_KINDS.map((k) => [k, form.get(`metodo_${k}`) === "on"])) as PaymentSettings["metodos"];
-  if (!Object.values(metodos).some(Boolean)) return { message: "Deixe pelo menos uma forma de pagamento ligada." };
-  const taxas = {} as PaymentRates;
+  const rotas: Rotas = { ...ROTAS_DESLIGADAS };
   const errors: Record<string, string> = {};
+  for (const k of PAYMENT_KINDS) {
+    const rota = form.get(`rota_${k}`);
+    if (!isRota(rota)) {
+      errors[`rota_${k}`] = "Escolha um gateway ou Desligado.";
+      continue;
+    }
+    rotas[k] = rota;
+    if (rota === "desligado") continue;
+    const gateway = GATEWAYS[rota];
+    if (rota === "simulado" && process.env.NODE_ENV === "production") errors[`rota_${k}`] = "A simulação não cobra em produção.";
+    else if (!(await gateway.configured())) errors[`rota_${k}`] = `Salve as credenciais da ${GATEWAY_LABEL[rota]} antes.`;
+    else if (!(await gateway.methods()).includes(k)) errors[`rota_${k}`] = rota === "cielo" && k === "cartao" ? "Cartão na Cielo precisa das credenciais do Link de Pagamento." : `A ${GATEWAY_LABEL[rota]} não cobra ${listaFormas([k])} nesta integração.`;
+  }
+  const taxas = {} as PaymentRates;
   for (const k of PAYMENT_KINDS) {
     const pct = money(form.get(`taxa_${k}_pct`));
     const fixed = money(form.get(`taxa_${k}_fixo`));
@@ -156,9 +182,10 @@ export async function salvarMeios(_prev: FormState, form: FormData): Promise<For
   const boletoDias = Math.round(Number(form.get("boletoDias")));
   if (!Number.isInteger(boletoDias) || boletoDias < 1 || boletoDias > 30) errors.boletoDias = "1 a 30 dias";
   if (Object.keys(errors).length) return { errors, message: "Confira os campos destacados." };
-  await setSetting(PAYMENT_SETTINGS_KEY, { ...current, metodos, taxas, boletoDias } satisfies PaymentSettings);
+  await setSetting(PAYMENT_SETTINGS_KEY, { ...current, rotas, taxas, boletoDias } satisfies PaymentSettings);
   refresh();
-  return { ok: true, message: "Formas de pagamento e taxas salvas." };
+  const ligadas = PAYMENT_KINDS.filter((k) => rotas[k] !== "desligado");
+  return { ok: true, message: ligadas.length ? "Formas de pagamento e taxas salvas." : "Salvo com todas as formas desligadas: os pedidos seguem pelo WhatsApp das lojas." };
 }
 
 const field = (form: FormData, name: string, max = 300) => String(form.get(name) ?? "").trim().slice(0, max);
@@ -217,6 +244,22 @@ export async function salvarCielo(_prev: FormState, form: FormData): Promise<For
   await setSetting(CIELO_SETTINGS_KEY, next);
   refresh();
   return { ok: true, message: "Credenciais da Cielo salvas. Confira o diagnóstico abaixo." };
+}
+
+/** Chave secreta da Pagar.me. Em branco = mantém a salva. O segredo dos avisos é gerado na primeira vez. */
+export async function salvarPagarme(_prev: FormState, form: FormData): Promise<FormState> {
+  await requireAdmin();
+  const saved = (await getSetting<PagarmeSaved>(PAGARME_SETTINGS_KEY)) ?? {};
+  const next: PagarmeSaved = { secretKey: saved.secretKey, webhookSecret: saved.webhookSecret ?? sealSecret(randomBytes(24).toString("base64url")) };
+  const secretKey = field(form, "secretKey", 200);
+  if (secretKey) {
+    if (!isPagarmeSecretKey(secretKey)) return { errors: { secretKey: "Use a chave SECRETA (começa com sk_test_ ou sk_), não a pública (pk_)." }, message: "Confira a chave." };
+    next.secretKey = sealSecret(secretKey);
+  }
+  if (!next.secretKey) return { errors: { secretKey: "Informe a chave secreta da Pagar.me." }, message: "Confira a chave." };
+  await setSetting(PAGARME_SETTINGS_KEY, next);
+  refresh();
+  return { ok: true, message: "Chave da Pagar.me salva. Confira o diagnóstico e escolha a Pagar.me para o Pix." };
 }
 
 // ---------------------------------------------------------------------------------- Efí: webhook e teste

@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
-import { Figtree } from "next/font/google";
+import { Figtree, Raleway } from "next/font/google";
 import { CartProvider } from "@/components/cart/CartProvider";
 import { CustomerProvider } from "@/lib/customer";
 import "./globals.css";
 
-// Figtree é variável (300–900): um arquivo só, sem lista de pesos.
+// Raleway (fonte da loja, do Figma) e Figtree (artes do 3D e lojas da multiloja) são variáveis: um arquivo cada.
+const raleway = Raleway({
+  variable: "--font-raleway",
+  subsets: ["latin"],
+});
 const figtree = Figtree({
   variable: "--font-figtree",
   subsets: ["latin"],
@@ -23,7 +27,7 @@ export const metadata: Metadata = {
 // (@media (scripting: enabled), em globals.css), sem script no <head>.
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="pt-BR" className={`${figtree.variable} h-full antialiased`} data-scroll-behavior="smooth" suppressHydrationWarning>
+    <html lang="pt-BR" className={`${raleway.variable} ${figtree.variable} h-full antialiased`} data-scroll-behavior="smooth" suppressHydrationWarning>
       <body className="flex min-h-full flex-col">
         <CustomerProvider>
           <CartProvider>{children}</CartProvider>
