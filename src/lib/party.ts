@@ -371,7 +371,8 @@ export const PARTY_PRODUCTS: readonly PartyProductDef[] = [
   },
   {
     id: "sacolinha-tecido",
-    ref: { groupId: 71 },
+    // A Sacola Presente em Tecido (71) virou as variações 20x25 e 40x40 da Sacola Mochila (50) em 23/10/2026.
+    ref: { groupId: 50 },
     role: "lembrancinhas",
     title: "Sacolinhas surpresa",
     hint: "Oxford sublimado com a arte da festa.",
@@ -386,7 +387,7 @@ export const PARTY_PRODUCTS: readonly PartyProductDef[] = [
     title: "Mochilinhas surpresa",
     hint: "Sacola mochila com cordão, a favorita das festas infantis. Mínimo de 6.",
     qty: 10,
-    preset: { Modelo: "Simples", Formato: "30x40 cm" },
+    preset: { Formato: "30x40 cm" },
     choice: "Formato",
   },
   {

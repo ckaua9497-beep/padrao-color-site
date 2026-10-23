@@ -6,7 +6,7 @@ import ProductExperience from "@/components/product/ProductExperience";
 import ProductInfo from "@/components/product/ProductInfo";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { IconClock, IconCube, IconShield } from "@/components/icons";
-import { getProduct, getProductById, getProducts, getRelated, seoTitle, toSummary } from "@/lib/catalog";
+import { getProduct, getProductMovedFrom, getProducts, getRelated, seoTitle, toSummary } from "@/lib/catalog";
 import { produtoComMidia, produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl, spectrumAt } from "@/lib/format";
@@ -49,7 +49,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
   if (!found) {
     // Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-preto"): o ID do começo do slug leva ao atual.
     const id = /^(\d+)-/.exec(slug)?.[1];
-    const moved = id ? getProductById(id) : undefined;
+    const moved = id ? getProductMovedFrom(id) : undefined;
     if (moved) permanentRedirect(`/produto/${moved.slug}`);
     notFound();
   }

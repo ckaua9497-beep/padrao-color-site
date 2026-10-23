@@ -60,7 +60,8 @@ const EXPECTED: [string, MockupKind][] = [
   ["Garrafa Térmica com Copo", "bottle"],
   ["Copo Térmico", "tumbler"],
   ["Caneca Inox Travel Mug", "tumbler"],
-  ["Caneca de Vidro de Chopp Jateada para Sublimação", "mug"],
+  ["Caneca de Chopp Jateada", "mug"],
+  ["Caneca Personalizada com Alça de Coração", "mug"],
   ["Xícara London 120ml para Sublimação", "mug"],
   ["Led Neon Caneca de Cerveja", "neon"],
   ["Camisa Polo", "tshirt"],
@@ -91,7 +92,7 @@ const EXPECTED: [string, MockupKind][] = [
   ["Maiô Infantil", "swimsuit"],
   ["Quebra Cabeça", "puzzle"],
   ["Régua", "ruler"],
-  ["Suporte p/ Celular", "phonestand"],
+  ["Suporte para Celular em PVC", "phonestand"],
   ["Wobbler", "wobbler"],
   ["Máscara de Dormir", "sleepmask"],
   ["Almofada para Pescoço", "neckpillow"],
@@ -148,11 +149,11 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
     counts[kind] = (counts[kind] ?? 0) + 1;
   }
   assert.deepEqual(Object.fromEntries(Object.entries(counts).sort()), {
-    acrylic: 4,
+    acrylic: 5,
     apron: 3,
     backpack: 2,
     badge: 2,
-    bag: 13,
+    bag: 12,
     bandana: 2,
     banner: 19,
     bedding: 1,
@@ -184,13 +185,13 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
     lightbox: 2,
     magnet: 5,
     mat: 3,
-    mug: 25,
+    mug: 12,
     neckpillow: 2,
     neon: 33,
     panel: 11,
     paperpack: 2,
     passport: 1,
-    pen: 2,
+    pen: 3,
     petbed: 1,
     phonestand: 1,
     puzzle: 1,
@@ -238,12 +239,33 @@ test("cores citadas saem na ordem do texto, preferindo o termo mais longo", () =
 });
 
 test("cor do corpo, interior, alça e tampa vêm das opções", () => {
-  assert.equal(spec("Caneca Mágica Personalizada").baseColor, "#1c1c1e");
+  assert.equal(spec("Caneca Mágica").baseColor, "#1c1c1e");
 
-  const interior = spec("Caneca com Alça e Interior Colorido Amarelo para Sublimação");
+  // Desde 23/10/2026 as canecas por cor viraram opção Cor dentro do grupo.
+  const interior = spec("Caneca com Alça e Interior Colorido", { Cor: "Amarela" });
   assert.equal(interior.baseColor, "#ffffff");
   assert.equal(interior.innerColor, "#f4c51f");
   assert.equal(interior.accentColor, "#f4c51f");
+
+  const spoon = spec("Caneca de Cerâmica c/ Colher e Interior Colorido", { Cor: "Branca com Colher e Interior Vermelho" });
+  assert.equal(spoon.baseColor, "#ffffff");
+  assert.equal(spoon.innerColor, "#d7262b");
+  assert.equal(spoon.accentColor, "#d7262b");
+
+  const heart = spec("Caneca Personalizada com Alça de Coração", { Cor: "Branco com Vermelho" });
+  assert.equal(heart.variant, "heart-handle");
+  assert.equal(heart.baseColor, "#ffffff");
+  assert.equal(heart.innerColor, "#d7262b");
+  assert.equal(heart.accentColor, "#d7262b");
+
+  const chrome = spec("Caneca Cromada", { Cor: "Rosê Gold" });
+  assert.equal(chrome.metal, "rose");
+  assert.equal(chrome.finish, "gloss");
+
+  const bronze = spec("Caneca C/ Glitter", { Cor: "Glitter Bronze" });
+  assert.equal(bronze.glitter, true);
+  assert.equal(bronze.baseColor, "#cd7f32");
+  assert.equal(spec("Caneca C/ Glitter", { Cor: "Glitter Prata" }).metal, "silver");
 
   const travel = spec("Caneca Inox Travel Mug");
   assert.equal(travel.baseColor, "#ffffff");
@@ -255,7 +277,10 @@ test("cor do corpo, interior, alça e tampa vêm das opções", () => {
   assert.equal(spec("Boné", { "Cor do Boné": "Preto" }).baseColor, "#1c1c1e");
   assert.equal(spec("Garrafa Térmica", { Cor: "Dourada" }).metal, "gold");
 
-  const glitterBase = spec("Caneca de Cerâmica Branca com Glitter na Base");
+  // A "Caneca Personalizada com Glitter na Base" (532) vem com erro da API e fica fora do catálogo: a regra da faixa
+  // de glitter é conferida com a cor da antiga 432 ("Branca com Base Dourada").
+  const glitter = product("Caneca C/ Glitter");
+  const glitterBase = mockupSpec({ ...glitter, name: "Caneca de Cerâmica Branca com Glitter na Base", options: { Cor: ["Branca com Base Dourada"] } }, {});
   assert.equal(glitterBase.metal, "none");
   assert.equal(glitterBase.accentColor, "#d4af37");
 

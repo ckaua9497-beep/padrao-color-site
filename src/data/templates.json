@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-07T09:51:24.087Z",
+ "generatedAt": "2026-10-23T07:06:51.175Z",
  "source": "catalog.json → campo template (img.padraocolor.com.br/padraocolor/imagens/gabaritos)",
  "templates": {
   "abada-dryfit": {
@@ -22343,6 +22343,70 @@
     }
    ]
   },
+  "caneca-de-ceramica-com-colher-e-interior-preto-para-sublimacao": {
+   "url": "https://img.padraocolor.com.br/padraocolor/imagens/gabaritos/gabarito_caneca de ceramica com colher e interior preto para sublimacao.zip",
+   "files": [
+    "_Gabarito Caneca de Cerâmica com Colher e Interior Preto para Sublimacao.pdf"
+   ],
+   "cdrOnly": [
+    "_Gabarito Caneca de Cerâmica com Colher e Interior Preto para Sublimacao.cdr"
+   ],
+   "pages": [
+    {
+     "id": "caneca-de-ceramica-com-colher-e-interior-preto-para-sublimacao",
+     "file": "_Gabarito Caneca de Cerâmica com Colher e Interior Preto para Sublimacao.pdf",
+     "page": 1,
+     "label": "Caneca de Cerâmica com Colher e Interior Preto para Sublimacao",
+     "sheet": {
+      "w": 400,
+      "h": 200
+     },
+     "panels": [
+      {
+       "bleed": {
+        "x": 0,
+        "y": 0,
+        "w": 400,
+        "h": 200
+       },
+       "implicitBleed": true,
+       "cut": {
+        "x": 195.2,
+        "y": 65,
+        "w": 200,
+        "h": 70,
+        "shape": "rect"
+       },
+       "safe": {
+        "x": 197.7,
+        "y": 67.5,
+        "w": 195,
+        "h": 65,
+        "shape": "rect"
+       },
+       "metrics": {
+        "finalMm": {
+         "w": 200,
+         "h": 70
+        },
+        "bleedMm": {
+         "top": 65,
+         "right": 4.8,
+         "bottom": 65,
+         "left": 195.2
+        },
+        "safeMm": {
+         "top": 2.5,
+         "right": 2.5,
+         "bottom": 2.5,
+         "left": 2.5
+        }
+       }
+      }
+     ]
+    }
+   ]
+  },
   "caneta-personalizada": {
    "url": "https://img.padraocolor.com.br/padraocolor/imagens/gabaritos/gabarito_caneta personalizada.zip",
    "files": [
@@ -22461,6 +22525,70 @@
       }
      ],
      "side": "front"
+    }
+   ]
+  },
+  "caneta-com-touch": {
+   "url": "https://img.padraocolor.com.br/padraocolor/imagens/gabaritos/gabarito_caneta com touch.zip",
+   "files": [
+    "Gabarito/Caneta com Touch emborrachada.pdf"
+   ],
+   "cdrOnly": [
+    "Gabarito/Caneta com Touch emborrachada.cdr"
+   ],
+   "pages": [
+    {
+     "id": "caneta-com-touch-emborrachada-p2",
+     "file": "Gabarito/Caneta com Touch emborrachada.pdf",
+     "page": 2,
+     "label": "Caneta com Touch emborrachada",
+     "sheet": {
+      "w": 50,
+      "h": 8
+     },
+     "panels": [
+      {
+       "bleed": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 8
+       },
+       "implicitBleed": true,
+       "cut": {
+        "x": 0,
+        "y": 0,
+        "w": 50,
+        "h": 8,
+        "shape": "rect"
+       },
+       "safe": {
+        "x": 0.5,
+        "y": 0.5,
+        "w": 49,
+        "h": 7,
+        "shape": "rect"
+       },
+       "metrics": {
+        "finalMm": {
+         "w": 50,
+         "h": 8
+        },
+        "bleedMm": {
+         "top": 0,
+         "right": 0,
+         "bottom": 0,
+         "left": 0
+        },
+        "safeMm": {
+         "top": 0.5,
+         "right": 0.5,
+         "bottom": 0.5,
+         "left": 0.5
+        }
+       }
+      }
+     ]
     }
    ]
   },
@@ -65325,19 +65453,23 @@
     }
    ]
   },
-  "quebra-cabeca": {
-   "url": "https://img.padraocolor.com.br/padraocolor/imagens/gabaritos/gabarito__gabarito quebra cabeca.zip",
+  "s-p-e-g-site": {
+   "url": "https://img.padraocolor.com.br/padraocolor/imagens/gabaritos/gabarito_gabaritos p e g site.rar",
    "files": [
-    "_Gabarito Quebra Cabeça.pdf"
+    "Tamanho G/Gabarito/_Gabarito Quebra Cabeça.pdf",
+    "Tamanho G/Gabarito/_Gabarito Quebra Cabeça/_Gabarito Quebra Cabeça.pdf",
+    "Tamanho G/Gabarito/0Antigos/AI/quebracabeca.ai",
+    "Tamanho G/Gabarito/0Antigos/PDF/quebracabeca.pdf",
+    "Tamanho P/Gabarito/quebracabeca.pdf"
    ],
    "cdrOnly": [
-    "_Gabarito Quebra Cabeça.cdr"
+    "Tamanho G/Gabarito/_Gabarito Quebra Cabeça/_Gabarito Quebra Cabeça.cdr"
    ],
-   "note": "A opção do produto diz 28x19,5 cm (G), mas a linha de corte preta do gabarito mede 270 × 185 mm e a sangria 290 × 205 mm (28 × 19,5 cai no meio das duas). Para o encaixe vale o gabarito; conferir com a produção se o formato anunciado está certo.",
+   "note": "A opção do produto diz 28x19,5 cm (G), mas a linha de corte preta do gabarito mede 270 × 185 mm e a sangria 290 × 205 mm (28 × 19,5 cai no meio das duas). Para o encaixe vale o gabarito; conferir com a produção se o formato anunciado está certo. Desde 23/10/2026 o pacote traz as pastas Tamanho G e Tamanho P, com cópia e versões antigas do G; o site vende só o G e usa o PDF principal dele.",
    "pages": [
     {
-     "id": "quebra-cabeca-p2",
-     "file": "_Gabarito Quebra Cabeça.pdf",
+     "id": "tamanho-g-quebra-cabeca-p2",
+     "file": "Tamanho G/Gabarito/_Gabarito Quebra Cabeça.pdf",
      "page": 2,
      "label": "Frente",
      "sheet": {
@@ -66287,7 +66419,7 @@
     "30x60 - Com Bolso/_Gabarito - Sacola Mochila 30x60cm com Bolso.cdr",
     "30x60 - Sem Bolso/_Gabarito - Sacola Mochila 30x60cm.cdr"
    ],
-   "note": "Nos PDFs 'sem bolso', a página 1 traz só instruções. O 'Cópia_de_segurança' .cdr do 30x40 sem bolso é só backup do mesmo gabarito.",
+   "note": "Nos PDFs 'sem bolso', a página 1 traz só instruções. O 'Cópia_de_segurança' .cdr do 30x40 sem bolso é só backup do mesmo gabarito. As folhas 20 × 25 e 40 × 40 são manuais, com as medidas de 'gabarito_sacola presente site - visual.rar' (antigo grupo 71): No 20x25, cada face mede 250 mm de largura por 200 mm de altura no gabarito (o nome diz 20x25). A arte de cada face tem que respeitar sua própria área de segurança. A orientação invertida do verso foi deduzida das margens espelhadas e da costura sem linha na divisa; confirmar com a produção. A página 1 de cada PDF traz só instruções.",
    "pages": [
     {
      "id": "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
@@ -66808,26 +66940,13 @@
        "side": "front"
       }
      ]
-    }
-   ]
-  },
-  "sacola-presente-site-visual": {
-   "url": "https://img.padraocolor.com.br/padraocolor/imagens/gabaritos/gabarito_sacola presente site - visual.rar",
-   "files": [
-    "Sacola Presente novo Site 20x25/Sacola presente novo 20x25.pdf",
-    "Sacola Presente novo Site 40x40/sacola presente novo 40x40.pdf"
-   ],
-   "note": "No 20x25, cada face mede 250 mm de largura por 200 mm de altura no gabarito (o nome diz 20x25). A arte de cada face tem que respeitar sua própria área de segurança. A orientação invertida do verso foi deduzida das margens espelhadas e da costura sem linha na divisa; confirmar com a produção. A página 1 de cada PDF traz só instruções.",
-   "pages": [
+    },
     {
-     "id": "sacola-presente-novo-site-20x25-sacola-presente-novo-20x25-p2",
-     "file": "Sacola Presente novo Site 20x25/Sacola presente novo 20x25.pdf",
-     "page": 2,
+     "id": "sacola-mochila-20x25-manual",
+     "file": "gabarito_sacola presente site - visual.rar · Sacola Presente Novo Site 20x25",
+     "page": 1,
      "label": "20 × 25 cm",
-     "nameDims": {
-      "w": 200,
-      "h": 250
-     },
+     "manual": true,
      "sheet": {
       "w": 270,
       "h": 420
@@ -66845,32 +66964,15 @@
         "y": 10,
         "w": 250,
         "h": 400,
-        "shape": "rect",
-        "d": "M10 10L260 10L260 210L10 210ZM10 210L260 210L260 410L10 410Z"
+        "shape": "rect"
        },
        "safe": {
         "x": 40,
         "y": 40,
         "w": 190,
         "h": 340,
-        "shape": "rect",
-        "d": "M230 40L40 40L40 190L230 190ZM230 230L40 230L40 380L230 380Z",
-        "parts": [
-         {
-          "x": 40,
-          "y": 40,
-          "w": 190,
-          "h": 150
-         },
-         {
-          "x": 40,
-          "y": 230,
-          "w": 190,
-          "h": 150
-         }
-        ]
+        "shape": "rect"
        },
-       "sew": "M250 20L20 20L20 400L250 400Z",
        "metrics": {
         "finalMm": {
          "w": 250,
@@ -66927,17 +67029,15 @@
         }
        ]
       }
-     ]
+     ],
+     "side": "front"
     },
     {
-     "id": "sacola-presente-novo-site-40x40-sacola-presente-novo-40x40-p2",
-     "file": "Sacola Presente novo Site 40x40/sacola presente novo 40x40.pdf",
-     "page": 2,
+     "id": "sacola-mochila-40x40-manual",
+     "file": "gabarito_sacola presente site - visual.rar · Sacola Presente Novo Site 40x40",
+     "page": 1,
      "label": "40 × 40 cm",
-     "nameDims": {
-      "w": 400,
-      "h": 400
-     },
+     "manual": true,
      "sheet": {
       "w": 420,
       "h": 820
@@ -66955,32 +67055,15 @@
         "y": 10,
         "w": 400,
         "h": 800,
-        "shape": "rect",
-        "d": "M10 10L410 10L410 410L10 410ZM10 410L410 410L410 810L10 810Z"
+        "shape": "rect"
        },
        "safe": {
         "x": 40,
         "y": 40,
         "w": 340,
         "h": 740,
-        "shape": "rect",
-        "d": "M380 40L40 40L40 390L380 390ZM380 430L40 430L40 780L380 780Z",
-        "parts": [
-         {
-          "x": 40,
-          "y": 40,
-          "w": 340,
-          "h": 350
-         },
-         {
-          "x": 40,
-          "y": 430,
-          "w": 340,
-          "h": 350
-         }
-        ]
+        "shape": "rect"
        },
-       "sew": "M400 20L20 20L20 800L400 800Z",
        "metrics": {
         "finalMm": {
          "w": 400,
@@ -67037,7 +67120,8 @@
         }
        ]
       }
-     ]
+     ],
+     "side": "front"
     }
    ]
   },
@@ -73448,30 +73532,20 @@
   "50": {
    "template": "sacola-mochila",
    "pages": [
-    "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
+    "sacola-mochila-20x25-manual",
     "30x40-sem-bolso-sacola-mochila-30x40cm-p2",
-    "30x60-com-bolso-sacola-mochila-30x60cm-com-bolso",
-    "30x60-sem-bolso-sacola-mochila-30x60cm-p2"
+    "sacola-mochila-40x40-manual"
    ],
    "byOption": {
     "Formato": {
+     "20x25 cm": [
+      "sacola-mochila-20x25-manual"
+     ],
      "30x40 cm": [
-      "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
       "30x40-sem-bolso-sacola-mochila-30x40cm-p2"
      ],
-     "30x60 cm": [
-      "30x60-com-bolso-sacola-mochila-30x60cm-com-bolso",
-      "30x60-sem-bolso-sacola-mochila-30x60cm-p2"
-     ]
-    },
-    "Modelo": {
-     "Simples": [
-      "30x40-sem-bolso-sacola-mochila-30x40cm-p2",
-      "30x60-sem-bolso-sacola-mochila-30x60cm-p2"
-     ],
-     "Com Bolso": [
-      "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
-      "30x60-com-bolso-sacola-mochila-30x60cm-com-bolso"
+     "40x40 cm": [
+      "sacola-mochila-40x40-manual"
      ]
     }
    }
@@ -73606,9 +73680,9 @@
    ]
   },
   "69": {
-   "template": "quebra-cabeca",
+   "template": "s-p-e-g-site",
    "pages": [
-    "quebra-cabeca-p2"
+    "tamanho-g-quebra-cabeca-p2"
    ]
   },
   "70": {
@@ -73616,23 +73690,6 @@
    "pages": [
     "regua-personalizada-p2"
    ]
-  },
-  "71": {
-   "template": "sacola-presente-site-visual",
-   "pages": [
-    "sacola-presente-novo-site-20x25-sacola-presente-novo-20x25-p2",
-    "sacola-presente-novo-site-40x40-sacola-presente-novo-40x40-p2"
-   ],
-   "byOption": {
-    "Formato": {
-     "20x25 cm": [
-      "sacola-presente-novo-site-20x25-sacola-presente-novo-20x25-p2"
-     ],
-     "40x40 cm": [
-      "sacola-presente-novo-site-40x40-sacola-presente-novo-40x40-p2"
-     ]
-    }
-   }
   },
   "73": {
    "template": "foto-ima-9x15cm",
@@ -75858,6 +75915,12 @@
     "display-em-ps-display-em-ps-15x21cm-p2"
    ]
   },
+  "404": {
+   "template": "caneca-de-ceramica-com-colher-e-interior-preto-para-sublimacao",
+   "pages": [
+    "caneca-de-ceramica-com-colher-e-interior-preto-para-sublimacao"
+   ]
+  },
   "425": {
    "template": "pijama-infantil",
    "pages": [
@@ -75904,6 +75967,12 @@
      ]
     }
    }
+  },
+  "434": {
+   "template": "caneca-de-ceramica",
+   "pages": [
+    "caneca-de-ceramica-personalizada-p2"
+   ]
   },
   "452": {
    "template": "camisa",
@@ -77412,6 +77481,24 @@
    "template": "adesivo-redondo-10x10cm",
    "pages": [
     "10x10-adesivo-redondo-10x10-p2"
+   ]
+  },
+  "531": {
+   "template": "caneta-com-touch",
+   "pages": [
+    "caneta-com-touch-emborrachada-p2"
+   ]
+  },
+  "533": {
+   "template": "caneca-de-ceramica",
+   "pages": [
+    "caneca-de-ceramica-personalizada-p2"
+   ]
+  },
+  "534": {
+   "template": "suporte-para-celular",
+   "pages": [
+    "suporte-para-celular-p2"
    ]
   },
   "tags": {

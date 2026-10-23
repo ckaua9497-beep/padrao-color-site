@@ -14118,26 +14118,6 @@
     }
    ]
   },
-  "quebra-cabeca": {
-   "note": "A opção do produto diz 28x19,5 cm (G), mas a linha de corte preta do gabarito mede 270 × 185 mm e a sangria 290 × 205 mm (28 × 19,5 cai no meio das duas). Para o encaixe vale o gabarito; conferir com a produção se o formato anunciado está certo.",
-   "pages": [
-    {
-     "id": "quebra-cabeca-p2",
-     "label": "Frente",
-     "side": "front",
-     "panels": [
-      {
-       "at": [
-        145,
-        102.5
-       ],
-       "name": "Frente",
-       "side": "front"
-      }
-     ]
-    }
-   ]
-  },
   "regata-basquete": {
    "note": "Tamanhos lidos nos títulos verticais de cada página (de \"P FRENTE / P COSTAS\" até \"XG FRENTE / XG COSTAS\"). As medidas crescem em ordem: corte de 510×760 até 670×910 mm. A peça da esquerda é sempre a FRENTE (decote em V) e a da direita, as COSTAS.",
    "pages": [
@@ -14408,7 +14388,7 @@
    ]
   },
   "sacola-mochila": {
-   "note": "Nos PDFs 'sem bolso', a página 1 traz só instruções. O 'Cópia_de_segurança' .cdr do 30x40 sem bolso é só backup do mesmo gabarito.",
+   "note": "Nos PDFs 'sem bolso', a página 1 traz só instruções. O 'Cópia_de_segurança' .cdr do 30x40 sem bolso é só backup do mesmo gabarito. As folhas 20 × 25 e 40 × 40 são manuais, com as medidas de 'gabarito_sacola presente site - visual.rar' (antigo grupo 71): No 20x25, cada face mede 250 mm de largura por 200 mm de altura no gabarito (o nome diz 20x25). A arte de cada face tem que respeitar sua própria área de segurança. A orientação invertida do verso foi deduzida das margens espelhadas e da costura sem linha na divisa; confirmar com a produção. A página 1 de cada PDF traz só instruções.",
    "pages": [
     {
      "id": "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
@@ -14621,14 +14601,9 @@
        ]
       }
      ]
-    }
-   ]
-  },
-  "sacola-presente-site-visual": {
-   "note": "No 20x25, cada face mede 250 mm de largura por 200 mm de altura no gabarito (o nome diz 20x25). A arte de cada face tem que respeitar sua própria área de segurança. A orientação invertida do verso foi deduzida das margens espelhadas e da costura sem linha na divisa; confirmar com a produção. A página 1 de cada PDF traz só instruções.",
-   "pages": [
+    },
     {
-     "id": "sacola-presente-novo-site-20x25-sacola-presente-novo-20x25-p2",
+     "id": "sacola-mochila-20x25-manual",
      "label": "20 × 25 cm",
      "panels": [
       {
@@ -14677,7 +14652,7 @@
      ]
     },
     {
-     "id": "sacola-presente-novo-site-40x40-sacola-presente-novo-40x40-p2",
+     "id": "sacola-mochila-40x40-manual",
      "label": "40 × 40 cm",
      "panels": [
       {
@@ -14724,6 +14699,34 @@
        ]
       }
      ]
+    }
+   ],
+   "addPages": [
+    {
+     "id": "sacola-mochila-20x25-manual",
+     "label": "20 × 25 cm",
+     "finalMm": {
+      "w": 250,
+      "h": 400
+     },
+     "bleedMm": 10,
+     "safeMm": 30,
+     "side": "front",
+     "file": "gabarito_sacola presente site - visual.rar · Sacola Presente Novo Site 20x25",
+     "evidence": "Medidas da folha 'sacola-presente-novo-site-20x25' lida em 09/10/2026: corte preto 250 × 400 mm (frente em cima, verso invertido embaixo, 250 × 200 cada), sangria ciano 10 mm, proteção laranja 30 mm."
+    },
+    {
+     "id": "sacola-mochila-40x40-manual",
+     "label": "40 × 40 cm",
+     "finalMm": {
+      "w": 400,
+      "h": 800
+     },
+     "bleedMm": 10,
+     "safeMm": 30,
+     "side": "front",
+     "file": "gabarito_sacola presente site - visual.rar · Sacola Presente Novo Site 40x40",
+     "evidence": "Medidas da folha 'sacola-presente-novo-site-40x40' lida em 09/10/2026: corte preto 400 × 800 mm (frente em cima, verso invertido embaixo, 400 × 400 cada), sangria ciano 10 mm, proteção laranja 30 mm."
     }
    ]
   },
@@ -16295,6 +16298,46 @@
      ]
     }
    ]
+  },
+  "s-p-e-g-site": {
+   "note": "A opção do produto diz 28x19,5 cm (G), mas a linha de corte preta do gabarito mede 270 × 185 mm e a sangria 290 × 205 mm (28 × 19,5 cai no meio das duas). Para o encaixe vale o gabarito; conferir com a produção se o formato anunciado está certo. Desde 23/10/2026 o pacote traz as pastas Tamanho G e Tamanho P, com cópia e versões antigas do G; o site vende só o G e usa o PDF principal dele.",
+   "pages": [
+    {
+     "id": "tamanho-g-quebra-cabeca-p2",
+     "label": "Frente",
+     "side": "front",
+     "panels": [
+      {
+       "at": [
+        145,
+        102.5
+       ],
+       "name": "Frente",
+       "side": "front"
+      }
+     ]
+    },
+    {
+     "id": "tamanho-g-quebra-cabeca-quebra-cabeca-p2",
+     "ignore": true,
+     "note": "Cópia do PDF principal do G."
+    },
+    {
+     "id": "tamanho-g-0antigos-pdf-quebracabeca-p1",
+     "ignore": true,
+     "note": "Versão antiga (pasta 0Antigos)."
+    },
+    {
+     "id": "tamanho-g-0antigos-pdf-quebracabeca-p2",
+     "ignore": true,
+     "note": "Versão antiga (pasta 0Antigos)."
+    },
+    {
+     "id": "tamanho-p-quebracabeca-p2",
+     "ignore": true,
+     "note": "Tamanho P (17,1 × 13 cm): o produto não tem essa opção."
+    }
+   ]
   }
  },
  "products": {
@@ -16523,29 +16566,25 @@
    "reason": "Nenhuma opção estava mapeada. Modelo escolhe o arquivo direto (Cubo ou Cilindro). Formato acompanha o modelo: 27x15x24cm tem três medidas, então é a caixa (Cubo); 24x36cm é diâmetro × altura, então é o Cilindro (Tampa de Ø 260 mm com costura em Ø 250 mm, corpo de 822 mm ≈ perímetro). Nas combinações válidas, as duas chaves levam à mesma página."
   },
   "50": {
+   "pages": [
+    "sacola-mochila-20x25-manual",
+    "30x40-sem-bolso-sacola-mochila-30x40cm-p2",
+    "sacola-mochila-40x40-manual"
+   ],
    "byOption": {
     "Formato": {
+     "20x25 cm": [
+      "sacola-mochila-20x25-manual"
+     ],
      "30x40 cm": [
-      "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
       "30x40-sem-bolso-sacola-mochila-30x40cm-p2"
      ],
-     "30x60 cm": [
-      "30x60-com-bolso-sacola-mochila-30x60cm-com-bolso",
-      "30x60-sem-bolso-sacola-mochila-30x60cm-p2"
-     ]
-    },
-    "Modelo": {
-     "Simples": [
-      "30x40-sem-bolso-sacola-mochila-30x40cm-p2",
-      "30x60-sem-bolso-sacola-mochila-30x60cm-p2"
-     ],
-     "Com Bolso": [
-      "30x40-com-bolso-sacola-mochila-30x40cm-com-bolso",
-      "30x60-com-bolso-sacola-mochila-30x60cm-com-bolso"
+     "40x40 cm": [
+      "sacola-mochila-40x40-manual"
      ]
     }
    },
-   "reason": "Faltava mapear a opção Modelo: 'Simples' corresponde aos gabaritos sem bolso e 'Com Bolso' aos com bolso. Combinada com Formato, cada seleção leva a uma única página."
+   "reason": "Em 23/10/2026 o grupo passou a ter Formato 20x25/30x40/40x40 e perdeu a opção Modelo (Simples/Com Bolso e 30x60 foram para o grupo 443, que não tem gabarito na API). 30x40 usa a folha simples da sacola mochila; 20x25 e 40x40, as folhas manuais com as medidas da antiga Sacola Presente (71), de onde vieram essas variações. Confirmar com a produção."
   },
   "54": {
    "byOption": {

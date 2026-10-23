@@ -78,6 +78,17 @@ export function parseImageSize(buf) {
 // ------------------------------------------------------------------------------------- produtos
 
 /**
+ * Linhas de GET /produtos?id_grupo= que são variações de verdade (com `id` numérico). A API às vezes responde 200 com
+ * linhas de erro no lugar das variações (grupo 532 em 23/10/2026: `[{"ERRO":"Bad Response"}]`); `invalid` traz as
+ * descartadas para o aviso do sincronizador.
+ */
+export function variationRows(data) {
+  const list = Array.isArray(data) ? data : data == null ? [] : [data];
+  const rows = list.filter((row) => row && typeof row === "object" && Number.isInteger(row.id) && row.id > 0 && !("ERRO" in row));
+  return { rows, invalid: list.filter((row) => !rows.includes(row)) };
+}
+
+/**
  * Grupo da API (GET /grupos) + as variações dele (GET /produtos?id_grupo=) → produto do catálogo.
  * `featured`: o grupo está nos "Nossos Destaques" da vitrine. `site`: domínio do site oficial (sourceUrl).
  * `source`: origem do produto quando não é a API da Padrão ("site" = API própria, /api/novos).

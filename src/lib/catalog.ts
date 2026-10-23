@@ -171,6 +171,34 @@ export function getProductById(idOrSlug: string): Product | undefined {
   return catalog.products.find((p) => p.id === idOrSlug) ?? getProduct(idOrSlug);
 }
 
+/**
+ * Grupos que a API juntou a outro e apagou (23/10/2026: as canecas por cor viraram a opção Cor de um grupo só e a
+ * Sacola Presente em Tecido virou variações da Sacola Mochila). Vale o primeiro grupo que existir no catálogo: a
+ * caneca com glitter na base (532) vem com erro da API e fica fora até ela responder.
+ */
+const GRUPOS_JUNTADOS: Record<string, string[]> = {
+  "429": ["533"],
+  "407": ["434"],
+  "435": ["434"],
+  "436": ["434"],
+  "437": ["434"],
+  "472": ["434"],
+  "430": ["365"],
+  "438": ["365"],
+  "439": ["365"],
+  "431": ["366"],
+  "440": ["366"],
+  "441": ["366"],
+  "432": ["532", "366"],
+  "423": ["367"],
+  "71": ["50"],
+};
+
+/** Produto atual de um ID de grupo de link antigo: o próprio grupo ou aquele em que a API o juntou. */
+export function getProductMovedFrom(id: string): Product | undefined {
+  return catalog.products.find((p) => p.id === id) ?? (GRUPOS_JUNTADOS[id] ?? []).map((to) => catalog.products.find((p) => p.id === to)).find(Boolean);
+}
+
 /** Produtos com gabarito (campo `gabarito` de GET /grupos), em ordem alfabética. */
 export function getTemplateProducts(): Product[] {
   return catalog.products.filter((p) => p.template).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));

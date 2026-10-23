@@ -151,9 +151,10 @@ export const KIT_PRODUCTS: readonly KitProductDef[] = [
   { id: "caneta", ref: { groupId: 229 }, title: "Caneta com logo", hint: "Impressão U.V. no corpo da caneta", perKit: 1, preset: { Modelo: "Sem Emborrachamento", Cor: "Preta" }, choice: "Cor" },
   // Levar
   { id: "ecobag", ref: { groupId: 48 }, title: "Ecobag", hint: "Tecido com a estampa inteira", perKit: 1, preset: { "Mídia": "Oxford" }, choice: "Formato" },
-  { id: "sacola-mochila", ref: { groupId: 50 }, title: "Sacola mochila", hint: "Com cordão, para levar o kit", perKit: 1, preset: { Modelo: "Simples", Formato: "30x40 cm" }, choice: "Modelo" },
+  { id: "sacola-mochila", ref: { groupId: 50 }, title: "Sacola mochila", hint: "Com cordão, para levar o kit", perKit: 1, preset: { Formato: "30x40 cm" }, choice: "Formato" },
   { id: "mochila", ref: { groupId: 54 }, title: "Mochila", hint: "Microfibra 43 × 30 cm", perKit: 1, preset: { Modelo: "Adulto", Tamanho: "43x30cm", "Cor Base": "Preta" }, choice: "Cor Base" },
-  { id: "sacola-presente", ref: { groupId: 71 }, title: "Sacola de presente", hint: "Tecido oxford para entregar o kit", perKit: 1, preset: { Formato: "40x40 cm" }, choice: "Formato" },
+  // Antiga Sacola Presente em Tecido (71): desde 23/10/2026 é a variação 40x40 da Sacola Mochila (50).
+  { id: "sacola-presente", ref: { groupId: 50 }, title: "Sacola de presente", hint: "Tecido oxford para entregar o kit", perKit: 1, preset: { Formato: "40x40 cm" }, choice: "Formato" },
   { id: "sacola-papel", ref: { groupId: 222 }, title: "Sacola de papel", hint: "15 × 22 cm com alça de corda", perKit: 1 },
   // Identificar
   { id: "cracha", ref: { groupId: 243 }, title: "Crachá com nome", hint: "PVC 8,5 × 5,4 cm, um com o nome de cada pessoa", perKit: 1, preset: { Cor: "4/0 (colorido só frente)" }, choice: "Cor" },

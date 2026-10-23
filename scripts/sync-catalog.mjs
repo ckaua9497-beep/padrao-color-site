@@ -12,7 +12,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { classifyNetworkError, createTransport } from "../src/lib/api/transport.ts";
-import { buildCategories, mapGroup, num, parseImageSize, sim, slugify } from "./lib/catalog-map.mjs";
+import { buildCategories, mapGroup, num, parseImageSize, sim, slugify, variationRows } from "./lib/catalog-map.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -135,7 +135,9 @@ console.log(`  ${categorias.length} categorias, ${grupos.length} grupos, ${confi
 
 const variationsByGroup = await mapLimit(grupos, CONCURRENCY, async (grupo) => {
   try {
-    return (await api(`/produtos?id_grupo=${grupo.id}`, { timeout: 45_000 })) ?? [];
+    const { rows, invalid } = variationRows(await api(`/produtos?id_grupo=${grupo.id}`, { timeout: 45_000 }));
+    if (invalid.length) console.warn(`\n  aviso: grupo ${grupo.id} (${grupo.nome}): ${invalid.length} linha(s) inválida(s) da API: ${JSON.stringify(invalid[0]).slice(0, 120)}`);
+    return rows;
   } catch (error) {
     console.warn(`\n  aviso: grupo ${grupo.id} (${grupo.nome}) sem produtos: ${error.message}`);
     return [];
@@ -147,10 +149,17 @@ const variationsByGroup = await mapLimit(grupos, CONCURRENCY, async (grupo) => {
 const highlightIds = configuracoes.filter((c) => c.tipo === "Nossos Destaques").map((c) => Number(c.id));
 const productGroupById = new Map();
 
-const products = grupos.map((grupo, index) => {
+// Grupo sem nenhuma variação válida (erro da API ou lista vazia) fica fora do catálogo: sem variação não há preço
+// nem ID para o pedido. Volta sozinho no próximo sync em que a API responder.
+const skippedGroups = [];
+const products = grupos.flatMap((grupo, index) => {
   const rows = variationsByGroup[index] ?? [];
+  if (!rows.length) {
+    skippedGroups.push(grupo);
+    return [];
+  }
   for (const row of rows) productGroupById.set(row.id, grupo.id);
-  return mapGroup(grupo, rows, { featured: highlightIds.includes(grupo.id), site: SITE });
+  return [mapGroup(grupo, rows, { featured: highlightIds.includes(grupo.id), site: SITE })];
 });
 
 // "Tags" (checklist): reaproveita o produto de tag de presente que já existe (grupo 180) com nome e texto próprios.
@@ -241,3 +250,6 @@ console.log(
   ].join(" · "),
 );
 console.log(`  ${products.length} produtos, ${products.reduce((s, p) => s + p.variationCount, 0)} variações em ${((Date.now() - started) / 1000).toFixed(0)} s`);
+if (skippedGroups.length) {
+  console.warn(`  aviso: ${skippedGroups.length} grupo(s) fora do catálogo por não ter variação válida na API: ${skippedGroups.map((g) => `${g.id} (${g.nome})`).join(", ")}`);
+}

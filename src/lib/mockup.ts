@@ -181,7 +181,7 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
   mug: [
     [/\bcolher\b/, "spoon"],
     [/\bkit com (\d)/, "kit"],
-    [/\balca coracao\b/, "heart-handle"],
+    [/\balca (de )?coracao\b/, "heart-handle"],
     [/\bmagica\b/, "magic"],
   ],
   bottle: [
@@ -415,6 +415,7 @@ const COLOR_WORDS: Palette = [
   [/\bdourad\w*/, "#d4af37"],
   [/\bpratead\w*|\bprata\b/, "#c9ccd1"],
   [/\bcobre\b/, "#b87333"],
+  [/\bbronze\b/, "#cd7f32"],
   [/\bpret\w*|\bblack\b/, "#1c1c1e"],
   [/\bbranc\w*/, "#ffffff"],
 ];
@@ -509,7 +510,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
 
   let finish: MockupSpec["finish"] = "satin";
   if (/fosc/.test(allValues)) finish = "matte";
-  if (/brilho|glossy|cromad/.test(allValues)) finish = "gloss";
+  // Caneca Cromada: desde 23/10/2026 a cor (Dourada, Prata, Rosê Gold) é opção e o "cromada" ficou só no nome.
+  if (/brilho|glossy|cromad/.test(allValues) || (kind === "mug" && /cromad/.test(name))) finish = "gloss";
 
   let clearcoat = 0;
   if (/verniz total|uv total|u\.v\. total/.test(allValues)) clearcoat = 1;
@@ -536,15 +538,20 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   if (kind === "mug" && /\bmagica\b/.test(name) && !bodyColors.length) baseColor = "#1c1c1e";
   if ((kind === "mat" || kind === "rug") && !bodyColors.length) baseColor = "#2b2b2b";
 
-  const innerMatch = /\binterior (?:colorido )?([a-z]+(?: (?:claro|escuro))?)/.exec(name) ?? /\binterior ([a-z]+)/.exec(colorValue ?? "");
-  let innerColor = innerMatch ? colorsIn(innerMatch[1])[0] : undefined;
+  // A cor do interior vem do nome ("Interior Colorido Amarelo") ou da opção ("Branca com Colher e Interior Pretos").
+  const innerText = [
+    /\binterior (?:colorido )?([a-z]+(?: (?:claro|escuro))?)/.exec(name)?.[1],
+    /\binterior ([a-z]+(?: (?:claro|escuro))?)/.exec(colorValue ?? "")?.[1],
+  ].find((text) => text && colorsIn(text).length);
+  let innerColor = innerText ? colorsIn(innerText)[0] : undefined;
   if (!innerColor && coloredInterior) innerColor = bodyColors[0];
   if (!innerColor && kind === "mug" && bodyColors.length > 1) innerColor = bodyColors[1];
   innerColor ??= baseColor === "#1c1c1e" ? "#1c1c1e" : "#ffffff";
 
   let accentColor: string | null = null;
   if (coloredInterior) accentColor = innerColor;
-  else if (bodyColors.length > 1 && (kind === "bottle" || kind === "tumbler")) accentColor = bodyColors[1];
+  // Caneca "Branco com Vermelho" (alça coração): a segunda cor é a da alça e do interior.
+  else if (bodyColors.length > 1 && (kind === "bottle" || kind === "tumbler" || kind === "mug")) accentColor = bodyColors[1];
   const lid = pick(selection, product.options, /^cor da tampa$/);
   if (lid) accentColor = colorsIn(normalizeName(lid))[0] ?? accentColor;
   if (/\bbambu\b/.test(name)) accentColor = "#c9a46c";
