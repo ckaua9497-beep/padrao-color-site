@@ -2,6 +2,8 @@
 // scripts/sync-catalog.mjs (API da Padrão) e scripts/sync-novos.mjs (API própria do site, /api/novos).
 // Mesma regra para os dois: um produto novo entra no site exatamente como um produto da Padrão.
 
+import { perfisDeCustomizacao } from "../../src/lib/customizacao.ts";
+
 // ------------------------------------------------------------------------------------- texto
 
 /** Slug do site oficial (padraocolor.com.br/produto/35-banner---medida-personalizada): não junta hifens. */
@@ -125,7 +127,9 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
     }
   }
 
-  const variations = rows.map((row) => ({
+  // Customização por variação (regras em src/lib/customizacao.ts): perfis distintos no produto, índice na variação.
+  const custom = perfisDeCustomizacao(rows, grupo.nome);
+  const variations = rows.map((row, i) => ({
     id: row.id,
     p: row.preco?.economico ?? 0,
     pe: row.preco?.expresso ?? row.preco?.economico ?? 0,
@@ -136,6 +140,7 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
     ...(packaging(row.embalagem) ? { em: packaging(row.embalagem) } : {}),
     ...(partialPackaging(row.embalagem) ? { ei: partialPackaging(row.embalagem) } : {}),
     ...variationLimits(row, rows[0]),
+    ...(custom.indices[i] ? { cz: custom.indices[i] } : {}),
   }));
 
   const priced = variations.filter((v) => v.p > 0);
@@ -145,7 +150,6 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
   const sizesRow = rows.find((r) => r.quantidade_tamanho && r.quantidade_tamanho !== "Não");
   const m2Row = rows.find((r) => r.informa_medida === 1);
   const images = [grupo.imagem, ...rows.flatMap((r) => [r.imagem_1, r.imagem_2, r.imagem_3, r.imagem_4])].filter(Boolean);
-  const criacao = rows.map((r) => num(r.customizacao?.criacao_arte?.preco)).filter((p) => p > 0);
 
   return {
     id: String(grupo.id),
@@ -188,9 +192,7 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
           maxArea: num(m2Row.tamanho_maximo),
         }
       : null,
-    web2print: rows.some((r) => sim(r.customizacao?.web2print)),
-    artCreationPrice: criacao.length ? Math.min(...criacao) : null,
-    attachments: [...new Set(rows.flatMap((r) => (r.tipos_anexo ?? []).map((a) => a.nome)))],
+    customizacoes: custom.perfis,
     minQty: rowLimits(first).min,
     maxQty: rowLimits(first).max,
     ...(source ? { source } : {}),

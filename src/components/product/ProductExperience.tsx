@@ -20,6 +20,7 @@ import QtyStepper from "@/components/ui/QtyStepper";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
+import { anexosComplementares, customizacaoDa, recebeArte, type Customizacao } from "@/lib/customizacao";
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
 import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
@@ -84,8 +85,8 @@ export type ClientProduct = {
   printTemplate?: ProductTemplate | null;
   summary?: string;
   info?: InfoBlock[];
-  attachments?: string[];
-  artCreationPrice?: number | null;
+  /** Customização de cada variação (modo da arte, anexos aceitos, criação de arte): ver customizacaoDa. */
+  customizacoes?: Customizacao[];
   /** Quantidade mínima e máxima de peças (qtde_minima/qtde_maxima da API). */
   minQty?: number;
   maxQty?: number;
@@ -154,6 +155,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const [artName, setArtName] = useState<string | null>(null);
   // Arquivo sem prévia (AI, CDR, PDF que o navegador não abre): vai para a produção como foi enviado.
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  // Arquivos complementares da variação (faca de corte, máscara de branco, verniz…), por tipo de anexo.
+  const [extraFiles, setExtraFiles] = useState<Record<string, File>>({});
   const [artLater, setArtLater] = useState(false);
   const [artMissing, setArtMissing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -196,6 +199,13 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     return { ...baseSpec, widthCm: w, heightCm: h, label: formatSize(w, h) };
   }, [baseSpec, areaMode, modelWidth, modelHeight]);
   const family = artFamily(spec.kind);
+
+  // Customização da variação escolhida: sem personalização e neon de modelo pronto não recebem arte (a do editor é
+  // só simulação); os arquivos complementares são os que a variação aceita além da arte.
+  const custom = customizacaoDa(product, product.variations.find((v) => v.id === price.variation?.id) ?? price.variation);
+  const modeloPronto = custom.modo === "neon-modelo" && !spec.blank;
+  const semArte = spec.blank || !recebeArte(custom);
+  const complementares = semArte ? [] : anexosComplementares(custom);
   const presets = areaMode ? sizePresets(baseSpec.kind, baseSpec.variant, product.customSize) : [];
 
   // Vestuário com grade: quantidade por tamanho; o total respeita o mínimo/máximo do produto.
@@ -214,7 +224,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   // Sem useMemo: o React Compiler memoriza (e a grade de tamanhos muda a cada render).
   const gabarito = ((): Gabarito | null => {
     // Neon é montado em tubo de LED a partir de vetor: não há arquivo de impressão a encaixar.
-    if (!printTemplate || spec.blank || family === "neon") return null;
+    if (!printTemplate || semArte || family === "neon") return null;
     const aspect = artAspect(spec);
     // Medida livre: a regra do gabarito (ou a margem das folhas de medida fixa) aplicada à medida digitada.
     const rule = areaMode ? (printTemplate.parametric ?? ruleOf(printTemplate.pages)) : null;
@@ -323,7 +333,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
   // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
-  const hasArt = spec.blank || artLater || Boolean(artName) || typedArt;
+  const hasArt = semArte || artLater || Boolean(artName) || typedArt;
 
   const choose = (key: string, value: string) => setSelection((s) => ({ ...s, [key]: value }));
   const updateArt = (update: (art: ArtSettings) => ArtSettings) => {
@@ -436,12 +446,13 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     }
     // Arquivos que o cliente enviou (frente e verso): ficam no navegador até o checkout mandar para o Bunny.
     const artFiles =
-      spec.blank || artLater
+      semArte || artLater
         ? []
         : await keepArtFiles(
             [
               { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" },
               { file: uploadedFileOf(art.back?.src), kind: "verso" },
+              ...complementares.map((tipo) => ({ file: extraFiles[tipo], kind: "extra" as const, tipo })),
             ],
             product.name,
           );
@@ -455,7 +466,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
-        ...(!spec.blank && !artLater ? artSummary(art, family) : {}),
+        ...(!semArte && !artLater ? artSummary(art, family) : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
@@ -470,7 +481,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       ...(area ? { widthCm, heightCm } : {}),
       express: expressChosen,
       // O carrinho mostra "Arte: …"; null vira "enviar depois".
-      artName: spec.blank ? "produto sem impressão" : artLater ? null : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
+      artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
     });
     setAdding(false);
     setPreview(false);
@@ -541,7 +552,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
         <div className="flex flex-wrap gap-2">
           <Badge tone="brand">Mockup 3D grátis</Badge>
           {reseller && <Badge tone="new">Preço de revendedor</Badge>}
-          {spec.blank && <Badge tone="neutral">Vendido sem impressão</Badge>}
+          {modeloPronto ? <Badge tone="neutral">Modelo pronto</Badge> : semArte && <Badge tone="neutral">Vendido sem impressão</Badge>}
           {product.bestSeller && <Badge tone="dark">Mais vendido</Badge>}
           {product.isNew && <Badge tone="new">Lançamento</Badge>}
           {areaMode && <Badge tone="neutral">Medida sob medida</Badge>}
@@ -602,7 +613,17 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             family={family}
             spec={spec}
             onSide={setArtSide}
-            blank={spec.blank}
+            blank={semArte}
+            ready={modeloPronto}
+            extraTypes={complementares}
+            extraFiles={extraFiles}
+            onExtraFile={(tipo, file) =>
+              setExtraFiles((files) => {
+                const rest = { ...files };
+                delete rest[tipo];
+                return file ? { ...rest, [tipo]: file } : rest;
+              })
+            }
             art={art}
             onArt={updateArt}
             artName={artName}

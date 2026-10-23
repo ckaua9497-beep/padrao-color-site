@@ -30,7 +30,7 @@ test("só URLs da pasta pública com nome gerado aqui", () => {
   assert.ok(!isArtFileUrl(`${BASE}x.pdf`, ""));
 });
 
-test("arquivos do item vindos do navegador: válidos, sem repetir, no máximo seis", () => {
+test("arquivos do item vindos do navegador: válidos, sem repetir, no máximo doze", () => {
   const ok = { url: `${BASE}logo1.png`, nome: "logo1.png", kind: "arquivo" };
   const files = parseUploadedFiles(
     [ok, ok, { url: "https://x.com/a.png", nome: "a.png", kind: "arquivo" }, { url: `${BASE}b2.pdf`, nome: "outro.pdf", kind: "pdf" }, { url: `${BASE}c3.pdf`, nome: "c3.pdf", kind: "zip" }, "lixo"],
@@ -38,8 +38,24 @@ test("arquivos do item vindos do navegador: válidos, sem repetir, no máximo se
   );
   assert.deepEqual(files, [ok]);
   assert.deepEqual(parseUploadedFiles(null, BASE), []);
-  const many = Array.from({ length: 10 }, (_, i) => ({ url: `${BASE}f${i}.pdf`, nome: `f${i}.pdf`, kind: "pdf" }));
-  assert.equal(parseUploadedFiles(many, BASE).length, 6);
+  const many = Array.from({ length: 20 }, (_, i) => ({ url: `${BASE}f${i}.pdf`, nome: `f${i}.pdf`, kind: "pdf" }));
+  assert.equal(parseUploadedFiles(many, BASE).length, 12);
+});
+
+test("complementar: só com o tipo de anexo; vai com o próprio tipo quando a variação aceita", () => {
+  const faca = { url: `${BASE}faca1.pdf`, nome: "faca1.pdf", kind: "extra", tipo: "Faca de Corte" };
+  assert.deepEqual(parseUploadedFiles([faca, { url: `${BASE}x2.pdf`, nome: "x2.pdf", kind: "extra" }], BASE), [faca]);
+  assert.equal(attachmentType("extra", ["Arquivo Único", "Faca de Corte"], "Faca de Corte"), "Faca de Corte");
+  assert.equal(attachmentType("extra", ["Arquivo Único"], "Faca de Corte"), "Arquivo Único", "tipo que a variação não aceita");
+  const files = [{ url: `${BASE}faca1.pdf`, nome: "faca1.pdf", kind: "extra" as const, tipo: "Faca de Corte" }, { url: `${BASE}logo2.png`, nome: "logo2.png", kind: "arquivo" as const }];
+  assert.deepEqual(
+    orderAttachments(files, ["Arquivo Único", "Impressão Frente", "Faca de Corte"]).map((a) => [a.nome, a.tipoArquivo]),
+    [
+      ["logo2.png", "Arquivo Único"],
+      ["faca1.pdf", "Faca de Corte"],
+    ],
+  );
+  assert.deepEqual(orderAttachments(files, [], { semArquivo: true }), [], "variação sem personalização: nenhum anexo");
 });
 
 test("tipo do anexo segue o que o produto aceita na API", () => {

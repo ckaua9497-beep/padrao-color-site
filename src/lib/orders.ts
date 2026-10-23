@@ -17,7 +17,8 @@ import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
  * semana nem feriado nacional), idCliente, pagamento {tipo, valor, status} e entrega.
  * Premissas a confirmar com a Padrão (trocar aqui):
  * - arte.tipo = 1 sempre (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda depois).
- * - anexos: os arquivos do Bunny (art-files.ts), com o tipo de anexo que o grupo aceita na API (tipos_anexo).
+ * - anexos: os arquivos do Bunny (art-files.ts), com o tipo de anexo que a variação aceita (customizacao.ts); a
+ *   variação sem personalização ou de neon pronto vai sem anexos.
  * - tipoProducao "economico" no prazo normal (o exemplo só mostra "expresso"); productType 0; tratamentoArquivo
  *   "Padrão" e acabamentos 0 (o site não vende esses serviços).
  * - entrega: o exemplo traz a loja de retirada ({id, nome}); o site manda {tipo, endereco} até a lista de lojas e o
@@ -311,8 +312,10 @@ export type ProductFacts = {
   categoryId: number | null;
   /** Embalagem da variação: [peso kg, largura, altura, comprimento cm, lotes por caixa]. */
   packaging: readonly [number, number, number, number, number] | null;
-  /** Tipos de anexo que o grupo aceita na API ("Arquivo Único", "Impressão Frente"…). */
+  /** Tipos de anexo que a variação aceita ("Arquivo Único", "Impressão Frente", "Faca de Corte"…). */
   attachments: readonly string[];
+  /** Variação sem personalização ou neon de modelo pronto: nenhum arquivo vai no pedido. */
+  semArquivo?: boolean;
 };
 
 export type OrderPackage = { peso: number; altura: number; largura: number; comprimento: number };
@@ -407,7 +410,7 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     tipoProducao: line.express ? "expresso" : "economico",
     productionTime: line.leadDays,
     package: box ? { peso: box[0], altura: box[2], largura: box[1], comprimento: box[3] } : null,
-    arte: { tipo: 1, preco: 0, anexos: orderAttachments(line.input.files ?? [], facts.attachments) },
+    arte: { tipo: 1, preco: 0, anexos: orderAttachments(line.input.files ?? [], facts.attachments, { semArquivo: facts.semArquivo }) },
     tratamentoArquivo: { tipo: "Padrão", preco: 0 },
     precoTotalAcabamentos: 0,
     unidades: line.units,

@@ -34,11 +34,14 @@ export const ART_UPLOAD_TYPES: Readonly<Record<string, string>> = {
 /** Teto por arquivo (o PDF no gabarito de uma lona grande passa dos 25 MB da imagem enviada). */
 export const ART_UPLOAD_MAX_MB = 60;
 
-/** De onde veio o arquivo: o PDF montado no gabarito, a arte enviada pelo cliente (frente) ou a do verso. */
-export type ArtFileKind = "pdf" | "arquivo" | "verso";
+/**
+ * De onde veio o arquivo: o PDF montado no gabarito, a arte enviada pelo cliente (frente), a do verso ou um arquivo
+ * complementar da variação ("extra", com o tipo de anexo em `tipo`: faca de corte, máscara de branco, verniz…).
+ */
+export type ArtFileKind = "pdf" | "arquivo" | "verso" | "extra";
 
 /** Arquivo no Bunny, como o checkout manda para o servidor. */
-export type UploadedArtFile = { url: string; nome: string; kind: ArtFileKind };
+export type UploadedArtFile = { url: string; nome: string; kind: ArtFileKind; tipo?: string };
 
 /** Anexo do pedido (POST /gerarpedido): produtos[].arte.anexos. */
 export type ArtAttachment = { url: string; nome: string; tipoArquivo: string };
@@ -86,8 +89,8 @@ export function isArtFileUrl(url: string, base: string): boolean {
   return STORED_NAME.test(url.slice(base.length));
 }
 
-const KINDS: readonly ArtFileKind[] = ["pdf", "arquivo", "verso"];
-export const MAX_ITEM_FILES = 6;
+const KINDS: readonly ArtFileKind[] = ["pdf", "arquivo", "verso", "extra"];
+export const MAX_ITEM_FILES = 12;
 
 /** Arquivos de um item vindos do navegador (validados um a um); os inválidos ficam de fora. */
 export function parseUploadedFiles(raw: unknown, base: string): UploadedArtFile[] {
@@ -95,29 +98,36 @@ export function parseUploadedFiles(raw: unknown, base: string): UploadedArtFile[
   const out: UploadedArtFile[] = [];
   for (const entry of raw.slice(0, MAX_ITEM_FILES)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { url, nome, kind } = entry as Record<string, unknown>;
+    const { url, nome, kind, tipo } = entry as Record<string, unknown>;
     if (typeof url !== "string" || typeof nome !== "string" || !KINDS.includes(kind as ArtFileKind)) continue;
+    // Complementar sem o tipo de anexo não tem como ir para a produção.
+    if (kind === "extra" && (typeof tipo !== "string" || !tipo.trim() || tipo.length > 60)) continue;
     if (!isArtFileUrl(url, base) || url.slice(base.length) !== nome) continue;
     if (out.some((file) => file.url === url)) continue;
-    out.push({ url, nome, kind: kind as ArtFileKind });
+    out.push({ url, nome, kind: kind as ArtFileKind, ...(kind === "extra" ? { tipo: (tipo as string).trim() } : {}) });
   }
   return out;
 }
 
 /**
- * Tipo de anexo de cada arquivo, entre os que o produto aceita na API (tipos_anexo do grupo): o PDF montado no
- * gabarito e a arte da frente vão como "Arquivo Único" (ou "Impressão Frente" quando o produto separa frente e
- * verso); a do verso, como "Impressão Verso". Produto sem a lista na API: "Arquivo Único".
+ * Tipo de anexo de cada arquivo, entre os que a variação aceita na API (tipos_anexo): o PDF montado no gabarito e a
+ * arte da frente vão como "Arquivo Único" (ou "Impressão Frente" quando a variação separa frente e verso); a do
+ * verso, como "Impressão Verso"; o complementar, com o próprio tipo. Sem a lista na API: "Arquivo Único".
  */
-export function attachmentType(kind: ArtFileKind, accepted: readonly string[]): string {
+export function attachmentType(kind: ArtFileKind, accepted: readonly string[], tipo?: string): string {
   const has = (name: string) => accepted.includes(name);
+  if (kind === "extra" && tipo && has(tipo)) return tipo;
   if (kind === "verso") return has("Impressão Verso") ? "Impressão Verso" : has("Arquivo Único") || !accepted.length ? "Arquivo Único" : accepted[0];
   if (has("Arquivo Único") || !accepted.length) return "Arquivo Único";
   return has("Impressão Frente") ? "Impressão Frente" : accepted[0];
 }
 
-/** Anexos do item no pedido: o PDF do gabarito primeiro, depois a arte enviada (frente e verso). */
-export function orderAttachments(files: readonly UploadedArtFile[], accepted: readonly string[]): ArtAttachment[] {
-  const order: Record<ArtFileKind, number> = { pdf: 0, arquivo: 1, verso: 2 };
-  return [...files].sort((a, b) => order[a.kind] - order[b.kind]).map((file) => ({ url: file.url, nome: file.nome, tipoArquivo: attachmentType(file.kind, accepted) }));
+/**
+ * Anexos do item no pedido: o PDF do gabarito primeiro, depois a arte enviada (frente e verso) e os complementares.
+ * Variação que não recebe arquivo (`accepted` vazio com `semArquivo`): nenhum anexo.
+ */
+export function orderAttachments(files: readonly UploadedArtFile[], accepted: readonly string[], { semArquivo = false }: { semArquivo?: boolean } = {}): ArtAttachment[] {
+  if (semArquivo) return [];
+  const order: Record<ArtFileKind, number> = { pdf: 0, arquivo: 1, verso: 2, extra: 3 };
+  return [...files].sort((a, b) => order[a.kind] - order[b.kind]).map((file) => ({ url: file.url, nome: file.nome, tipoArquivo: attachmentType(file.kind, accepted, file.tipo) }));
 }

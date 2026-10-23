@@ -4,6 +4,7 @@ import novosData from "@/data/catalog-novos.json";
 import storefrontData from "@/data/storefront.json";
 import businessTypesData from "@/data/business-types.json";
 import { mergeCatalogs, type CatalogFile } from "./catalog-merge";
+import type { Customizacao } from "./customizacao";
 
 /*
  * Catálogo gerado da API Padrão Color por scripts/sync-catalog.mjs (npm run sync:catalog).
@@ -34,6 +35,8 @@ export type Variation = {
    */
   mn?: number;
   mx?: number;
+  /** Perfil de customização da variação em `Product.customizacoes` (sem ele, o 0). Ver customizacaoDa. */
+  cz?: number;
 };
 
 export type InfoBlock = { title: string; text: string };
@@ -77,10 +80,8 @@ export type Product = {
   /** Medidas por tamanho, lidas da "Tabela de Medidas" da API. */
   sizeChart?: SizeChartRow[] | null;
   customSize?: CustomSize | null;
-  web2print?: boolean;
-  /** Preço do serviço de criação de arte, quando a API informa. */
-  artCreationPrice?: number | null;
-  attachments?: string[];
+  /** Perfis de customização das variações (modo da arte, anexos aceitos, criação de arte, web2print). */
+  customizacoes?: Customizacao[];
   minQty?: number;
   maxQty?: number;
   /** "site" = produto novo da API própria (/api/novos), que a Padrão ainda não tem: sem tabela de revenda nem pedido direto. */

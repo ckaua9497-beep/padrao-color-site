@@ -85,8 +85,15 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   no Bunny: `PUT {BUNNY_STORAGE_URL}/{pasta}/{nome}` com a `AccessKey`, que nunca vai ao navegador. O nome é o do cliente limpo
   (sem acento, espaço nem símbolo) mais o momento do envio em ms (`Banner80x120teste1791545356518.jpg`, `src/lib/art-files.ts`).
   A URL pública (`{BUNNY_CDN_URL}/{pasta}/{nome}`) fica guardada na linha do carrinho (não sobe de novo se o pedido falhar) e vai
-  no pedido em `produtos[].arte.anexos` com o `tipoArquivo` que o grupo aceita na API (`tipos_anexo`: "Arquivo Único",
+  no pedido em `produtos[].arte.anexos` com o `tipoArquivo` que a variação aceita na API (`tipos_anexo`: "Arquivo Único",
   "Impressão Frente", "Impressão Verso"…). O servidor só aceita URLs da pasta pública e com nome gerado aqui.
+- **Customização por variação (`src/lib/customizacao.ts`).** Cada variação tem o seu perfil (`Product.customizacoes`, índice
+  em `Variation.cz`): modo da arte (arquivo, sem personalização, neon frase/modelo/logo), anexos aceitos, preço da criação de
+  arte e web2print, com as regras do site por cima da API (sem personalização e neon pronto não pedem arte nem levam anexo;
+  personalizado sem `tipos_anexo` aceita "Arquivo Único"; nome ou opção "Sem Impressão"/"Produto sem Personalização" = sem
+  personalização; web2print só com template). Na página do produto, os anexos além da arte (faca de corte, máscara de
+  branco, verniz, capa, miolo, posição do LED) viram "Arquivos complementares" opcionais, enviados como `kind: "extra"` com
+  o `tipo` e mandados no pedido com esse `tipoArquivo`.
 - **Pedido (`POST /gerarpedido`).** Os produtos seguem o exemplo de pedido da Padrão (`src/lib/orders.ts`): `id` (variação),
   `groupId`, `groupCategoryId`, `productName`, `productImage`, `productType`, `quantidade` (lotes), `price` (um lote),
   `precoTotal`, `variations` (opções da variação), `package` (embalagem da variação), `tipoProducao`, `productionTime`,

@@ -45,7 +45,7 @@ export type CartItem = {
   uploaded?: Record<string, { url: string; nome: string }>;
 };
 
-export type CartArtFile = { id: string; name: string; kind: Exclude<ArtFileKind, "pdf"> };
+export type CartArtFile = { id: string; name: string; kind: Exclude<ArtFileKind, "pdf">; /** Tipo de anexo do complementar ("Faca de Corte"…). */ tipo?: string };
 
 /** Item com o preço do cliente de agora (balcão ou revenda), que pode diferir do salvo ao adicionar. */
 export type CartLine = {
@@ -125,7 +125,7 @@ function write(next: CartItem[]) {
 }
 
 /** Arquivos do item que vão para o Bunny no checkout: o PDF no gabarito e os enviados pelo cliente. */
-export function itemArtFiles(item: Pick<CartItem, "printFile" | "artFiles">): { id: string; name: string; kind: ArtFileKind }[] {
+export function itemArtFiles(item: Pick<CartItem, "printFile" | "artFiles">): { id: string; name: string; kind: ArtFileKind; tipo?: string }[] {
   return [...(item.printFile ? [{ id: item.printFile.id, name: item.printFile.name, kind: "pdf" as const }] : []), ...(item.artFiles ?? [])];
 }
 
@@ -205,7 +205,7 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 export function uploadedFilesOf(item: Pick<CartItem, "printFile" | "artFiles" | "uploaded">): UploadedArtFile[] {
   return itemArtFiles(item).flatMap((file) => {
     const done = item.uploaded?.[file.id];
-    return done ? [{ url: done.url, nome: done.nome, kind: file.kind }] : [];
+    return done ? [{ url: done.url, nome: done.nome, kind: file.kind, ...(file.tipo ? { tipo: file.tipo } : {}) }] : [];
   });
 }
 
