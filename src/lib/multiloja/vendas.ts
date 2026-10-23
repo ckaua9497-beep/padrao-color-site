@@ -11,6 +11,9 @@ import { embalagemDe, nomeFrete, pacotesDoPedido, prazoFrete, type OpcaoFrete } 
 import { padraoProduction, paymentRates, paymentSettings } from "./config";
 import { quoteOrder, type CheckoutRequest, type OrderQuote } from "./pedido";
 import { recordOrderEvent } from "./analytics";
+import { artesParaProducao } from "./artes-producao";
+import { readOrderArt } from "./files";
+import { bunnyConfig, uploadArtFile } from "../bunny";
 import { chargeStatus, createCharge, refundCharge, voidCharge, type ChargeStatus } from "./payments";
 import {
   createPedido,
@@ -333,7 +336,8 @@ export async function cancelOrder(pedido: Pedido, autor: string, nota: string): 
 
 // ---------------------------------------------------------------------------------- produção na Padrão
 
-export type ProductionResult = { ok: true; simulated: boolean; numero: string | null; payload: unknown } | { ok: false; message: string };
+/** `semArte`: itens que foram sem arquivo (o comprador não enviou a arte ou o envio ao Bunny está desligado). */
+export type ProductionResult = { ok: true; simulated: boolean; numero: string | null; payload: unknown; semArte: string[] } | { ok: false; message: string };
 
 /**
  * Manda o pedido pago para a produção na API Padrão (POST /gerarpedido) em nome do cliente da multiloja
@@ -344,8 +348,15 @@ export type ProductionResult = { ok: true; simulated: boolean; numero: string | 
 export async function sendToProduction(pedido: Pedido): Promise<ProductionResult> {
   const { enabled, customerId } = padraoProduction();
   const itens = await listItens(pedido.id);
+  // Artes que o comprador enviou (banco da multiloja) sobem para o Bunny e vão em arte.anexos, como no site.
+  const bunny = bunnyConfig();
+  const artes = await artesParaProducao(itens, {
+    ler: (arquivo) => readOrderArt(pedido.id, arquivo),
+    subir: bunny ? (file) => uploadArtFile(bunny, file) : null,
+  });
+  if (!artes.ok) return artes;
   const lines: PricedLine[] = [];
-  for (const item of itens) {
+  for (const [index, item] of itens.entries()) {
     const product = getProductById(item.produtoId);
     if (!product) return { ok: false, message: `Produto ${item.nome} não está mais no catálogo.` };
     const input: OrderItemInput = {
@@ -362,6 +373,7 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
       artName: item.arteNome,
       bundle: null,
       unitPrice: item.baseUnitario,
+      files: artes.arquivos[index],
     };
     const line = priceLine(input, linePrices(product, 0));
     if (isLineError(line)) return { ok: false, message: `${item.nome}: ${line.error}` };
@@ -374,14 +386,14 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
   };
   if (!enabled || !customerId) {
     await setPedidoStatus(pedido.id, "em_producao", "padrao", "Enviado para produção (simulação: PADRAO_ORDERS_ENABLED desligado).");
-    return { ok: true, simulated: true, numero: null, payload };
+    return { ok: true, simulated: true, numero: null, payload, semArte: artes.pendentes };
   }
   try {
     const result = await gerarPedido(payload);
     const numero = extractOrderNumber(result);
     if (numero) await setPedidoPadrao(pedido.id, String(numero));
     await setPedidoStatus(pedido.id, "em_producao", "padrao", numero ? `Pedido ${numero} na Padrão Color.` : "Enviado para produção na Padrão Color.");
-    return { ok: true, simulated: false, numero: numero ? String(numero) : null, payload };
+    return { ok: true, simulated: false, numero: numero ? String(numero) : null, payload, semArte: artes.pendentes };
   } catch (error) {
     console.error("[multiloja] gerarpedido:", error instanceof Error ? error.message : error);
     return { ok: false, message: "A API da Padrão recusou ou não respondeu. Tente de novo em instantes." };

@@ -72,9 +72,12 @@ export async function enviarProducao(codigo: string): Promise<AdminResult> {
   const result = await sendToProduction(pedido);
   refresh();
   if (!result.ok) return { ok: false, message: result.message };
+  // Itens sem arquivo: a Padrão precisa da arte por outro caminho (o comprador ainda não enviou ou o Bunny está desligado).
+  const semArte = result.semArte.length ? ` Sem arte: ${result.semArte.join(", ")}.` : "";
   return {
     ok: true,
-    message: result.simulated ? "Simulação: pedido marcado em produção, sem chamar a API (PADRAO_ORDERS_ENABLED desligado ou sem cliente da multiloja)." : `Enviado à Padrão${result.numero ? ` (pedido ${result.numero})` : ""}.`,
+    message:
+      (result.simulated ? "Simulação: pedido marcado em produção, sem chamar a API (PADRAO_ORDERS_ENABLED desligado ou sem cliente da multiloja)." : `Enviado à Padrão${result.numero ? ` (pedido ${result.numero})` : ""}.`) + semArte,
     payload: JSON.stringify(result.payload, null, 2),
   };
 }
