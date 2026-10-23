@@ -97,6 +97,8 @@ export type ClientProduct = {
 const MAX_UPLOAD_MB = 25;
 /** Teto da medida usada no 3D (a faixa vai até 50 m; o modelo não precisa passar disso). */
 const MAX_MODEL_CM = 5000;
+/** Arte da peça lisa no 3D (variação sem personalização). */
+const PLAIN_ART: ArtSettings = { ...DEFAULT_ART, plain: true };
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
 const fmtCm = (cm: number) => cm.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
@@ -320,7 +322,11 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   // Passos numerados: opções, medida (m²), tamanhos (vestuário) e arte.
   const sizeStep = keys.length + 1;
   const gridStep = keys.length + (areaMode ? 2 : 1);
+  // Variação sem personalização não tem o passo da arte.
   const artStep = keys.length + (areaMode ? 1 : 0) + (apparel ? 1 : 0) + 1;
+  const totalSteps = semArte ? artStep - 1 : artStep;
+  // No 3D, a peça lisa (o neon pronto segue com o desenho de exemplo do modelo).
+  const viewArt = semArte && !modeloPronto ? PLAIN_ART : art;
 
   // Linhas extras do carrinho. "Medida" segue o formato das páginas de festa e kit ("200 × 150 cm"), para o
   // carrinho e o checkout tratarem toda linha por m² igual; a área cobrada aparece só na pré-visualização.
@@ -519,7 +525,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
               )}
             </div>
           ) : (
-            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
+            <Mockup3D spec={spec} art={viewArt} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
           )
         ) : (
           <div className="flex gap-3 lg:mx-auto lg:w-[min(100%,calc(var(--lado)+4.75rem))]">
@@ -544,7 +550,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           </div>
         )}
         <p className="mt-3 text-caption text-muted">
-          Mockup ilustrativo gerado com a sua arte{area && !area.error ? `, na medida ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm` : ""}. A cor impressa segue o arquivo enviado.
+          {semArte ? "Mockup ilustrativo do produto" : "Mockup ilustrativo gerado com a sua arte"}
+          {area && !area.error ? `, na medida ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm` : ""}.{semArte ? "" : " A cor impressa segue o arquivo enviado."}
         </p>
       </div>
 
@@ -573,7 +580,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             const available = availableValues(key, product.options, variations, selection);
             return (
               <li key={key} className="motion-safe:animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
-                <StepTitle n={i + 1} total={artStep} title={cleanOptionLabel(key)} />
+                <StepTitle n={i + 1} total={totalSteps} title={cleanOptionLabel(key)} />
                 <OptionGroup
                   label={cleanOptionLabel(key)}
                   value={selection[key]}
@@ -586,14 +593,14 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
           {area && product.customSize && (
             <li id="passo-medida" className="scroll-mt-painel">
-              <StepTitle n={sizeStep} total={artStep} title="Medida (largura × altura)" />
+              <StepTitle n={sizeStep} total={totalSteps} title="Medida (largura × altura)" />
               <SizeInput value={size} onChange={setSize} limits={product.customSize} presets={presets} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
             </li>
           )}
 
           {apparel && (
             <li id="passo-tamanhos" className="scroll-mt-painel">
-              <StepTitle n={gridStep} total={artStep} title="Tamanhos e quantidades" />
+              <StepTitle n={gridStep} total={totalSteps} title="Tamanhos e quantidades" />
               <SizeBreakdown
                 sizes={sizes}
                 counts={counts}
@@ -608,43 +615,44 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             </li>
           )}
 
-          <ArtStep
-            step={artStep}
-            family={family}
-            spec={spec}
-            onSide={setArtSide}
-            blank={semArte}
-            ready={modeloPronto}
-            extraTypes={complementares}
-            extraFiles={extraFiles}
-            onExtraFile={(tipo, file) =>
-              setExtraFiles((files) => {
-                const rest = { ...files };
-                delete rest[tipo];
-                return file ? { ...rest, [tipo]: file } : rest;
-              })
-            }
-            art={art}
-            onArt={updateArt}
-            artName={artName}
-            onFile={onFile}
-            uploadError={uploadError}
-            uploading={uploading}
-            artLater={artLater}
-            onArtLater={(value) => {
-              setArtLater(value);
-              if (value) setArtMissing(false);
-            }}
-            missing={artMissing}
-            kind={spec.kind}
-            aspect={artAspect(spec)}
-            ledColors={spec.ledColors}
-            label={product.name}
-            sizes={product.sizes ?? null}
-            sizeChart={product.sizeChart ?? null}
-            gabarito={gabarito}
-            slug={product.slug}
-          />
+          {/* Variação sem personalização (produto liso, neon pronto): sem configuração de arte. */}
+          {!semArte && (
+            <ArtStep
+              step={artStep}
+              family={family}
+              spec={spec}
+              onSide={setArtSide}
+              extraTypes={complementares}
+              extraFiles={extraFiles}
+              onExtraFile={(tipo, file) =>
+                setExtraFiles((files) => {
+                  const rest = { ...files };
+                  delete rest[tipo];
+                  return file ? { ...rest, [tipo]: file } : rest;
+                })
+              }
+              art={art}
+              onArt={updateArt}
+              artName={artName}
+              onFile={onFile}
+              uploadError={uploadError}
+              uploading={uploading}
+              artLater={artLater}
+              onArtLater={(value) => {
+                setArtLater(value);
+                if (value) setArtMissing(false);
+              }}
+              missing={artMissing}
+              kind={spec.kind}
+              aspect={artAspect(spec)}
+              ledColors={spec.ledColors}
+              label={product.name}
+              sizes={product.sizes ?? null}
+              sizeChart={product.sizeChart ?? null}
+              gabarito={gabarito}
+              slug={product.slug}
+            />
+          )}
         </ol>
 
         {expressAvailable && (
@@ -687,7 +695,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           </Button>
         </div>
 
-        {product.template && (
+        {product.template && !semArte && (
           <TemplateDownload
             productId={product.id ?? product.slug}
             template={product.template}
@@ -706,12 +714,12 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           onAdd={addToCart}
           adding={adding}
           spec={spec}
-          art={art}
+          art={viewArt}
           name={product.name}
           fallbackImage={product.image}
           captureRef={captureRef}
           summary={[...keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string]), ...previewExtras]}
-          artDetails={artSummary(art, family)}
+          artDetails={semArte ? {} : artSummary(art, family)}
           total={formatBRL(total)}
         />
       )}

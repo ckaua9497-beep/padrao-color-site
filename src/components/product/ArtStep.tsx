@@ -61,8 +61,6 @@ type Props = {
   family: ArtFamily;
   /** Produto vendido sem impressão: a arte serve só para simular, não é exigida. */
   blank?: boolean;
-  /** Neon de modelo pronto (com `blank`): o desenho é o do produto; a arte do editor é só simulação. */
-  ready?: boolean;
   /** Arquivos complementares que a variação aceita (faca de corte, máscara de branco, verniz…) e os já escolhidos. */
   extraTypes?: readonly string[];
   extraFiles?: Record<string, File>;
@@ -126,7 +124,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, ready = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -267,7 +265,7 @@ export function ArtStep({ step, family, blank = false, ready = false, extraTypes
         <p className="mb-3 flex items-center gap-2 text-[15px] font-bold">
           {step !== undefined && <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>}
           {blank ? "Simule a sua arte" : "Sua arte"}
-          <span className="text-caption font-normal text-muted">{ready ? "· modelo pronto, o desenho é o do produto" : blank ? "· o produto é vendido sem impressão" : "· aparece no mockup 3D"}</span>
+          <span className="text-caption font-normal text-muted">{blank ? "· o produto é vendido sem impressão" : "· aparece no mockup 3D"}</span>
         </p>
       )}
 
@@ -506,9 +504,7 @@ export function ArtStep({ step, family, blank = false, ready = false, extraTypes
       {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ExtraFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} />}
 
       {blank ? (
-        <p className="mt-3 text-caption text-muted">
-          {ready ? "Não precisa enviar arte: o neon sai com o desenho do modelo, no tamanho e nas cores escolhidos." : "A arte não vai impressa: ela mostra como o produto fica depois que você personalizar."}
-        </p>
+        <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
       ) : (
         <label className="mt-3 flex items-center gap-2.5 text-sm">
           <input type="checkbox" checked={artLater} onChange={(event) => onArtLater(event.target.checked)} className="size-4 accent-coral-700" />

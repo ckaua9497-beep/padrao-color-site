@@ -7,6 +7,8 @@ export type ArtStyle = "classico" | "moderno" | "retro" | "minimal" | "vibrante"
 
 /** O que o cliente configura no passo "Sua arte". */
 export type ArtSettings = {
+  /** Produto liso (variação sem personalização): o mockup mostra a peça sem arte nem texto de exemplo. */
+  plain?: boolean;
   /** Imagem enviada (data URL), ou null para usar o template. */
   src: string | null;
   fit: "cover" | "contain";
@@ -2645,8 +2647,9 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
     drawNeon(ctx, w, h, image, art, info);
     return info;
   }
-  if (variant === "blank") {
-    ctx.fillStyle = "#fafafa";
+  if (variant === "blank" || art.plain) {
+    // Peça lisa: a cor dela (tecido, chinelo) ou o branco da face sem impressão.
+    ctx.fillStyle = art.plain && art.surface && /^#[0-9a-f]{3,8}$/i.test(art.surface) ? art.surface : "#fafafa";
     ctx.fillRect(0, 0, w, h);
     return info;
   }
