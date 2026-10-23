@@ -17,11 +17,13 @@ export function TurnGroup({ base, scale, children }: { base: number; scale: numb
   const ref = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
   const anim = useRef({ angle: base, from: base, to: base, t: 1, mounted: false });
-  const target = base + (back ? Math.PI : 0);
 
   useLayoutEffect(() => {
     const group = ref.current;
     if (!group) return;
+    // Peça deitada na mesa (userData.flatLay): quem mostra o verso são as folhas, que desviram; a cena não gira.
+    const flat = group.children.some((child) => child.userData.flatLay);
+    const target = base + (back && !flat ? Math.PI : 0);
     const state = anim.current;
     if (!state.mounted || !motion) {
       state.mounted = true;
@@ -36,7 +38,7 @@ export function TurnGroup({ base, scale, children }: { base: number; scale: numb
     state.to = target;
     state.t = 0;
     invalidate();
-  }, [target, motion, invalidate]);
+  }, [base, back, motion, invalidate]);
 
   useFrame((_, delta) => {
     const group = ref.current;

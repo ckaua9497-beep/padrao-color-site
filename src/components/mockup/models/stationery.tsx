@@ -14,7 +14,6 @@ import { JewelryCard } from "./jewelry";
 import {
   Dimensions,
   PrintMaterial,
-  backVariant,
   faceGeometry,
   makeShape,
   metalColor,
@@ -22,6 +21,8 @@ import {
   useArtTexture,
   useGeometryCleanup,
   type ModelProps,
+  useBackTexture,
+  backKindOf,
 } from "./shared";
 
 const CORAL = "#c4241b";
@@ -1020,8 +1021,8 @@ export function PassportModel({ spec, art, label }: ModelProps) {
   const shell = useCaseGeometry(W, H, gap, t, r);
   const aspect = shell.faceW / shell.faceH;
   const front = useArtTexture(aspect, "front", art, label);
-  const backKind = backVariant(spec);
-  const back = useArtTexture(aspect, backKind, art, label);
+  const backKind = backKindOf(spec, art);
+  const back = useBackTexture(aspect, spec, art, label);
   const stitches = useStitches(W, H, r, 0.42, 0.035, 0.32);
 
   const maps = useMemo(
@@ -1220,8 +1221,8 @@ function HangTags({ spec, art, label, showDims }: ModelProps) {
   const d = 0.05;
   const geo = useMemo(() => tagGeometry(spec.shape, w, h), [spec.shape, w, h]);
   const front = useArtTexture(w / h, "front", art, label);
-  const backKind = backVariant(spec);
-  const backTex = useArtTexture(w / h, backKind, art, label);
+  const backKind = backKindOf(spec, art);
+  const backTex = useBackTexture(w / h, spec, art, label);
   const back = backKind === "blank" ? null : backTex;
   const card = useCardGeometry(geo.shape, w, h, d);
   const parts = useMemo(() => ({ eyelet: new THREE.TorusGeometry(0.33, 0.075, 10, 32), knot: new THREE.SphereGeometry(0.16, 14, 10) }), []);
@@ -1362,8 +1363,8 @@ export function BookmarkModel({ spec, art, label, showDims }: ModelProps) {
     return shape;
   }, [w, h, portrait]);
   const front = useArtTexture(w / h, "front", art, label);
-  const backKind = backVariant(spec);
-  const backTex = useArtTexture(w / h, backKind, art, label);
+  const backKind = backKindOf(spec, art);
+  const backTex = useBackTexture(w / h, spec, art, label);
   const back = backKind === "blank" ? null : backTex;
 
   // Encostado na capa: base no chão, topo tocando a capa.

@@ -9,7 +9,7 @@ import { HorizontalBlurShader } from "three/examples/jsm/shaders/HorizontalBlurS
 import { VerticalBlurShader } from "three/examples/jsm/shaders/VerticalBlurShader.js";
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
-import type { ArtSettings } from "./art";
+import { hasArtContent, type ArtSettings } from "./art";
 import { MockupModel } from "./models";
 import { sizeLabels } from "./models/shared";
 import { MockupSkeleton, backdropCss, duskBackdrop, paintBackdrop, studioBackdrop, type Backdrop } from "./MockupSkeleton";
@@ -1106,11 +1106,20 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   const orbit = info.orbit;
   // Foco na arte: a câmera fica de frente para ela (sem giro), com o estúdio no fim de tarde.
   const focusOn = focus > 0 && !env;
-  const autoRotate = ready && visible && !paused && !interacting && !reducedMotion && !env && !orbit && !focusOn;
   const modelKey = `${spec.kind}-${spec.variant ?? ""}-${spec.widthCm}-${spec.heightCm}-${spec.depthCm}-${spec.shape}-${spec.sleeveless}-${spec.grommets}`;
   const shadowKey = useMemo(() => JSON.stringify(spec), [spec]);
-  const canFlip = BACK_VIEW_KINDS.has(spec.kind);
+  // Camisa, almofada e cama pet sempre; as outras peças quando imprimem atrás, quando o cliente montou um verso ou
+  // quando a página pede o verso (passo "Verso" da arte). Na sala a peça fica de frente.
+  const canFlip = BACK_VIEW_KINDS.has(spec.kind) || (!env && (spec.back !== "blank" || side === "back" || hasArtContent(art.back)));
   const showBack = canFlip && (manualSide && manualSide.prop === side && manualSide.kind === spec.kind ? manualSide.back : side === "back");
+  // Troca de lado: a câmera volta à vista inicial (de frente para a peça), para o lado pedido ficar de frente.
+  const [shownSide, setShownSide] = useState(showBack);
+  if (shownSide !== showBack) {
+    setShownSide(showBack);
+    setResetToken((t) => t + 1);
+  }
+  // O giro automático para enquanto o verso está na tela (senão a câmera dá a volta e mostra a frente de novo).
+  const autoRotate = ready && visible && !paused && !interacting && !reducedMotion && !env && !orbit && !focusOn && !showBack;
 
   // Fundo de estúdio: no neon, o brilho tem as cores do LED escolhidas (as do cliente valem mais que a
   // da opção do produto, como na arte). No ambiente, a cor da parede.

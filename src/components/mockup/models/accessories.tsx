@@ -16,7 +16,6 @@ import {
   Dimensions,
   PrintMaterial,
   RoundedBlock,
-  backVariant,
   faceGeometry,
   makeShape,
   sizeLabels,
@@ -24,6 +23,8 @@ import {
   useGeometryCleanup,
   type MaskPath,
   type ModelProps,
+  useBackTexture,
+  backKindOf,
 } from "./shared";
 import { PrintBand, lathe, type Pt } from "./vessel";
 
@@ -1157,7 +1158,7 @@ export function FanModel({ spec, art, label, showDims }: ModelProps) {
     [w, h, shape],
   );
   const front = useArtTexture(artAspect({ widthCm: w, heightCm: h }), "front", art, label, mask);
-  const back = useArtTexture(artAspect({ widthCm: w, heightCm: h }), backVariant(spec), art, label, mask);
+  const back = useBackTexture(artAspect({ widthCm: w, heightCm: h }), spec, art, label, mask);
   const wood = useWoodTexture();
 
   // Palito: sobe até 70% da pá por trás e desce 12 cm como cabo.
@@ -1367,8 +1368,8 @@ function ClipBadge({ spec, art, label, showDims }: ModelProps) {
   const w = clamp(spec.widthCm, 3, 15);
   const h = clamp(spec.heightCm, 3, 15);
   const front = useArtTexture(w / h, "front", art, label);
-  const backKind = backVariant(spec);
-  const back = useArtTexture(w / h, backKind, art, label);
+  const backKind = backKindOf(spec, art);
+  const back = useBackTexture(w / h, spec, art, label);
   const d = 0.076;
   const slotY = h / 2 - 0.55;
   const top = slotY + 5.7;
@@ -1390,8 +1391,8 @@ function Credential({ spec, art, label, showDims }: ModelProps) {
   const w = clamp(spec.widthCm, 4, 20);
   const h = clamp(spec.heightCm, 4, 25);
   const front = useArtTexture(w / h, "front", art, label);
-  const backKind = backVariant(spec);
-  const back = useArtTexture(w / h, backKind, art, label);
+  const backKind = backKindOf(spec, art);
+  const back = useBackTexture(w / h, spec, art, label);
   const d = 0.1;
   // Envelope: 4 mm de folga dos lados, cabeçalho de 2,7 cm com o rasgo.
   const sleeveW = w + 0.8;

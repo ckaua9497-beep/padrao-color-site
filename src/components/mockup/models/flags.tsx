@@ -10,7 +10,7 @@ import { dropPath, featherPath, knifePath, sailPath, type ArtRender } from "../a
 import { useAnimate } from "../viewer-hooks";
 import { useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
-import { makeShape, metalColor, useArtTexture, type ModelProps } from "./shared";
+import { backArtOf, makeShape, metalColor, useArtTexture, type ModelProps } from "./shared";
 import { lathe, smoothProfile, type Pt } from "./vessel";
 
 /*
@@ -339,6 +339,8 @@ type FlagPlan = {
   path: THREE.Vector2[];
   /** Arte deitada (texto subindo pelo mastro, como nos wind banners de verdade). */
   vertical: boolean;
+  /** Arte do verso (dupla face) deitada; a do verso decide sozinha (pode ter imagem e a da frente não). */
+  backVertical: boolean;
   resolution: number;
   sleeve: { radius: number; flap: number; taper: [number, number] };
   hem: number;
@@ -348,6 +350,8 @@ type FlagPlan = {
 
 type FlagParts = {
   cloth: THREE.BufferGeometry;
+  /** O mesmo tecido (posição, normal e índices compartilhados: ondula junto) com a UV do verso lida de trás. */
+  clothBack: THREE.BufferGeometry;
   sleeve: THREE.BufferGeometry;
   stitches: THREE.BufferGeometry[];
   hem: THREE.BufferGeometry;
@@ -370,6 +374,20 @@ function buildFlag(plan: FlagPlan): FlagParts {
     else uv.setXY(i, u, v);
   }
   uv.needsUpdate = true;
+  // Verso dupla face: visto de trás a haste fica à direita, então o u corre da ponta para a haste (texto sem
+  // espelhar). Deitada, o texto sobe pela haste como na frente e o topo das letras aponta para a ponta.
+  const backUv = new Float32Array(position.count * 2);
+  for (let i = 0; i < position.count; i += 1) {
+    const u = position.getX(i) / W;
+    const v = position.getY(i) / H;
+    backUv[i * 2] = plan.backVertical ? v : 1 - u;
+    backUv[i * 2 + 1] = plan.backVertical ? u : v;
+  }
+  const clothBack = new THREE.BufferGeometry();
+  clothBack.setIndex(cloth.getIndex());
+  clothBack.setAttribute("position", position);
+  clothBack.setAttribute("normal", cloth.getAttribute("normal"));
+  clothBack.setAttribute("uv", new THREE.BufferAttribute(backUv, 2));
 
   const sleeve = sleeveGeometry(path, s.radius, s.flap, s.taper);
   // Costura no ponto em que a seção da bainha está a 72% da aba (altura = 0,478 × raio).
@@ -395,17 +413,19 @@ function buildFlag(plan: FlagPlan): FlagParts {
     tie = { cord, grommet, anchor };
   }
 
-  const all = [cloth, sleeve, ...stitches, hem, ...(tie ? [tie.cord, tie.grommet] : [])];
+  const moving = [cloth, sleeve, ...stitches, hem, ...(tie ? [tie.cord, tie.grommet] : [])];
   // Distância até a haste medida numa cópia mais grossa da linha (erro < 1 mm, ~3× mais rápido).
   const reference = resample(path, 0.03);
-  const items = all.map((geometry) => deformable(geometry, reference));
+  const items = moving.map((geometry) => deformable(geometry, reference));
   let reach = 0.05;
   items[0].dist.forEach((d) => {
     reach = Math.max(reach, d);
   });
   const wind = { ...plan.wind, reach };
   items.forEach((item) => blow(item, wind, 0));
-  return { cloth, sleeve, stitches, hem, tie, items, wind, all };
+  // O verso não entra no vento (os atributos já são os do tecido); a esfera de recorte é a mesma, atualizada no lugar.
+  clothBack.boundingSphere = cloth.boundingSphere;
+  return { cloth, clothBack, sleeve, stitches, hem, tie, items, wind, all: [...moving, clothBack] };
 }
 
 /** Tracejado do pesponto (alpha) — uma textura por bandeira. */
@@ -428,8 +448,24 @@ function useStitchTexture() {
   return texture;
 }
 
-/** Tecido sublimado (frente nítida, verso com a arte vazada), bainhas, pesponto e elástico. */
-function FlagCloth({ parts, texture, sleeveColor, threadColor, hemColor }: { parts: FlagParts; texture: THREE.Texture; sleeveColor: string; threadColor: string; hemColor?: string }) {
+/** Arte do passo "Verso" (art.back) e o aspecto do canvas dela. */
+type FlagBack = { art: ArtRender; aspect: number; label: string };
+
+/** Verso dupla face: a arte do verso no lado de trás do tecido, com o mesmo material do verso vazado. */
+function FlagBackFace({ geometry, back }: { geometry: THREE.BufferGeometry; back: FlagBack }) {
+  const texture = useArtTexture(back.aspect, "front", back.art, back.label);
+  return (
+    <mesh geometry={geometry}>
+      <meshStandardMaterial map={texture} roughness={0.86} emissive="#ffffff" emissiveIntensity={0.09} side={THREE.BackSide} />
+    </mesh>
+  );
+}
+
+/**
+ * Tecido sublimado (frente nítida, verso com a arte vazada), bainhas, pesponto e elástico. Com `back` (o cliente
+ * montou um verso), o lado de trás mostra essa arte em vez da frente vazada.
+ */
+function FlagCloth({ parts, texture, sleeveColor, threadColor, hemColor, back }: { parts: FlagParts; texture: THREE.Texture; sleeveColor: string; threadColor: string; hemColor?: string; back?: FlagBack | null }) {
   useWind(parts.items, parts.wind);
   const stitch = useStitchTexture();
   // Bainha dobrada na cor do fundo da arte (a estampa vira junto com o tecido); cor inválida cai no branco.
@@ -439,9 +475,13 @@ function FlagCloth({ parts, texture, sleeveColor, threadColor, hemColor }: { par
       <mesh geometry={parts.cloth}>
         <meshPhysicalMaterial map={texture} roughness={0.72} sheen={0.45} sheenRoughness={0.55} sheenColor="#ffffff" side={THREE.FrontSide} />
       </mesh>
-      <mesh geometry={parts.cloth}>
-        <meshStandardMaterial map={texture} roughness={0.86} emissive="#ffffff" emissiveIntensity={0.09} side={THREE.BackSide} />
-      </mesh>
+      {back ? (
+        <FlagBackFace geometry={parts.clothBack} back={back} />
+      ) : (
+        <mesh geometry={parts.cloth}>
+          <meshStandardMaterial map={texture} roughness={0.86} emissive="#ffffff" emissiveIntensity={0.09} side={THREE.BackSide} />
+        </mesh>
+      )}
       <mesh geometry={parts.sleeve}>
         <meshPhysicalMaterial color={sleeveColor} roughness={0.88} sheen={0.6} sheenRoughness={0.6} sheenColor="#ffffff" />
       </mesh>
@@ -765,6 +805,10 @@ function WindBanner({ style, widthCm, heightCm, art, label, base, sleeveColor, p
   const H = clamp(heightCm, 60, 600) * CM;
   const vertical = !art.src && H / W > 1.8;
   const texture = useArtTexture(vertical ? H / W : W / H, "front", art, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
+  // Sem verso próprio vale o mesmo da frente (a malha não é refeita à toa).
+  const backVertical = !(backArt ?? art).src && H / W > 1.8;
+  const back = backArt ? { art: backArt, aspect: backVertical ? H / W : W / H, label } : null;
   const parts = useMemo(() => {
     const outline = outlineOf(style);
     const polygon = closePolygon(sampleOutline(outline.segments, W, H));
@@ -775,13 +819,14 @@ function WindBanner({ style, widthCm, heightCm, art, label, base, sleeveColor, p
       polygon,
       path,
       vertical,
+      backVertical,
       resolution: 110,
       sleeve: { radius: 0.014, flap: 0.045, taper: [0.012, 0.03] },
       hem: 0.0028,
       tie: { corner: new THREE.Vector2(outline.tie[0] * W, outline.tie[1] * H), anchor: new THREE.Vector3(POLE_R + 0.002, -0.1, 0) },
       wind: { amp: 0.07 * W, wavelength: Math.max(0.45, W * 0.95), speed: 2.1, billow: 0.07 * W, droop: 0 },
     });
-  }, [style, W, H, vertical]);
+  }, [style, W, H, vertical, backVertical]);
   useGeometriesCleanup(parts.all);
   const baseTop = base === "round" ? ROUND_TOP : CROSS_TOP;
   const clothY = baseTop + 0.32;
@@ -799,7 +844,7 @@ function WindBanner({ style, widthCm, heightCm, art, label, base, sleeveColor, p
         <Aluminium />
       </mesh>
       <group position-y={clothY}>
-        <FlagCloth parts={parts} texture={texture} sleeveColor={sleeveColor} threadColor="#d9d9d9" hemColor={art.background} />
+        <FlagCloth parts={parts} texture={texture} sleeveColor={sleeveColor} threadColor="#d9d9d9" hemColor={art.background} back={back} />
       </group>
     </group>
   );
@@ -822,6 +867,7 @@ function hoistPlan(W: number, H: number, options: Pick<FlagPlan, "resolution" | 
     polygon: [new THREE.Vector2(0, 0), new THREE.Vector2(0, H), new THREE.Vector2(W, H), new THREE.Vector2(W, 0)],
     path: resample([new THREE.Vector2(0, 0), new THREE.Vector2(0, H)], 0.015),
     vertical: false,
+    backVertical: false,
     tie: null,
     ...options,
   };
@@ -853,6 +899,8 @@ function ClassicFlagModel({ spec, art, label }: ModelProps) {
   const W = clamp(spec.widthCm, 20, 400) * CM;
   const H = clamp(spec.heightCm, 15, 300) * CM;
   const texture = useArtTexture(W / H, "front", art, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
+  const back = backArt ? { art: backArt, aspect: W / H, label } : null;
   const parts = useMemo(
     () =>
       buildFlag(
@@ -947,7 +995,7 @@ function ClassicFlagModel({ spec, art, label }: ModelProps) {
         <meshStandardMaterial color="#efece4" roughness={0.85} />
       </mesh>
       <group position={[hoistX, flagBottom, 0]}>
-        <FlagCloth parts={parts} texture={texture} sleeveColor="#f3f0e6" threadColor="#cfcabd" hemColor={art.background} />
+        <FlagCloth parts={parts} texture={texture} sleeveColor="#f3f0e6" threadColor="#cfcabd" hemColor={art.background} back={back} />
         {[H - 0.022, 0.022].map((y) => (
           <group key={y}>
             <mesh position={[grommetX, y, 0]} scale={[1, 1, 1.7]}>
@@ -972,6 +1020,8 @@ function CarFlagModel({ spec, art, label }: ModelProps) {
   const W = clamp(spec.widthCm, 15, 80) * CM;
   const H = clamp(spec.heightCm, 10, 60) * CM;
   const texture = useArtTexture(W / H, "front", art, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
+  const back = backArt ? { art: backArt, aspect: W / H, label } : null;
   const parts = useMemo(
     () =>
       buildFlag(
@@ -1061,7 +1111,7 @@ function CarFlagModel({ spec, art, label }: ModelProps) {
           <Plastic color="#f2f2f2" roughness={0.38} />
         </mesh>
         <group position-y={0.12}>
-          <FlagCloth parts={parts} texture={texture} sleeveColor="#f4f4f4" threadColor="#d0d0d0" hemColor={art.background} />
+          <FlagCloth parts={parts} texture={texture} sleeveColor="#f4f4f4" threadColor="#d0d0d0" hemColor={art.background} back={back} />
         </group>
       </group>
     </group>
@@ -1069,6 +1119,16 @@ function CarFlagModel({ spec, art, label }: ModelProps) {
 }
 
 // ---------------------------------------------------------------------------- wind ball
+
+/** Hemisfério de trás da wind ball com a arte do passo "Verso" (a UV dele já lê de trás). */
+function BallBack({ geometry, art, label }: { geometry: THREE.BufferGeometry; art: ArtRender; label: string }) {
+  const texture = useArtTexture(1, "front", art, label);
+  return (
+    <mesh geometry={geometry}>
+      <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
+    </mesh>
+  );
+}
 
 /** Wind ball: esfera de helanca em dois hemisférios costurados (arte nos dois lados) num mastro com base em cruz. */
 function WindBallModel({ spec, art, label }: ModelProps) {
@@ -1078,6 +1138,7 @@ function WindBallModel({ spec, art, label }: ModelProps) {
   const total = Math.max(clamp(spec.heightCm, 60, 400) * CM, D * 1.8);
   const center = total - r - 0.08;
   const texture = useArtTexture(1, "front", art, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
   const ball = useMemo(() => {
     // Projeção frontal: de frente a arte aparece inteira e sem distorção; o verso lê espelhado de volta.
     const half = (phiStart: number, flip: boolean) => {
@@ -1112,9 +1173,13 @@ function WindBallModel({ spec, art, label }: ModelProps) {
         <mesh geometry={ball.front}>
           <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
         </mesh>
-        <mesh geometry={ball.back}>
-          <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
-        </mesh>
+        {backArt ? (
+          <BallBack geometry={ball.back} art={backArt} label={label} />
+        ) : (
+          <mesh geometry={ball.back}>
+            <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
+          </mesh>
+        )}
         <mesh geometry={ball.seam}>
           <meshStandardMaterial color="#1a1a1c" roughness={0.8} />
         </mesh>

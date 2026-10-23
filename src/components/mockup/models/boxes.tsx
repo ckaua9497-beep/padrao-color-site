@@ -6,8 +6,8 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
-import { fontFamily } from "../art";
-import { AcrylicMaterials, PrintMaterial, bandGeometry, faceGeometry, makeShape, roughnessOf, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { fontFamily, hasArtContent } from "../art";
+import { AcrylicMaterials, PrintMaterial, bandGeometry, faceGeometry, makeShape, roughnessOf, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
 import { PrintBand, handleGeometry, lathe, smoothProfile, type Pt } from "./vessel";
 import { BasketBox, PanettoneBox } from "./baskets";
 import { CartonBag, CartonBox } from "./cartons";
@@ -603,14 +603,19 @@ function FoamInsert() {
   );
 }
 
+/** Chanfro das capas da agenda do kit. */
+const AGENDA_BEVEL = 0.08;
+/** Área impressa da capa da agenda (a arte da frente do kit); o verso do cliente usa a mesma área na tampa. */
+const AGENDA_FACE = { w: EXEC_ITEMS.agenda.w - 2 * AGENDA_BEVEL, d: EXEC_ITEMS.agenda.d - 2 * AGENDA_BEVEL };
+
 /** Agenda de capa dura deitada: duas capas, miolo creme recuado, lombada arredondada e arte na capa. */
 function Agenda({ spec, art, label, position }: Pick<ModelProps, "spec" | "art" | "label"> & { position: Vec3 }) {
   const { w, d } = EXEC_ITEMS.agenda;
   const board = 0.25;
   const pages = 1.5;
-  const bevel = 0.08;
-  const faceW = w - 2 * bevel;
-  const faceD = d - 2 * bevel;
+  const bevel = AGENDA_BEVEL;
+  const faceW = AGENDA_FACE.w;
+  const faceD = AGENDA_FACE.d;
   const cover = useArtTexture(faceW / faceD, "front", art, label);
   const wrap = <Coated color={art.background} spec={spec} />;
   return (
@@ -815,6 +820,9 @@ function ExecutiveKit({ spec, art, label }: ModelProps) {
   const black = <meshPhysicalMaterial color="#161619" roughness={0.58} clearcoat={0.15} clearcoatRoughness={0.4} sheen={0.35} sheenColor="#3a3a42" sheenRoughness={0.6} />;
   const { agenda, bottle, pen } = EXEC_ITEMS;
   const seat = EXEC.foamTop - EXEC.pocket;
+  // Verso do cliente: na face de fora da tampa aberta (voltada para −z), na mesma área da capa da agenda.
+  const backArt = useBackTexture(AGENDA_FACE.w / AGENDA_FACE.d, spec, art, label, undefined, "blank");
+  const ownBack = hasArtContent(art.back);
   return (
     <group userData={{ view: { elevation: 0.68 } }}>
       <group scale={S}>
@@ -826,6 +834,9 @@ function ExecutiveKit({ spec, art, label }: ModelProps) {
             <Block size={[lidW - 2 * EXEC.wall - 0.4, 0.18, lidD - 2 * EXEC.wall - 0.4]} radius={0.5} bevel={0.08} position={[0, -0.36 - 0.09, 0]}>
               <meshPhysicalMaterial color="#1d1d22" roughness={0.32} sheen={1} sheenColor="#8a8a98" sheenRoughness={0.3} />
             </Block>
+            {/* Face de fora da tampa (y = 0 local; borda da frente = +z local = alto da tampa aberta). Giro [π/2, π, 0]:
+                x da arte = −x (direita de quem olha por trás), y da arte = +z, normal = +y. */}
+            {ownBack && <Face w={AGENDA_FACE.w} h={AGENDA_FACE.d} radius={0.35} map={backArt} spec={spec} position={[0, LIFT, 0]} rotation={[Math.PI / 2, Math.PI, 0]} />}
           </group>
         </group>
         <FoamInsert />

@@ -9,7 +9,7 @@ import { Decal } from "@react-three/drei";
 import * as THREE from "three";
 import { useApparelArt, useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
-import { useArtTexture, type ModelProps } from "./shared";
+import { backArtOf, useArtTexture, useBackTexture, type ModelProps } from "./shared";
 
 // ---------------------------------------------------------------------------- utilitários
 
@@ -376,9 +376,11 @@ function sockGrid({
 
 /**
  * Colunas da arte: cada linha cobre a mesma largura física (arco medido na seção), centrada no ângulo
- * `center` (o lado do cano voltado para a câmera); a emenda das sobras fica do lado oposto.
+ * `center` (o lado do cano voltado para a câmera); a emenda das sobras fica do lado oposto. Com `half`
+ * (frente e verso com artes próprias), a faixa fica na metade do cano em volta de `center` (até as
+ * laterais, center ± π/2): o que passa disso é cortado nas laterais, sem esticar.
  */
-function printColumns(width: number, center: number) {
+function printColumns(width: number, center: number, half = false) {
   return (sec: SockSection) => {
     const samples = 128;
     const from = center - Math.PI;
@@ -394,9 +396,11 @@ function printColumns(width: number, center: number) {
     }
     const total = lengths[samples];
     const middle = lengths[samples / 2];
-    // Arte mais larga que o cano: as sobras se espremem na costura de trás (corta, não estica).
+    const lo = half ? lengths[samples / 4] : 0;
+    const hi = half ? lengths[(samples * 3) / 4] : total;
+    // Arte mais larga que o cano (ou que a metade dele): as sobras se espremem na borda (corta, não estica).
     return (u: number) => {
-      const target = clamp(middle + (u - 0.5) * width, 0, total);
+      const target = clamp(middle + (u - 0.5) * width, lo, hi);
       let k = 1;
       while (k < samples && lengths[k] < target) k += 1;
       const span = lengths[k] - lengths[k - 1] || 1;
@@ -410,7 +414,7 @@ function sectionLoop(t: number, grow: number, samples = 96) {
   return Array.from({ length: samples }, (_, k) => new THREE.Vector3(...sockPoint(sec, (k / samples) * Math.PI * 2 - Math.PI, grow)));
 }
 
-function buildSock(printW: number, printH: number, printCenter: number) {
+function buildSock(printW: number, printH: number, printCenter: number, split: boolean) {
   const tCuff = sockLegT(SOCK.top - SOCK.cuff);
   const tToe = T_BEND + 0.82 * (T_FOOT - T_BEND);
   const tInner = sockLegT(SOCK.top - 2.6);
@@ -449,15 +453,20 @@ function buildSock(printW: number, printH: number, printCenter: number) {
   });
 
   // Arte sublimada no cano: u em volta (largura física constante), v de cima para baixo.
-  const print = sockGrid({
-    t0: sockLegT(printTop),
-    t1: sockLegT(printTop - printH),
-    rows: 40,
-    cols: 72,
-    columns: printColumns(printW, printCenter),
-    grow: () => 1.004,
-    uv: (u, v) => [u, 1 - v],
-  });
+  const printBand = (center: number, half: boolean) =>
+    sockGrid({
+      t0: sockLegT(printTop),
+      t1: sockLegT(printTop - printH),
+      rows: 40,
+      cols: 72,
+      columns: printColumns(printW, center, half),
+      grow: () => 1.004,
+      uv: (u, v) => [u, 1 - v],
+    });
+  // Com arte própria no verso, cada arte ocupa a sua metade do cano; o verso é a metade oposta (o que a
+  // câmera vê depois do giro de 180°). theta cresce de +x para -x atrás: a arte lê certo vista de trás.
+  const print = printBand(printCenter, split);
+  const printBack = split ? printBand(printCenter + Math.PI, true) : null;
 
   // Boca: parede interna (vista por dentro), fundo escuro e borda enrolada.
   const innerRows = 5;
@@ -474,7 +483,7 @@ function buildSock(printW: number, printH: number, printCenter: number) {
   const toeSeam = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sectionLoop(tToe, 1.012), true), 96, 0.07, 6, true);
 
   const parts = { cuff, body, toe, heel, print, inner, floor, rim, toeSeam };
-  return { ...parts, list: Object.values(parts) };
+  return { ...parts, printBack, list: printBack ? [...Object.values(parts), printBack] : Object.values(parts) };
 }
 
 /** Ladrilho de malha (4 colunas × 4 carreiras de pontos em V) para o relevo do tecido. */
@@ -536,7 +545,7 @@ function Knit({ color, knit, bump = 0.9, map, overlay = false }: { color?: strin
   );
 }
 
-function Sock({ parts, map, knit, base, accent }: { parts: SockParts; map: THREE.Texture; knit: THREE.Texture; base: string; accent: string }) {
+function Sock({ parts, map, back, knit, base, accent }: { parts: SockParts; map: THREE.Texture; back: THREE.Texture; knit: THREE.Texture; base: string; accent: string }) {
   const inside = shade(base, 0.42);
   return (
     <group>
@@ -549,6 +558,11 @@ function Sock({ parts, map, knit, base, accent }: { parts: SockParts; map: THREE
       <mesh geometry={parts.print}>
         <Knit map={map} knit={knit} bump={0.5} overlay />
       </mesh>
+      {parts.printBack && (
+        <mesh geometry={parts.printBack}>
+          <Knit map={back} knit={knit} bump={0.5} overlay />
+        </mesh>
+      )}
       <mesh geometry={parts.heel}>
         <Knit color={accent} knit={knit} bump={1.2} overlay />
       </mesh>
@@ -589,10 +603,13 @@ export function SockModel({ spec, art, label }: ModelProps) {
   const printW = clamp(measure(spec.widthCm, 18), 4, 40);
   const printH = clamp(measure(spec.heightCm, 22), 4, SOCK_PRINT_MAX_H);
   const texture = useArtTexture(printW / printH, "front", art, label);
+  // Verso (passo "Verso"): a parte de trás do cano, com a mesma área da frente; sem ele, a faixa da frente segue inteira.
+  const ownBack = backArtOf(art) !== null;
+  const backTexture = useBackTexture(printW / printH, spec, art, label, undefined, "blank");
   const knit = useKnitTexture();
   // A arte fica centrada no lado do cano que encara a câmera (desfaz o giro do par), não na canela:
   // num cano de ≈ 21 cm de volta só meia arte aparece, e ela precisa ser a metade do meio.
-  const parts = useMemo(() => buildSock(printW, printH, -SOCK_TURN), [printW, printH]);
+  const parts = useMemo(() => buildSock(printW, printH, -SOCK_TURN, ownBack), [printW, printH, ownBack]);
   useGeometriesCleanup(parts.list);
   const base = spec.baseColor;
   const accent = spec.accentColor ?? mix(base, "#6f6f6f", 0.35);
@@ -600,7 +617,7 @@ export function SockModel({ spec, art, label }: ModelProps) {
     <group>
       {SOCK_PAIR.map(([x, z]) => (
         <group key={`${x}:${z}`} position={[x, 0, z]} rotation-y={SOCK_TURN} scale={SOCK_UNIT}>
-          <Sock parts={parts} map={texture} knit={knit} base={base} accent={accent} />
+          <Sock parts={parts} map={texture} back={backTexture} knit={knit} base={base} accent={accent} />
         </group>
       ))}
     </group>
@@ -826,6 +843,18 @@ function buildShorts() {
   };
 }
 
+/**
+ * Estampa do short em Decal, logo abaixo do cós. O verso projeta de trás (giro de π em y): a arte lê da
+ * esquerda para a direita para quem olha as costas.
+ */
+function ShortsPrint({ map, size, back = false }: { map: THREE.Texture; size: [number, number]; back?: boolean }) {
+  return (
+    <Decal position={[0, SHORTS_PRINT_Y, back ? -6 : 6]} rotation={[0, back ? Math.PI : 0, 0]} scale={[size[0], size[1], 12]} depthTest>
+      <meshPhysicalMaterial map={map} transparent alphaTest={0.02} roughness={0.6} sheen={0.5} sheenRoughness={0.45} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-10} depthTest />
+    </Decal>
+  );
+}
+
 function DryFit({ map, color }: { map?: THREE.Texture; color?: string }) {
   return <meshPhysicalMaterial map={map ?? null} color={color ?? "#ffffff"} roughness={0.58} sheen={0.85} sheenRoughness={0.4} sheenColor="#ffffff" specularIntensity={0.6} />;
 }
@@ -841,6 +870,10 @@ export function ShortsModel({ spec, art, label }: ModelProps) {
   const printW = clamp(measure(spec.widthCm, 30), 4, 44);
   const printH = clamp(measure(spec.heightCm, 25), 4, 26);
   const texture = useArtTexture(printW / printH, "front", printArt, label);
+  // Painel de trás: liso, ou com a arte do passo "Verso" na mesma área (imagem sem fundo, como a da frente).
+  const ownBack = backArtOf(art) !== null;
+  const backSource = useMemo(() => (art.back?.src ? { ...art, back: { ...art.back, background: "rgba(0,0,0,0)" } } : art), [art]);
+  const backTexture = useBackTexture(printW / printH, spec, backSource, label, undefined, "blank");
   const parts = useMemo(() => buildShorts(), []);
   useGeometriesCleanup(parts.list);
 
@@ -857,15 +890,14 @@ export function ShortsModel({ spec, art, label }: ModelProps) {
     <group rotation-y={0.18} scale={SHORTS_UNIT}>
       <mesh geometry={parts.front}>
         <DryFit map={fabric} />
-        <Decal position={[0, SHORTS_PRINT_Y, 6]} rotation={[0, 0, 0]} scale={[printW, printH, 12]} depthTest>
-          <meshPhysicalMaterial map={texture} transparent alphaTest={0.02} roughness={0.6} sheen={0.5} sheenRoughness={0.45} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-10} depthTest />
-        </Decal>
+        <ShortsPrint map={texture} size={[printW, printH]} />
       </mesh>
       <mesh geometry={parts.front}>
         <meshStandardMaterial color={lining} roughness={1} side={THREE.BackSide} />
       </mesh>
       <mesh geometry={parts.back}>
         <DryFit map={fabric} />
+        {ownBack && <ShortsPrint map={backTexture} size={[printW, printH]} back />}
       </mesh>
       <mesh geometry={parts.back}>
         <meshStandardMaterial color={lining} roughness={1} side={THREE.BackSide} />

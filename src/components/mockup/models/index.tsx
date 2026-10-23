@@ -26,6 +26,7 @@ import { TowelModel, CurtainModel, BeddingModel, TableclothModel } from "./linen
 import { WallpaperModel, MagnetModel, CylinderModel } from "./interior";
 import { TotemModel } from "./totem";
 import type { ModelProps } from "./shared";
+import { TurnGroup } from "./apparel/TurnGroup";
 
 export type { ModelProps } from "./shared";
 
@@ -99,7 +100,16 @@ const MODELS: Record<MockupKind, ComponentType<ModelProps>> = {
   cylinder: CylinderModel,
 };
 
+/** Peças que giram sozinhas para as costas (TurnGroup no próprio modelo). */
+const SELF_TURN: ReadonlySet<MockupKind> = new Set(["tshirt", "cushion", "petbed"]);
+
 export function MockupModel(props: ModelProps) {
   const Model = MODELS[props.spec.kind] ?? SheetModel;
-  return <Model {...props} />;
+  if (SELF_TURN.has(props.spec.kind)) return <Model {...props} />;
+  // As outras giram 180° quando a página pede o verso (passo "Verso" da arte ou "Ver verso").
+  return (
+    <TurnGroup base={0} scale={1}>
+      <Model {...props} />
+    </TurnGroup>
+  );
 }

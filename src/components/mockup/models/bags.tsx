@@ -9,7 +9,7 @@ import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
 import { closedTube, useApparelArt, useGeometriesCleanup } from "./fabric";
 import { inflatedSurface, shapePolygon } from "./inflate";
-import { bandGeometry, makeShape, useArtTexture, type ModelProps } from "./shared";
+import { backArtOf, bandGeometry, makeShape, useArtTexture, useBackTexture, type ModelProps } from "./shared";
 import { lathe, radiusOnProfile, smoothProfile, type Pt } from "./vessel";
 
 /*
@@ -65,10 +65,13 @@ function Plastic({ color = "#151518" }: { color?: string }) {
   return <meshStandardMaterial color={color} roughness={0.42} />;
 }
 
-/** Estampa sublimada/DTF projetada no painel (Decal com profundidade própria, em centímetros). */
-function PanelPrint({ map, position, size, depth }: { map: THREE.Texture; position: [number, number, number]; size: [number, number]; depth: number }) {
+/**
+ * Estampa sublimada/DTF projetada no painel (Decal com profundidade própria, em centímetros). No verso, `rotation`
+ * [0, π, 0] projeta de trás para a frente: a arte lê da esquerda para a direita para quem olha as costas.
+ */
+function PanelPrint({ map, position, size, depth, rotation = [0, 0, 0] }: { map: THREE.Texture; position: [number, number, number]; size: [number, number]; depth: number; rotation?: [number, number, number] }) {
   return (
-    <Decal position={position} rotation={[0, 0, 0]} scale={[size[0], size[1], depth]} depthTest>
+    <Decal position={position} rotation={rotation} scale={[size[0], size[1], depth]} depthTest>
       <meshPhysicalMaterial map={map} transparent alphaTest={0.02} roughness={0.78} sheen={0.35} sheenRoughness={0.7} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-10} depthTest />
     </Decal>
   );
@@ -833,7 +836,8 @@ function shapeSack(g: THREE.BufferGeometry, w: number, h: number, chan: number, 
     z *= (1 - 0.65 * top) * (0.12 + 0.88 * smooth(corner, 0, 9));
     z += side * t * (0.42 * top ** 1.5 * Math.sin(x * 1.25 + 0.6 * Math.sin(y * 0.4)) + 0.12 * (1 - top) * Math.sin(0.33 * x - 0.21 * y + 0.8));
     pos.setZ(i, z);
-    if (uv) uv.setXY(i, (x + w / 2) / w, (y + h / 2) / (h - chan));
+    // Costas: u corre de +x para -x, para a arte do verso ler da esquerda para a direita vista de trás.
+    if (uv) uv.setXY(i, side === 1 ? (x + w / 2) / w : (w / 2 - x) / w, (y + h / 2) / (h - chan));
   }
   pos.needsUpdate = true;
   if (uv) uv.needsUpdate = true;
@@ -897,6 +901,9 @@ export function DrawstringModel({ spec, art, label }: ModelProps) {
   // Sublimada de ponta a ponta: a arte cobre a frente toda, com fundo pintado.
   const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
   const texture = useArtTexture(w / (h - chan), "front", panelArt, label);
+  // Costas: lisas, ou sublimadas com a arte do passo "Verso" (mesma área da frente).
+  const ownBack = backArtOf(art) !== null;
+  const backTexture = useBackTexture(w / (h - chan), spec, panelArt, label, undefined, "blank");
   const p = useMemo(() => buildDrawstring(w, h, chan), [w, h]);
   useGeometriesCleanup(p.all);
   const base = spec.baseColor;
@@ -908,9 +915,7 @@ export function DrawstringModel({ spec, art, label }: ModelProps) {
         <mesh geometry={p.front}>
           <PrintedSurface map={texture} />
         </mesh>
-        <mesh geometry={p.back}>
-          <Cloth color={base} />
-        </mesh>
+        <mesh geometry={p.back}>{ownBack ? <PrintedSurface map={backTexture} /> : <Cloth color={base} />}</mesh>
         <mesh geometry={p.channel.body}>
           <Cloth color={base} />
         </mesh>
@@ -974,6 +979,7 @@ function buildBoxCooler(W: number, H: number, D: number, lunch: boolean) {
   const inner = innerOf(o);
   const body = softBodyGeometry(o).geometry;
   const frontZ = deform(vec(0, printCy, hd)).z;
+  const backZ = deform(vec(0, printCy, -hd)).z;
 
   // Debrum na borda da tampa e na do fundo.
   const pipings = [surfaceLoop(o, "y", 1, Math.PI / 4), surfaceLoop(o, "y", -1, Math.PI / 4)].map((loop) => pipingGeometry(onSurface(o, loop).points, 0.3));
@@ -1009,7 +1015,7 @@ function buildBoxCooler(W: number, H: number, D: number, lunch: boolean) {
     if (pad.stitches) geometries.push(pad.stitches);
     shoulder = { main, pad, buckle: main.frameAt(0.2), ringX, ringY };
   }
-  return { body, frontZ, printCy, pw, ph, decalDepth: D * 0.6, pipings, zipper, pullers, shoulder, handle, all: geometries };
+  return { body, frontZ, backZ, printCy, pw, ph, decalDepth: D * 0.6, pipings, zipper, pullers, shoulder, handle, all: geometries };
 }
 
 function BoxCooler({ spec, art, label }: ModelProps) {
@@ -1022,6 +1028,9 @@ function BoxCooler({ spec, art, label }: ModelProps) {
   useGeometriesCleanup(p.all);
   // A área impressa é o painel frontal inteiro: a arte usa a proporção dele (sem distorcer).
   const texture = useArtTexture(p.pw / p.ph, "front", art, label);
+  // Painel de trás (dobradiça da tampa, sem zíper): só recebe estampa com a arte do passo "Verso".
+  const ownBack = backArtOf(art) !== null;
+  const backTexture = useBackTexture(p.pw / p.ph, spec, art, label, undefined, "blank");
   const shoulder = p.shoulder;
   const base = spec.baseColor;
   const trim = trimOf(spec);
@@ -1033,6 +1042,7 @@ function BoxCooler({ spec, art, label }: ModelProps) {
           {/* Lancheira em lona: trama fosca, quase sem brilho; cooler em microfibra acetinada. */}
           <Cloth color={base} sheen={lunch ? 0.35 : 0.7} roughness={lunch ? 0.94 : 0.88} />
           <PanelPrint key={p.body.uuid} map={texture} position={[0, p.printCy, p.frontZ]} size={[p.pw, p.ph]} depth={p.decalDepth} />
+          {ownBack && <PanelPrint key={`${p.body.uuid}:verso`} map={backTexture} position={[0, p.printCy, p.backZ]} rotation={[0, Math.PI, 0]} size={[p.pw, p.ph]} depth={p.decalDepth} />}
         </mesh>
         {p.pipings.map((g, i) => (
           <mesh key={i} geometry={g}>
@@ -1127,6 +1137,9 @@ function CanCooler({ spec, art, label }: ModelProps) {
   const p = useMemo(() => buildCanCooler(R, H), [R, H]);
   useGeometriesCleanup(p.all);
   const texture = useArtTexture(p.aspect, "front", art, label);
+  // Verso: a mesma faixa girada para trás (entre as argolas), só com a arte do passo "Verso".
+  const ownBack = backArtOf(art) !== null;
+  const backTexture = useBackTexture(p.aspect, spec, art, label, undefined, "blank");
   const trim = trimOf(spec);
   const stitch = isDark(trim) ? "#6b6c70" : shade(trim, 0.6);
   return (
@@ -1138,6 +1151,11 @@ function CanCooler({ spec, art, label }: ModelProps) {
         <mesh geometry={p.band} position-y={p.bandCy}>
           <PrintedSurface map={texture} />
         </mesh>
+        {ownBack && (
+          <mesh geometry={p.band} position-y={p.bandCy} rotation-y={Math.PI}>
+            <PrintedSurface map={backTexture} />
+          </mesh>
+        )}
         {p.rings.map((ring) => (
           <mesh key={ring.y} position-y={ring.y} rotation-x={Math.PI / 2}>
             <torusGeometry args={[ring.r, 0.3, 8, 96]} />
@@ -1469,6 +1487,9 @@ function BarrelDuffel({ spec, art, label }: ModelProps) {
   // A faixa impressa da bolsa cilindro é opaca (o painel inteiro recebe a arte).
   const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
   const texture = useArtTexture(aspect, "front", panelArt, label);
+  // Verso: a mesma faixa girada para o lado de trás, só com a arte do passo "Verso".
+  const ownBack = backArtOf(art) !== null;
+  const backTexture = useBackTexture(aspect, spec, panelArt, label, undefined, "blank");
   const hw = useHardware();
   const p = useMemo(() => buildBarrel(L, R, aspect), [L, R, aspect]);
   useGeometriesCleanup(p.all);
@@ -1487,6 +1508,11 @@ function BarrelDuffel({ spec, art, label }: ModelProps) {
         <mesh geometry={p.band}>
           <PrintedSurface map={texture} />
         </mesh>
+        {ownBack && (
+          <mesh geometry={p.band} rotation-y={Math.PI}>
+            <PrintedSurface map={backTexture} />
+          </mesh>
+        )}
         {p.rings.map((ring) => (
           <mesh key={ring.x} position-x={ring.x} rotation-y={Math.PI / 2}>
             <torusGeometry args={[ring.r, 0.34, 8, 96]} />

@@ -9,12 +9,12 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO, artAspect } from "@/lib/mockup-kinds";
-import { canvasFor, fontFamily } from "../art";
+import { canvasFor, fontFamily, hasArtContent } from "../art";
+import { useSceneMode } from "../viewer-hooks";
 import {
   AcrylicMaterials,
   Dimensions,
   PrintMaterial,
-  backVariant,
   faceGeometry,
   fitFlat,
   makeShape,
@@ -23,6 +23,7 @@ import {
   useArtTexture,
   useGeometryCleanup,
   type ModelProps,
+  useBackTexture,
 } from "./shared";
 
 type Vec3 = [number, number, number];
@@ -31,7 +32,8 @@ const PAPER = "#f8f7f3";
 const EDGE = "#ebe9e3";
 const BOARD_BACK = "#d8d5cd";
 /** Impressos deitados na mesa: câmera mais alta, como foto "flat lay". */
-const FLAT_LAY = { view: { elevation: 0.85 } };
+// `flatLay`: peça deitada na mesa; no verso as folhas desviram (Lay) em vez de a cena girar (TurnGroup).
+const FLAT_LAY = { view: { elevation: 0.85 }, flatLay: true };
 /** Folga entre folhas empilhadas (evita faces se tocando). */
 const STACK_GAP = 0.0005;
 
@@ -357,9 +359,12 @@ function SheetPatch({ w, h, form = FLAT, rect, offset, side = 1, flipU = false, 
 
 /** Põe uma folha deitada na mesa (topo da arte para o fundo); `flip` vira a folha e mostra o verso. */
 function Lay({ x = 0, y = 0, z = 0, rot = 0, flip = false, children }: { x?: number; y?: number; z?: number; rot?: number; flip?: boolean; children: ReactNode }) {
+  // Verso pedido ("Ver verso" ou o passo "Verso" da arte): cada folha deitada desvira.
+  const { back } = useSceneMode();
+  const turned = flip !== back;
   return (
     <group position={[x, y, z]} rotation-y={rot}>
-      <group rotation-x={-Math.PI / 2}>{flip ? <group rotation-y={Math.PI}>{children}</group> : children}</group>
+      <group rotation-x={-Math.PI / 2}>{turned ? <group rotation-y={Math.PI}>{children}</group> : children}</group>
     </group>
   );
 }
@@ -788,7 +793,7 @@ function BusinessCards({ spec, art, label, showDims }: ModelProps) {
   const pvc = spec.variant === "pvc";
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
-  const back = useArtTexture(aspect, backVariant(spec), art, label);
+  const back = useBackTexture(aspect, spec, art, label);
   return (
     <CardScene
       spec={spec}
@@ -841,7 +846,7 @@ function FlyerStack({ spec, art, label, showDims }: ModelProps) {
   const t = sheetT(paperCm(spec, 0.01), scale);
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
-  const back = useArtTexture(aspect, backVariant(spec), art, label);
+  const back = useBackTexture(aspect, spec, art, label);
   const short = Math.min(w, h);
   const long = Math.max(w, h) / short > 2.6;
   const angles = long ? [0.3, 0.2, 0.1, 0] : [0.5, 0.33, 0.16, 0];
@@ -874,9 +879,12 @@ function Postcards({ spec, art, label, showDims }: ModelProps) {
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
   const backArt = usePaintedTexture(aspect, paintPostcardBack, spec.back);
+  // Verso montado pelo cliente: no lugar do verso padrão do postal (selo, divisória e endereço).
+  const ownBack = useBackTexture(aspect, spec, art, label);
+  const custom = hasArtContent(art.back);
   const uncoated: MockupSpec = { ...spec, finish: "matte", clearcoat: 0, spotVarnish: false };
   const faceFront = <PrintMaterial map={front} spec={spec} />;
-  const faceBack = <PrintMaterial map={backArt} spec={uncoated} />;
+  const faceBack = <PrintMaterial map={custom ? ownBack : backArt} spec={custom ? spec : uncoated} />;
   const short = Math.min(w, h);
   const landscape = w >= h;
   if (Math.max(w, h) / short > 3) {
@@ -1025,7 +1033,7 @@ function MenuHolder({ spec, art, label, showDims }: ModelProps) {
   const t = sheetT(paperCm(spec, 0.02), scale);
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
-  const back = useArtTexture(aspect, backVariant(spec), art, label);
+  const back = useBackTexture(aspect, spec, art, label);
   const acr = 0.25 * cm;
   const margin = 0.7 * cm;
   const baseD = 7.5 * cm;
@@ -1253,7 +1261,7 @@ function Leaflet({ spec, art, label, standing }: ModelProps & { standing: boolea
   const t = sheetT(paperCm(spec, 0.014), scale);
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
-  const back = useArtTexture(aspect, backVariant(spec), art, label);
+  const back = useBackTexture(aspect, spec, art, label);
   const axis = standing || w >= h ? "x" : "y";
   const long = axis === "x" ? w : h;
   const short = axis === "x" ? h : w;

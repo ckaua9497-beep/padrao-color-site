@@ -9,8 +9,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
+import { hasArtContent } from "../art";
+import { useSceneMode } from "../viewer-hooks";
 import { Fabric } from "./fabric";
-import { Dimensions, PrintMaterial, backVariant, faceGeometry, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { Dimensions, PrintMaterial, faceGeometry, makeShape, metalColor, sizeLabels, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
 
 /** Unidades de cena por centímetro. */
 const UNIT = 0.11;
@@ -376,7 +378,9 @@ function HardcoverModel({ spec, art, label, showDims }: ModelProps) {
   const floorY = hasElastic ? -h / 2 - 0.03 - ELASTIC_BAND : -h / 2;
 
   const front = useArtTexture(w / h, "front", art, label);
-  const back = useArtTexture(w / h, backVariant(spec), art, label);
+  // Contracapa: a arte do verso do cliente; sem ela, a regra da opção (frente repetida, cinza ou lisa). O UV
+  // espelhado da contracapa (planarUV mirror) faz a arte ler da esquerda para a direita vista por trás.
+  const back = useBackTexture(w / h, spec, art, label);
   // Laminação: mesmo a fosca tem um leve brilho de película.
   const coverSpec = useMemo(() => ({ ...spec, clearcoat: Math.max(spec.clearcoat, 0.12) }), [spec]);
 
@@ -577,18 +581,31 @@ const PAD_STACK = 1.0;
 function PadModel({ spec, art, label, showDims }: ModelProps) {
   const [w, h] = sizeOf(spec);
   const front = useArtTexture(w / h, "front", art, label);
+  // Verso do cliente: impresso no papelão do fundo, na mesma área da capa.
+  const backArt = useBackTexture(w / h, spec, art, label, undefined, "blank");
+  const { back: showBack } = useSceneMode();
+  // Deitado, o giro de 180° do TurnGroup só mostra a capa de outro lado: com verso do cliente o bloco também
+  // vira de barriga para cima (π em x local; somado ao giro do TurnGroup dá o bloco desvirado no lugar), apoiado
+  // no chão e com a capa plana embaixo. Sem verso do cliente, nada muda.
+  const flipped = showBack && hasArtContent(art.back);
   const sheetKind = sheetKindOf(label);
   const top = PAD_CHIP + PAD_STACK;
   const total = top + 0.04;
+  /** Altura do bloco até o topo da blocagem: o bloco virado apoia nela. */
+  const stackTop = total + 0.02;
 
   const chip = useMemo(() => softBox(w, h, PAD_CHIP, 0.2, 0.03), [w, h]);
   const stack = useMemo(() => pageBlockGeometry(w - 0.02, h - 0.02, PAD_STACK, 0.2, 0), [w, h]);
   const cover = useMemo(() => curlGeometry(w, h), [w, h]);
+  const flatCover = useMemo(() => new THREE.PlaneGeometry(w, h), [w, h]);
+  const base = useMemo(() => faceGeometry(makeShape("rect", w, h, 0.2), w, h), [w, h]);
   const bead = useMemo(() => softBox(w + 0.04, 0.18, total + 0.02, 0.06, 0.04), [w, total]);
   const edge = useMemo(() => pageEdgeTexture("#fbfaf6", 0.01, []), []);
   useGeometryCleanup(chip);
   useGeometryCleanup(stack);
   useGeometryCleanup(cover);
+  useGeometryCleanup(flatCover);
+  useGeometryCleanup(base);
   useGeometryCleanup(bead);
   useEffect(() => () => edge.dispose(), [edge]);
 
@@ -598,29 +615,37 @@ function PadModel({ spec, art, label, showDims }: ModelProps) {
   return (
     <group rotation={[-Math.PI / 2, 0, 0.3]} userData={{ view: { elevation: 0.9 } }}>
       <group scale={UNIT}>
-        <mesh geometry={chip} position-z={PAD_CHIP / 2}>
-          <meshStandardMaterial color="#978b77" roughness={0.95} />
-        </mesh>
-        <mesh geometry={stack} position-z={PAD_CHIP + PAD_STACK / 2}>
-          <meshStandardMaterial map={edge} roughness={0.95} />
-        </mesh>
-        {sheetKind === "art" ? (
-          <PadArtSheet w={w} h={h} z={top + 0.008} art={art} label={label} />
-        ) : (
-          <PadPaperSheet w={w} h={h} z={top + 0.008} ruled={sheetKind === "lined"} />
-        )}
-        <group position-z={top + 0.03}>
-          <mesh geometry={cover}>
-            <PrintMaterial map={front} spec={spec} />
+        <group position-z={flipped ? stackTop : 0} rotation-x={flipped ? Math.PI : 0}>
+          <mesh geometry={chip} position-z={PAD_CHIP / 2}>
+            <meshStandardMaterial color="#978b77" roughness={0.95} />
           </mesh>
-          <mesh geometry={cover}>
-            <meshStandardMaterial color="#f3f1ec" roughness={0.9} side={THREE.BackSide} />
+          {/* Verso do cliente no fundo do papelão (girado π em y: lê certo com o bloco desvirado). */}
+          {flipped && (
+            <mesh geometry={base} position-z={-0.004} rotation-y={Math.PI}>
+              <PrintMaterial map={backArt} spec={spec} />
+            </mesh>
+          )}
+          <mesh geometry={stack} position-z={PAD_CHIP + PAD_STACK / 2}>
+            <meshStandardMaterial map={edge} roughness={0.95} />
+          </mesh>
+          {sheetKind === "art" ? (
+            <PadArtSheet w={w} h={h} z={top + 0.008} art={art} label={label} />
+          ) : (
+            <PadPaperSheet w={w} h={h} z={top + 0.008} ruled={sheetKind === "lined"} />
+          )}
+          <group position-z={top + 0.03}>
+            <mesh geometry={flipped ? flatCover : cover}>
+              <PrintMaterial map={front} spec={spec} />
+            </mesh>
+            <mesh geometry={flipped ? flatCover : cover}>
+              <meshStandardMaterial color="#f3f1ec" roughness={0.9} side={THREE.BackSide} />
+            </mesh>
+          </group>
+          {/* Blocagem: cola no topo segurando capa, folhas e papelão. */}
+          <mesh geometry={bead} position={[0, h / 2 + 0.02, stackTop / 2]}>
+            <meshPhysicalMaterial color={spec.accentColor ?? "#a8322b"} roughness={0.5} clearcoat={0.4} clearcoatRoughness={0.3} />
           </mesh>
         </group>
-        {/* Blocagem: cola no topo segurando capa, folhas e papelão. */}
-        <mesh geometry={bead} position={[0, h / 2 + 0.02, (total + 0.02) / 2]}>
-          <meshPhysicalMaterial color={spec.accentColor ?? "#a8322b"} roughness={0.5} clearcoat={0.4} clearcoatRoughness={0.3} />
-        </mesh>
         <Pencil x={w / 2 + 1.8} y={-h * 0.06} twist={0.08} />
       </group>
       {dims && <Dimensions w={w * UNIT} h={h * UNIT} z={(total + 0.05) * UNIT} labelW={lw} labelH={lh} />}

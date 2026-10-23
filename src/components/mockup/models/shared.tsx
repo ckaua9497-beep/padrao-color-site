@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Line } from "@react-three/drei";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
-import { type ArtRender, type ArtVariant, canvasFor, fontFamily, loadArtFont, loadImage, paintArt, shapeMask } from "../art";
+import { type ArtRender, type ArtVariant, canvasFor, fontFamily, hasArtContent, loadArtFont, loadImage, paintArt, shapeMask } from "../art";
 import { useAnimate } from "../viewer-hooks";
 import { useArtGesture } from "../art-gesture";
 import { textureLongSide } from "@/lib/image-prep";
@@ -375,6 +375,29 @@ export function backVariant(spec: MockupSpec): ArtVariant {
   if (spec.back === "gray") return "gray";
   if (spec.back === "same") return "front";
   return "blank";
+}
+
+/**
+ * Arte da face de trás: a do passo "Verso" (art.back) quando o cliente montou uma, com o contexto de render da frente
+ * (tipo da peça, cor da peça, LED); sem ela, null (o modelo segue com backVariant: a frente repetida, cinza ou liso).
+ */
+export function backArtOf(art: ArtRender): ArtRender | null {
+  if (!hasArtContent(art.back)) return null;
+  return { ...art.back!, back: null, kind: art.kind, ledColors: art.ledColors, surface: art.surface, opaque: art.opaque, sample: false };
+}
+
+/** Como a face de trás sai: "front" com a arte do verso do cliente; sem ela, a regra da opção (backVariant). */
+export function backKindOf(spec: MockupSpec, art: ArtRender): ArtVariant {
+  return hasArtContent(art.back) ? "front" : backVariant(spec);
+}
+
+/**
+ * Textura da face de trás: a arte do verso do cliente, ou a regra da opção (backVariant). Peças que não imprimem atrás
+ * passam `fallback: "blank"`.
+ */
+export function useBackTexture(aspect: number, spec: MockupSpec, art: ArtRender, label: string, mask?: MaskPath, fallback: ArtVariant = backVariant(spec)) {
+  const own = useMemo(() => backArtOf(art), [art]);
+  return useArtTexture(aspect, own ? "front" : fallback, own ?? art, label, mask);
 }
 
 

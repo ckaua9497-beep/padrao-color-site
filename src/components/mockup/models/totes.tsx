@@ -7,8 +7,9 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MockupSpec } from "@/lib/mockup";
+import type { ArtRender } from "../art";
 import { useApparelArt, useGeometriesCleanup } from "./fabric";
-import { PrintMaterial, backVariant, metalColor, roughnessOf, useArtTexture, type ModelProps } from "./shared";
+import { PrintMaterial, backArtOf, backKindOf, metalColor, roughnessOf, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
 import { KraftSack, PlasticBag } from "./sacks";
 
 /*
@@ -148,8 +149,10 @@ function Leather({ color, map }: { color: string; map?: THREE.Texture }) {
   return <meshPhysicalMaterial color={color} map={map} roughness={0.5} clearcoat={0.3} clearcoatRoughness={0.4} />;
 }
 
+type InkLook = { roughness?: number; sheen?: number; clearcoat?: number };
+
 /** Tinta sobre o tecido (sublimação) ou sobre o courino (UV, com leve brilho). */
-function Ink({ map, roughness = 0.86, sheen = 0.5, clearcoat = 0 }: { map: THREE.Texture; roughness?: number; sheen?: number; clearcoat?: number }) {
+function Ink({ map, roughness = 0.86, sheen = 0.5, clearcoat = 0 }: { map: THREE.Texture } & InkLook) {
   return (
     <meshPhysicalMaterial
       map={map}
@@ -313,12 +316,19 @@ function bodyGeometry(p: Profile, wallRows: number) {
 type FrontRow = { points: THREE.Vector3[]; cum: number[]; center: number };
 const FRONT_SAMPLES = 200;
 
-/** Meia-volta da frente (da esquerda para a direita de quem olha) com comprimento acumulado. */
-function frontRow(p: Profile, t: number): FrontRow {
+/** Lado do corpo: 1 = frente (+z), -1 = costas (-z), sempre lido por quem olha daquele lado. */
+type Side = 1 | -1;
+
+/**
+ * Meia-volta da frente (da esquerda para a direita de quem olha) com comprimento acumulado. Com side = -1, a
+ * meia-volta das costas, também da esquerda para a direita de quem olha por trás (de +x para -x).
+ */
+function frontRow(p: Profile, t: number, side: Side = 1): FrontRow {
   const points: THREE.Vector3[] = [];
   const cum: number[] = [];
   for (let i = 0; i <= FRONT_SAMPLES; i += 1) {
-    const v = wallPoint(p, t, Math.PI * (1 - i / FRONT_SAMPLES), new THREE.Vector3());
+    const theta = side === 1 ? Math.PI * (1 - i / FRONT_SAMPLES) : -Math.PI * (i / FRONT_SAMPLES);
+    const v = wallPoint(p, t, theta, new THREE.Vector3());
     cum.push(i ? cum[i - 1] + v.distanceTo(points[i - 1]) : 0);
     points.push(v);
   }
@@ -364,15 +374,16 @@ const along = (f: SurfaceFrame, k: number) => f.pos.clone().addScaledVector(f.no
 
 const ARC_STEPS = 160;
 
-/** Linha central da frente entre y0 e y1: alturas e comprimento de arco acumulado. */
-function centerColumn(p: Profile, y0: number, y1: number) {
+/** Linha central da frente (ou das costas, side = -1) entre y0 e y1: alturas e comprimento de arco acumulado. */
+function centerColumn(p: Profile, y0: number, y1: number, side: Side = 1) {
   const ys: number[] = [];
   const arc: number[] = [];
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
+  const theta = side === 1 ? Math.PI / 2 : -Math.PI / 2;
   for (let i = 0; i <= ARC_STEPS; i += 1) {
     const y = lerp(y0, y1, i / ARC_STEPS);
-    wallPoint(p, tAtY(p, y), Math.PI / 2, b);
+    wallPoint(p, tAtY(p, y), theta, b);
     arc.push(i ? arc[i - 1] + a.distanceTo(b) : 0);
     ys.push(y);
     a.copy(b);
@@ -391,12 +402,13 @@ function centerArc(p: Profile, y0: number, y1: number) {
  * Linhas e colunas são espaçadas por comprimento de arco, então onde o corpo curva (topo da
  * necessaire, barriga da ecobag) a arte não estica. u cresce da esquerda para a direita e v de
  * baixo para cima, como a arte no canvas; o aspecto da textura é pw / centerArc(p, y0, y1).
+ * Com side = -1 copia as costas, com u da esquerda para a direita de quem olha por trás (a arte não espelha).
  */
-function printGeometry(p: Profile, pw: number, y0: number, y1: number, cols = 44, rows = 32) {
+function printGeometry(p: Profile, pw: number, y0: number, y1: number, cols = 44, rows = 32, side: Side = 1) {
   const positions = new Float32Array((rows + 1) * (cols + 1) * 3);
   const uvs = new Float32Array((rows + 1) * (cols + 1) * 2);
   const v = new THREE.Vector3();
-  const { ys, arc } = centerColumn(p, y0, y1);
+  const { ys, arc } = centerColumn(p, y0, y1, side);
   const total = arc[ARC_STEPS] || 1;
   let m = 0;
   for (let i = 0; i <= rows; i += 1) {
@@ -404,7 +416,7 @@ function printGeometry(p: Profile, pw: number, y0: number, y1: number, cols = 44
     while (m < ARC_STEPS - 1 && arc[m + 1] < target) m += 1;
     const span = arc[m + 1] - arc[m] || 1;
     const y = lerp(ys[m], ys[m + 1], clamp((target - arc[m]) / span, 0, 1));
-    const row = frontRow(p, tAtY(p, y));
+    const row = frontRow(p, tAtY(p, y), side);
     for (let j = 0; j <= cols; j += 1) {
       pick(row, -pw / 2 + (pw * j) / cols, v);
       const k = i * (cols + 1) + j;
@@ -438,6 +450,23 @@ function printGeometry(p: Profile, pw: number, y0: number, y1: number, cols = 44
   }
   geometry.computeVertexNormals();
   return geometry;
+}
+
+/**
+ * Estampa das costas com a arte do passo "Verso" (art.back): a mesma área da frente (pw de largura, de y0 a y1, no
+ * aspecto da frente) copiada no lado de trás do corpo, com a mesma tinta. Só monta quando o cliente fez um verso;
+ * sem ele as costas seguem lisas, como antes.
+ */
+function BackPrint({ profile, pw, y0, y1, aspect, art, label, look }: { profile: Profile; pw: number; y0: number; y1: number; aspect: number; art: ArtRender; label: string; look?: InkLook }) {
+  const printArt = useApparelArt(art);
+  const texture = useArtTexture(aspect, "front", printArt, label);
+  const geometry = useMemo(() => printGeometry(profile, pw, y0, y1, 44, 32, -1), [profile, pw, y0, y1]);
+  useGeometryCleanup(geometry);
+  return (
+    <mesh geometry={geometry}>
+      <Ink map={texture} {...look} />
+    </mesh>
+  );
 }
 
 /** Volta fechada na altura t (sem o ponto repetido), afastada `offset` cm da superfície. */
@@ -812,6 +841,7 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
 
   const printArt = useApparelArt(art);
   const texture = useArtTexture(pw / ph, "front", printArt, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
   const grain = useGrain("weave", 0.45);
 
   const parts = useMemo(() => {
@@ -914,6 +944,7 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
         <mesh geometry={parts.print}>
           <Ink map={texture} roughness={beach ? 0.6 : 0.86} />
         </mesh>
+        {backArt && <BackPrint profile={profile} pw={pw} y0={y0} y1={y1} aspect={pw / ph} art={backArt} label={label} look={{ roughness: beach ? 0.6 : 0.86 }} />}
         <mesh geometry={parts.rim}>
           <Cloth color={fabric} map={grain} roughness={roughness} />
         </mesh>
@@ -953,8 +984,9 @@ function PaperGiftBag({ spec, art, label }: ModelProps) {
   // A face inteira da sacola é impressa: fundo pintado, não transparente.
   const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
   const front = useArtTexture(W / H, "front", panelArt, label);
-  const backKind = backVariant(spec);
-  const back = useArtTexture(W / H, backKind, panelArt, label);
+  // Costas: a arte do passo "Verso" quando o cliente montou uma; sem ela, a regra da opção (frente repetida, cinza ou liso).
+  const backKind = backKindOf(spec, panelArt);
+  const back = useBackTexture(W / H, spec, panelArt, label);
 
   const parts = useMemo(() => {
     const foldH = Math.min(3.5, H * 0.16);
@@ -1111,6 +1143,7 @@ function GiftPouch({ spec, art, label }: ModelProps) {
   const ph = useMemo(() => centerArc(profile, y0, y1), [profile, y0, y1]);
   const printArt = useApparelArt(art);
   const texture = useArtTexture(pw / ph, "front", printArt, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
   const grain = useGrain("weave", 0.4);
 
   const parts = useMemo(() => {
@@ -1166,6 +1199,7 @@ function GiftPouch({ spec, art, label }: ModelProps) {
         <mesh geometry={parts.print}>
           <Ink map={texture} />
         </mesh>
+        {backArt && <BackPrint profile={profile} pw={pw} y0={y0} y1={y1} aspect={pw / ph} art={backArt} label={label} />}
         <mesh geometry={parts.rim}>
           <Cloth color={fabric} map={grain} />
         </mesh>
@@ -1231,6 +1265,7 @@ function CarTrashBag({ spec, art, label }: ModelProps) {
   const ph = useMemo(() => centerArc(layout.p, y0, y1), [layout, y0, y1]);
   const printArt = useApparelArt(art);
   const texture = useArtTexture(pw / ph, "front", printArt, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
   const grain = useGrain("weave", 0.4);
 
   const parts = useMemo(() => {
@@ -1310,6 +1345,7 @@ function CarTrashBag({ spec, art, label }: ModelProps) {
         <mesh geometry={parts.print}>
           <Ink map={texture} />
         </mesh>
+        {backArt && <BackPrint profile={layout.p} pw={pw} y0={y0} y1={y1} aspect={pw / ph} art={backArt} label={label} />}
         {[parts.rim, parts.bottomPipe, ...parts.sidePipes, parts.loop, ...parts.drops].map((g, i) => (
           <mesh key={i} geometry={g}>
             <Cloth color={trim} sheen={0.5} roughness={0.8} />
@@ -1416,6 +1452,7 @@ function ZipPouch({ spec, art, label, kind }: ModelProps & { kind: PouchKind }) 
   const ph = useMemo(() => centerArc(profile, y0, y1), [profile, y0, y1]);
   const printArt = useApparelArt(art);
   const texture = useArtTexture(pw / ph, "front", printArt, label);
+  const backArt = useMemo(() => backArtOf(art), [art]);
   const grain = useGrain(leather ? "leather" : "weave", leather ? 2 : 0.4);
 
   const parts = useMemo(() => {
@@ -1506,6 +1543,9 @@ function ZipPouch({ spec, art, label, kind }: ModelProps & { kind: PouchKind }) 
         <mesh geometry={parts.print}>
           <Ink map={texture} roughness={leather ? 0.42 : 0.86} sheen={leather ? 0 : 0.5} clearcoat={leather ? 0.25 : 0} />
         </mesh>
+        {backArt && (
+          <BackPrint profile={profile} pw={pw} y0={y0} y1={y1} aspect={pw / ph} art={backArt} label={label} look={{ roughness: leather ? 0.42 : 0.86, sheen: leather ? 0 : 0.5, clearcoat: leather ? 0.25 : 0 }} />
+        )}
         {parts.piping.map((g, i) => (
           <mesh key={i} geometry={g}>
             {leather ? <Leather color={shade(fabric, 0.92)} /> : <Cloth color={trim} sheen={0.5} roughness={0.8} />}

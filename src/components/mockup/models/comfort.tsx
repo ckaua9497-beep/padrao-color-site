@@ -4,9 +4,10 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { hasArtContent } from "../art";
 import { Fabric, closedTube, useInflated } from "./fabric";
 import { inflatedSurface, shapePolygon } from "./inflate";
-import { PrintMaterial, faceGeometry, makeShape, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { PrintMaterial, faceGeometry, makeShape, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
 
 // ---------------------------------------------------------------------------- helpers locais
 
@@ -361,11 +362,13 @@ function ringPoint(q: NeckSample, phi: number, out: THREE.Vector3) {
 
 /**
  * Tubo varrido ao longo do U: u ao longo da curva, v em volta do perfil. A metade da frente (z ≥ 0)
- * recebe a arte projetada em xy (de pé e sem distorção vista de frente); a de trás fica lisa.
+ * recebe a arte projetada em xy (de pé e sem distorção vista de frente); a de trás fica lisa, ou recebe o
+ * verso do cliente na mesma projeção espelhada em x (lida da esquerda para a direita vista por trás).
  * Com imagem enviada a projeção cobre o U inteiro (painel sublimado 30 × 30 recortado); no modelo
- * com texto ela cobre só a faixa de cima, para o nome não cair no vão do pescoço.
+ * com texto ela cobre só a faixa de cima, para o nome não cair no vão do pescoço (`backFullCover`: o mesmo
+ * para o verso, pela imagem do verso).
  */
-function neckPillowGeometry(width: number, fullCover: boolean) {
+function neckPillowGeometry(width: number, fullCover: boolean, backFullCover: boolean) {
   const thetaMax = NECK_END + NECK_CAP;
   const p = new THREE.Vector3();
   const count = (NECK_STEPS + 1) * (NECK_RING + 1);
@@ -414,12 +417,22 @@ function neckPillowGeometry(width: number, fullCover: boolean) {
   }
   const bw = Math.max(maxX - minX, 1e-6);
   // Faixa com centro ≈ 9 cm acima do centro do U: texto de duas linhas não cai no vão do pescoço.
-  if (!fullCover) minY = maxY - bw * 0.5;
+  const bandMinY = maxY - bw * 0.5;
+  const backMinY = backFullCover ? minY : bandMinY;
+  if (!fullCover) minY = bandMinY;
   const bh = Math.max(maxY - minY, 1e-6);
   const planar = new Float32Array(count * 2);
   for (let i = 0; i < count; i += 1) {
     planar[i * 2] = (front[i * 3] - minX) / bw;
     planar[i * 2 + 1] = (front[i * 3 + 1] - minY) / bh;
+  }
+  // Verso: a metade de trás tem o mesmo contorno em xy; u espelhado (x máximo = esquerda de quem olha por trás).
+  const rear = halves[1].positions;
+  const backH = Math.max(maxY - backMinY, 1e-6);
+  const backPlanar = new Float32Array(count * 2);
+  for (let i = 0; i < count; i += 1) {
+    backPlanar[i * 2] = (maxX - rear[i * 3]) / bw;
+    backPlanar[i * 2 + 1] = (rear[i * 3 + 1] - backMinY) / backH;
   }
 
   const build = (positions: Float32Array, uv: Float32Array, uv1: Float32Array) => {
@@ -446,9 +459,11 @@ function neckPillowGeometry(width: number, fullCover: boolean) {
 
   return {
     front: build(halves[0].positions, planar, halves[0].params),
-    back: build(halves[1].positions, halves[1].params, halves[1].params),
+    // O relevo usa o uv1 (paramétrico); o uv da arte do verso só é lido quando o cliente tem verso.
+    back: build(halves[1].positions, backPlanar, halves[1].params),
     seam: [...outer, ...inner.reverse()],
     aspect: bw / bh,
+    backAspect: bw / backH,
     anchor: { x: anchor.px, y: anchor.py, z: anchor.b * 0.88 },
   };
 }
@@ -457,10 +472,14 @@ function NeckPillow({ spec, art, label }: ModelProps) {
   const u = NECK_UNIT;
   const width = cm(spec.widthCm, 30, 22, 40) * u;
   const fullCover = Boolean(art.src);
-  const geo = useMemo(() => neckPillowGeometry(width, fullCover), [width, fullCover]);
+  const ownBack = hasArtContent(art.back);
+  const backFullCover = ownBack && Boolean(art.back?.src);
+  const geo = useMemo(() => neckPillowGeometry(width, fullCover, backFullCover), [width, fullCover, backFullCover]);
   useGeometryCleanup(geo.front);
   useGeometryCleanup(geo.back);
   const map = useArtTexture(geo.aspect, "front", art, label);
+  // Verso do cliente (sem ele a metade de trás continua lisa, na cor da peça).
+  const backMap = useBackTexture(geo.backAspect, spec, art, label, undefined, "blank");
   const bump = usePlushBump(36, 18);
   const piping = useMemo(() => closedTube(geo.seam, 0.26 * u), [geo, u]);
   useGeometryCleanup(piping);
@@ -486,7 +505,11 @@ function NeckPillow({ spec, art, label }: ModelProps) {
         <meshPhysicalMaterial map={map} bumpMap={bump} bumpScale={0.3} roughness={0.9} sheen={0.9} sheenRoughness={0.55} sheenColor="#ffffff" />
       </mesh>
       <mesh geometry={geo.back}>
-        <meshPhysicalMaterial color={spec.baseColor} bumpMap={bump} bumpScale={0.3} roughness={0.92} sheen={0.9} sheenRoughness={0.55} sheenColor="#ffffff" />
+        {ownBack ? (
+          <meshPhysicalMaterial map={backMap} bumpMap={bump} bumpScale={0.3} roughness={0.9} sheen={0.9} sheenRoughness={0.55} sheenColor="#ffffff" />
+        ) : (
+          <meshPhysicalMaterial color={spec.baseColor} bumpMap={bump} bumpScale={0.3} roughness={0.92} sheen={0.9} sheenRoughness={0.55} sheenColor="#ffffff" />
+        )}
       </mesh>
       <mesh geometry={piping}>
         <meshPhysicalMaterial color={welt} roughness={0.8} sheen={0.6} sheenColor="#ffffff" />
@@ -533,6 +556,19 @@ function KitPillow({ spec, art, label }: ModelProps) {
   const shape = useMemo(() => makeShape("rect", size, size, 4 * u), [size, u]);
   const surfaces = useInflated(shape, 6.5 * u, { falloff: 12 * u, folds: 0.3 * u });
   const map = useArtTexture(1, "front", art, label);
+  // Verso do cliente: sublimado atrás, na mesma área 40 × 40 da frente.
+  const ownBack = hasArtContent(art.back);
+  const backMap = useBackTexture(1, spec, art, label, undefined, "blank");
+  // O UV do verso inflado é o da frente (u cresce com x): espelhado, a arte lê da esquerda para a direita por trás.
+  const printedBack = useMemo(() => {
+    if (!ownBack || !surfaces) return null;
+    const g = surfaces.back.clone();
+    const uv = g.getAttribute("uv");
+    for (let i = 0; i < uv.count; i += 1) uv.setX(i, 1 - uv.getX(i));
+    uv.needsUpdate = true;
+    return g;
+  }, [ownBack, surfaces]);
+  useGeometryCleanup(printedBack);
   const seam = useMemo(() => (surfaces ? closedTube(surfaces.polygon, 0.22 * u) : null), [surfaces, u]);
   useGeometryCleanup(seam);
   if (!surfaces || !seam) return null;
@@ -541,9 +577,15 @@ function KitPillow({ spec, art, label }: ModelProps) {
       <mesh geometry={surfaces.front}>
         <meshPhysicalMaterial map={map} roughness={0.86} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
       </mesh>
-      <mesh geometry={surfaces.back}>
-        <Fabric color={spec.baseColor} sheen={0.7} />
-      </mesh>
+      {printedBack ? (
+        <mesh geometry={printedBack}>
+          <meshPhysicalMaterial map={backMap} roughness={0.86} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
+        </mesh>
+      ) : (
+        <mesh geometry={surfaces.back}>
+          <Fabric color={spec.baseColor} sheen={0.7} />
+        </mesh>
+      )}
       <mesh geometry={seam}>
         <Fabric color={shade(spec.baseColor, 0.94)} sheen={0.6} />
       </mesh>
