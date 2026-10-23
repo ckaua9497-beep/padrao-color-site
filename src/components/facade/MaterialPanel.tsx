@@ -9,7 +9,7 @@ import type { CustomSize, Variation } from "@/lib/catalog";
 import { useCustomerVariations } from "@/lib/customer";
 import { facadeQuote, type FacadeMaterial } from "@/lib/facade";
 import { formatBRL, imageUrl } from "@/lib/format";
-import { availableValues, cleanOptionLabel, optionKeys, quote, type Selection } from "@/lib/pricing";
+import { cleanOptionLabel, displayOrder, optionKeys, quote, stepValues, type Selection } from "@/lib/pricing";
 
 const metres = (m: number) => m.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 
@@ -92,7 +92,8 @@ export function MaterialPanel({ materials, material, onMaterial, variations, sel
         >
           <div className="grid gap-5 pb-5 pt-1">
             {keys.map((key) => {
-              const values = material.options[key];
+              // Só os valores que combinam com as opções anteriores.
+              const values = displayOrder(key, stepValues(key, keys, material.options, variations, selection));
               const label = cleanOptionLabel(key);
               if (values.length === 1) {
                 return (
@@ -101,11 +102,10 @@ export function MaterialPanel({ materials, material, onMaterial, variations, sel
                   </p>
                 );
               }
-              const available = availableValues(key, material.options, variations, selection);
               return (
                 <div key={key}>
                   <p className="mb-2 text-sm font-semibold">{label}</p>
-                  <OptionGroup label={label} value={selection[key]} onChange={(value) => onOption(key, value)} options={values.map((value) => ({ value, available: available.has(value) }))} />
+                  <OptionGroup label={label} value={selection[key]} onChange={(value) => onOption(key, value)} options={values.map((value) => ({ value }))} />
                 </div>
               );
             })}

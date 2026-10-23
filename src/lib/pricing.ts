@@ -246,21 +246,58 @@ export function speedQuote(q: Quote, speed: Speed): { price: number; leadDays: n
   return { price: q.price, leadDays: q.leadDays };
 }
 
-export function availableValues(
-  key: string,
-  options: Record<string, string[]>,
-  variations: Variation[],
-  selection: Selection,
-): Set<string> {
-  const others = Object.fromEntries(Object.entries(selection).filter(([k]) => k !== key));
-  const seen = new Set<string>();
+/*
+ * Opções em passos: a API só tem algumas combinações (Cartão de Visita: 44 de 384), então cada passo mostra só os
+ * valores que combinam com os passos anteriores, e escolher um valor ajusta os passos seguintes para uma variação
+ * que existe. A seleção na tela é sempre a de uma variação real (o preço, o carrinho e o pedido batem).
+ */
+
+/** Variações que combinam com a seleção dos passos antes de `key` (na ordem de `keys`). */
+function compatibleBefore(key: string, keys: readonly string[], variations: readonly Variation[], selection: Selection): Variation[] {
+  const before = Object.fromEntries(keys.slice(0, Math.max(0, keys.indexOf(key))).filter((k) => selection[k] !== undefined).map((k) => [k, selection[k]]));
+  return variations.filter((variation) => matches(variation, before) >= 0);
+}
+
+/** Valores do passo `key` que existem com o que foi escolhido nos passos anteriores, na ordem das opções. */
+export function stepValues(key: string, keys: readonly string[], options: Record<string, string[]>, variations: readonly Variation[], selection: Selection): string[] {
+  const seen = new Set(compatibleBefore(key, keys, variations, selection).map((variation) => variation.v[key]).filter(Boolean));
+  const values = options[key] ?? [];
+  return seen.size ? values.filter((value) => seen.has(value)) : values;
+}
+
+/**
+ * Seleção depois de escolher `value` no passo `key`: a variação com esse valor que mantém mais passos (os primeiros
+ * pesam mais; no empate, a mais barata). Os passos que mudam são os que não combinam com a escolha.
+ */
+export function chooseOption(keys: readonly string[], variations: readonly Variation[], selection: Selection, key: string, value: string): Selection {
+  let best: Variation | null = null;
+  let bestScore = -1;
   for (const variation of variations) {
-    if (matches(variation, others) < 0) continue;
-    const value = variation.v[key];
-    if (value) seen.add(value);
+    if (variation.v[key] !== undefined && variation.v[key] !== value) continue;
+    let score = 0;
+    keys.forEach((k, i) => {
+      if (k !== key && variation.v[k] !== undefined && variation.v[k] === selection[k]) score += 2 ** (keys.length - i);
+    });
+    if (score > bestScore || (score === bestScore && best && variation.p > 0 && (best.p <= 0 || variation.p < best.p))) {
+      best = variation;
+      bestScore = score;
+    }
   }
-  if (seen.size === 0) return new Set(options[key]);
-  return seen;
+  const next: Selection = { ...selection, [key]: value };
+  if (!best) return next;
+  for (const k of keys) if (k !== key && best.v[k] !== undefined) next[k] = best.v[k];
+  return next;
+}
+
+/** Ordem de exibição: quantidades pelo número (120, 210, 300, 1000); as outras opções como a API manda. */
+export function displayOrder(key: string, values: readonly string[]): string[] {
+  if (!/quantidade|tiragem/i.test(cleanOptionLabel(key))) return [...values];
+  const lead = (value: string) => {
+    const match = /^\s*(\d[\d.]*)/.exec(value);
+    return match ? Number(match[1].replace(/\./g, "")) : NaN;
+  };
+  if (!values.every((value) => Number.isFinite(lead(value)))) return [...values];
+  return [...values].sort((a, b) => lead(a) - lead(b));
 }
 
 /** Desconto no PIX sobre o preço de tabela (padrao-loja/BRIEFING.md). */

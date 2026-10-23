@@ -29,9 +29,10 @@ import { artArea, artAspect } from "@/lib/mockup-kinds";
 import { describePanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
 import {
   areaQuote,
-  availableValues,
+  chooseOption,
   cleanOptionLabel,
   defaultSize,
+  displayOrder,
   formatArea,
   hasExpress,
   optionKeys,
@@ -42,6 +43,7 @@ import {
   sizeSummary,
   sizeTotal,
   speedQuote,
+  stepValues,
   unitLimits,
   usesArea,
   type Selection,
@@ -341,7 +343,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
   const hasArt = semArte || artLater || Boolean(artName) || typedArt;
 
-  const choose = (key: string, value: string) => setSelection((s) => ({ ...s, [key]: value }));
+  // Escolher um valor ajusta os passos seguintes para uma combinação que existe na API.
+  const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
   const updateArt = (update: (art: ArtSettings) => ArtSettings) => {
     setArt(update);
     setArtMissing(false);
@@ -577,7 +580,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
         <ol className="mt-8 space-y-6">
           {keys.map((key, i) => {
-            const available = availableValues(key, product.options, variations, selection);
+            // Só os valores que combinam com os passos anteriores (quantidades em ordem crescente).
+            const values = displayOrder(key, stepValues(key, keys, product.options, variations, selection));
             return (
               <li key={key} className="motion-safe:animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
                 <StepTitle n={i + 1} total={totalSteps} title={cleanOptionLabel(key)} />
@@ -585,7 +589,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
                   label={cleanOptionLabel(key)}
                   value={selection[key]}
                   onChange={(value) => choose(key, value)}
-                  options={product.options[key].map((value) => ({ value, available: available.has(value) }))}
+                  options={values.map((value) => ({ value }))}
                 />
               </li>
             );

@@ -45,7 +45,7 @@ import {
 import { formatBRL, leadLabel } from "@/lib/format";
 import { sceneSpec } from "@/lib/mockup";
 import { KIND_INFO, artAspect } from "@/lib/mockup-kinds";
-import { optionKeys, quote, type Selection } from "@/lib/pricing";
+import { chooseOption, optionKeys, quote, type Selection } from "@/lib/pricing";
 import { createDemoPhoto, exportSimulation, loadImageElement, readImageFile, simulationThumbnail, type SceneArt, type SimulationInput } from "./canvas";
 import { FacadeStage } from "./FacadeStage";
 import { IconCorners, IconDownload, IconEye, IconLock, IconReset } from "./icons";
@@ -705,7 +705,8 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
               onMaterial={setMaterialSlug}
               variations={variations}
               selection={selection}
-              onOption={(key, value) => setSelections((current) => ({ ...current, [material.slug]: { ...(current[material.slug] ?? material.selection), [key]: value } }))}
+              // A troca ajusta as outras opções para uma combinação que existe (como na página do produto).
+              onOption={(key, value) => setSelections((current) => ({ ...current, [material.slug]: chooseOption(optionKeys(material.options), variations, current[material.slug] ?? material.selection, key, value) }))}
               size={size}
             />
           </li>
