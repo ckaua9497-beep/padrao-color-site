@@ -1,6 +1,7 @@
 import type { ApiEndereco } from "./api/types";
 import type { CustomSize, Variation } from "./catalog";
 import { orderAttachments, parseUploadedFiles, type ArtAttachment, type UploadedArtFile } from "./art-files.ts";
+import { cotarAcabamentos, parseAcabamentosEscolhidos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido, type CotacaoAcabamentos } from "./acabamentos.ts";
 import { areaQuote, cleanOptionLabel, PIX_DISCOUNT, pixPrice } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
 
@@ -20,7 +21,10 @@ import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
  * - anexos: os arquivos do Bunny (art-files.ts), com o tipo de anexo que a variação aceita (customizacao.ts); a
  *   variação sem personalização ou de neon pronto vai sem anexos.
  * - tipoProducao "economico" no prazo normal (o exemplo só mostra "expresso"); productType 0; tratamentoArquivo
- *   "Padrão" e acabamentos 0 (o site não vende esses serviços).
+ *   "Padrão" (o site não vende esse serviço).
+ * - Acabamentos extras (acabamentos.ts): o valor vai em precoTotalAcabamentos e a lista em desc_trabalho
+ *   ("Acabamentos: Serrilha (2×)…"); precoTotal do item = price × quantidade (só o produto) e o precoTotal do
+ *   envelope soma os dois. O prazo dos acabamentos entra em productionTime e na previsão.
  * - entrega: o exemplo traz a loja de retirada ({id, nome}); o site manda {tipo, endereco} até a lista de lojas e o
  *   formato da entrega com endereço chegarem.
  * - Extras do site que o exemplo não tem: unidades (lotes × unidades do lote), largura/altura/area (m²) e kit.
@@ -59,6 +63,8 @@ export type OrderItemInput = {
   unitPrice: number;
   /** Arquivos da arte já no Bunny (URL pública da pasta de uploads): vão em arte.anexos. */
   files?: UploadedArtFile[];
+  /** Acabamentos extras escolhidos (serrilha, furo, laminação…): o servidor recalcula o preço pelo catálogo. */
+  acabamentos?: AcabamentoEscolhido[];
 };
 
 /** Preços do cliente para um grupo: variações já com o desconto da categoria de revenda, se houver. */
@@ -71,6 +77,8 @@ export type LinePrices = {
   limits?: { minQty: number; maxQty: number } | null;
   /** false = produto que a Padrão ainda não tem cadastrado (produto novo do site): não entra no pedido online. */
   orderable?: boolean;
+  /** Acabamentos extras do produto (catálogo): a tabela e os índices de cada variação (id → índices). */
+  acabamentos?: { tabela: Acabamento[]; porVariacao: Record<string, number[]> } | null;
 };
 
 export type PricedLine = {
@@ -80,12 +88,16 @@ export type PricedLine = {
   variation: Variation & { id: number };
   input: OrderItemInput;
   express: boolean;
-  /** Preço de um lote (já com área, prazo e desconto de revenda). */
+  /** Preço de um lote (já com área, prazo e desconto de revenda), sem os acabamentos extras. */
   unitPrice: number;
   lotSize: number;
   lots: number;
   units: number;
+  /** Produto (unitPrice × lotes) mais os acabamentos extras. */
   total: number;
+  /** Acabamentos extras escolhidos, com preço e prazo (vazio quando não há). */
+  acabamentos: CotacaoAcabamentos;
+  /** Prazo do produto mais o dos acabamentos. */
   leadDays: number | null;
   size: { widthCm: number; heightCm: number; areaM2: number; billedAreaM2: number } | null;
   reseller: boolean;
@@ -147,6 +159,12 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
     if (minQty > 1 && units < minQty) return fail(`Quantidade mínima: ${minQty.toLocaleString("pt-BR")} unidades.`);
     if (maxQty > 0 && units > maxQty) return fail(`Quantidade máxima: ${maxQty.toLocaleString("pt-BR")} unidades. Para mais, escolha a versão para lotes maiores.`);
   }
+  // Acabamentos extras: só os que a variação aceita, com o preço do catálogo (o do navegador não vale).
+  const tabela = prices.acabamentos?.tabela ?? [];
+  const disponiveis = (prices.acabamentos?.porVariacao[String(variation.id)] ?? []).map((i) => tabela[i]).filter((a): a is Acabamento => Boolean(a));
+  const acabamentos = cotarAcabamentos(disponiveis, input.acabamentos, units);
+  if (!acabamentos) return fail("Um acabamento escolhido não está mais disponível para esta opção. Remova o item e escolha de novo.");
+  const leadDays = express ? (variation.de ?? variation.d) : variation.d;
   return {
     key: input.key,
     name: input.name,
@@ -158,8 +176,9 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
     lotSize,
     lots: input.quantity,
     units,
-    total: round2(unitPrice * input.quantity),
-    leadDays: express ? (variation.de ?? variation.d) : variation.d,
+    total: round2(unitPrice * input.quantity + acabamentos.total),
+    acabamentos,
+    leadDays: leadDays !== null && leadDays !== undefined ? leadDays + acabamentos.prazo : null,
     size,
     reseller: prices.reseller,
   };
@@ -382,10 +401,12 @@ const optionLabel = (key: string) => cleanOptionLabel(key).replace(/:$/, "").tri
 /** O que o item leva além das opções da variação: a linha da arte e as opções do site (texto, kit, tamanhos…). */
 function workDescription(line: PricedLine, variationLabels: Set<string>): string {
   const art = line.input.artName ? `Arte: ${line.input.artName}` : "Arte: enviar depois";
+  // Os acabamentos vêm da cotação do servidor (a linha "Acabamentos" do carrinho é só exibição).
   const extras = Object.entries(line.input.options)
-    .filter(([key]) => !variationLabels.has(optionLabel(key)))
+    .filter(([key]) => !variationLabels.has(optionLabel(key)) && optionLabel(key) !== "Acabamentos")
     .map(([key, value]) => `${key}: ${value}`);
-  return clip([art, ...extras].join(" · "), 1000);
+  const finishing = line.acabamentos.itens.length ? [`Acabamentos: ${resumoAcabamentos(line.acabamentos.itens)}`] : [];
+  return clip([art, ...extras, ...finishing].join(" · "), 1000);
 }
 
 export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS): OrderProduct {
@@ -401,7 +422,7 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     productType: 0,
     quantidade: line.lots,
     price: line.unitPrice,
-    precoTotal: line.total,
+    precoTotal: round2(line.unitPrice * line.lots),
     variations,
     descricao: "",
     nomeTrabalho: job,
@@ -412,7 +433,7 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     package: box ? { peso: box[0], altura: box[2], largura: box[1], comprimento: box[3] } : null,
     arte: { tipo: 1, preco: 0, anexos: orderAttachments(line.input.files ?? [], facts.attachments, { semArquivo: facts.semArquivo }) },
     tratamentoArquivo: { tipo: "Padrão", preco: 0 },
-    precoTotalAcabamentos: 0,
+    precoTotalAcabamentos: line.acabamentos.total,
     unidades: line.units,
     ...(line.size ? { largura: line.size.widthCm, altura: line.size.heightCm, area: line.size.billedAreaM2 } : {}),
     kit: line.input.bundle ? { id: line.input.bundle.id, nome: bundleTitle(line.input.bundle, line.input.options) } : null,
@@ -508,6 +529,7 @@ export function parseItem(raw: unknown, artBase = ""): OrderItemInput | null {
     bundle: bundleId && bundleName ? { id: bundleId, name: bundleName } : null,
     unitPrice,
     files: parseUploadedFiles(raw.files, artBase),
+    acabamentos: parseAcabamentosEscolhidos(raw.acabamentos),
   };
 }
 

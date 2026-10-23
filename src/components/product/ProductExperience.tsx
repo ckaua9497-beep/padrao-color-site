@@ -21,6 +21,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
 import { anexosComplementares, customizacaoDa, recebeArte, type Customizacao } from "@/lib/customizacao";
+import { acabamentosDa, cotarAcabamentos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido } from "@/lib/acabamentos";
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
 import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
@@ -51,6 +52,7 @@ import {
   type Speed,
 } from "@/lib/pricing";
 import { ArtStep } from "./ArtStep";
+import { AcabamentosStep } from "./AcabamentosStep";
 import DeliverySpeed from "./DeliverySpeed";
 import PreviewModal from "./PreviewModal";
 import SizeBreakdown from "./SizeBreakdown";
@@ -89,6 +91,8 @@ export type ClientProduct = {
   info?: InfoBlock[];
   /** Customização de cada variação (modo da arte, anexos aceitos, criação de arte): ver customizacaoDa. */
   customizacoes?: Customizacao[];
+  /** Acabamentos extras das variações (serrilha, furo, laminação…): ver acabamentosDa. */
+  acabamentos?: Acabamento[];
   /** Quantidade mínima e máxima de peças (qtde_minima/qtde_maxima da API). */
   minQty?: number;
   maxQty?: number;
@@ -161,6 +165,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   // Arquivos complementares da variação (faca de corte, máscara de branco, verniz…), por tipo de anexo.
   const [extraFiles, setExtraFiles] = useState<Record<string, File>>({});
+  // Acabamentos extras escolhidos (os que a variação atual não aceita ficam de fora no cálculo).
+  const [finishing, setFinishing] = useState<AcabamentoEscolhido[]>([]);
   const [artLater, setArtLater] = useState(false);
   const [artMissing, setArtMissing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -304,7 +310,13 @@ export default function ProductExperience({ product }: { product: ClientProduct 
 
   // Preço de uma peça (m²) ou de um conjunto da tabela; o total multiplica pela quantidade ou pelas peças da grade.
   const unitPrice = area ? area.price : chosen.price;
-  const total = roundMoney(unitPrice * (apparel ? units : quantity));
+  // Acabamentos extras da variação: o preço segue as peças do item (milheiro, unidade ou fixo) e o prazo soma.
+  const finishes = acabamentosDa(product, product.variations.find((v) => v.id === price.variation?.id) ?? price.variation);
+  const pieces = apparel ? units : area || perUnit ? quantity : quantity * price.qty;
+  const chosenFinishes = finishing.filter((f) => finishes.some((a) => a.id === f.id));
+  const finishQuote = cotarAcabamentos(finishes, chosenFinishes, pieces) ?? { itens: [], total: 0, prazo: 0 };
+  const leadDays = chosen.leadDays ? chosen.leadDays + finishQuote.prazo : chosen.leadDays;
+  const total = roundMoney(unitPrice * (apparel ? units : quantity) + finishQuote.total);
   const display =
     area && !area.error
       ? { value: area.price, unit: "por peça" }
@@ -324,8 +336,9 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   // Passos numerados: opções, medida (m²), tamanhos (vestuário) e arte.
   const sizeStep = keys.length + 1;
   const gridStep = keys.length + (areaMode ? 2 : 1);
+  const finishStep = keys.length + (areaMode ? 1 : 0) + (apparel ? 1 : 0) + 1;
   // Variação sem personalização não tem o passo da arte.
-  const artStep = keys.length + (areaMode ? 1 : 0) + (apparel ? 1 : 0) + 1;
+  const artStep = finishStep + (finishes.length ? 1 : 0);
   const totalSteps = semArte ? artStep - 1 : artStep;
   // No 3D, a peça lisa (o neon pronto segue com o desenho de exemplo do modelo).
   const viewArt = semArte && !modeloPronto ? PLAIN_ART : art;
@@ -335,7 +348,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const extras: [string, string][] = [
     ...(area ? [["Medida", `${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm`] as [string, string]] : []),
     ...(apparel ? [["Tamanhos", sizeSummary(sizes, counts) || "nenhum"] as [string, string]] : []),
-    ...(expressAvailable ? [["Prazo", `${expressChosen ? "Expresso" : "Econômico"}${chosen.leadDays ? ` · ${daysText(chosen.leadDays)}` : ""}`] as [string, string]] : []),
+    ...(finishQuote.itens.length ? [["Acabamentos", resumoAcabamentos(finishQuote.itens)] as [string, string]] : []),
+    ...(expressAvailable ? [["Prazo", `${expressChosen ? "Expresso" : "Econômico"}${leadDays ? ` · ${daysText(leadDays)}` : ""}`] as [string, string]] : []),
   ];
   const previewExtras: [string, string][] = [...extras, ...(area ? [["Área cobrada", formatArea(area.billedArea)] as [string, string]] : [])];
 
@@ -484,7 +498,8 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       unitPrice,
       setQty: area ? 1 : price.qty,
       quantity: apparel ? units : quantity,
-      leadDays: chosen.leadDays,
+      leadDays,
+      ...(finishQuote.itens.length ? { acabamentos: finishQuote.itens.map((item) => ({ id: item.acabamento.id, qtd: item.qtd })), acabamentosPreco: finishQuote.total } : {}),
       groupId: product.groupId,
       variationId: price.variation?.id,
       ...(area ? { widthCm, heightCm } : {}),
@@ -570,9 +585,9 @@ export default function ProductExperience({ product }: { product: ClientProduct 
         <h1 className="mt-3 text-title font-normal">{product.name}</h1>
         {product.summary && <p className="mt-2 max-w-xl text-[17px] leading-relaxed text-ink/75">{product.summary}</p>}
         <Price className="mt-4" size="pdp" value={display.value} from={!price.exact} unit={display.unit} live />
-        {leadLabel(chosen.leadDays) && (
+        {leadLabel(leadDays) && (
           <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-ink/80">
-            <IconClock className="size-4 text-coral-700" /> {leadLabel(chosen.leadDays)}
+            <IconClock className="size-4 text-coral-700" /> {leadLabel(leadDays)}
             {expressChosen && <span className="text-muted">· expresso</span>}
           </p>
         )}
@@ -617,6 +632,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
                 showError={attempted}
               />
             </li>
+          )}
+
+          {finishes.length > 0 && (
+            <AcabamentosStep step={finishStep} total={totalSteps} disponiveis={finishes} escolhidos={chosenFinishes} onChange={setFinishing} unidades={pieces} />
           )}
 
           {/* Variação sem personalização (produto liso, neon pronto): sem configuração de arte. */}
@@ -709,7 +728,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           />
         )}
 
-        <CepLookup leadDays={chosen.leadDays} groupId={product.groupId} variationId={price.variation?.id} quantity={apparel ? units : quantity} />
+        <CepLookup leadDays={leadDays} groupId={product.groupId} variationId={price.variation?.id} quantity={apparel ? units : quantity} />
       </div>
 
       {preview && (

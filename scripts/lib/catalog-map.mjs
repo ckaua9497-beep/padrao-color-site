@@ -3,6 +3,7 @@
 // Mesma regra para os dois: um produto novo entra no site exatamente como um produto da Padrão.
 
 import { perfisDeCustomizacao } from "../../src/lib/customizacao.ts";
+import { tabelaDeAcabamentos } from "../../src/lib/acabamentos.ts";
 
 // ------------------------------------------------------------------------------------- texto
 
@@ -140,6 +141,8 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
 
   // Customização por variação (regras em src/lib/customizacao.ts): perfis distintos no produto, índice na variação.
   const custom = perfisDeCustomizacao(rows, grupo.nome);
+  // Acabamentos extras (serrilha, furo, laminação…): tabela distinta no produto, índices na variação.
+  const finishes = tabelaDeAcabamentos(rows);
   const variations = rows.map((row, i) => ({
     id: row.id,
     p: row.preco?.economico ?? 0,
@@ -152,6 +155,7 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
     ...(partialPackaging(row.embalagem) ? { ei: partialPackaging(row.embalagem) } : {}),
     ...variationLimits(row, rows[0]),
     ...(custom.indices[i] ? { cz: custom.indices[i] } : {}),
+    ...(finishes.indices[i].length ? { ac: finishes.indices[i] } : {}),
   }));
 
   const priced = variations.filter((v) => v.p > 0);
@@ -204,6 +208,7 @@ export function mapGroup(grupo, rows, { featured = false, site = "https://padrao
         }
       : null,
     customizacoes: custom.perfis,
+    ...(finishes.tabela.length ? { acabamentos: finishes.tabela } : {}),
     minQty: rowLimits(first).min,
     maxQty: rowLimits(first).max,
     ...(source ? { source } : {}),

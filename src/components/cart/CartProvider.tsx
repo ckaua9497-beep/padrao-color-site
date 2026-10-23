@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { ArtFileKind, UploadedArtFile } from "@/lib/art-files";
+import type { AcabamentoEscolhido } from "@/lib/acabamentos";
 import { currentCustomer, customerVariations, useCustomer, useGroupPrices } from "@/lib/customer";
 import { quantityLabel } from "@/lib/format";
 import { bundleTitle, isLineError, priceLine, type OrderItemInput } from "@/lib/orders";
@@ -43,6 +44,10 @@ export type CartItem = {
   artFiles?: CartArtFile[] | null;
   /** Arquivos que já subiram para o Bunny no checkout (id do IndexedDB → URL pública): não sobem de novo. */
   uploaded?: Record<string, { url: string; nome: string }>;
+  /** Acabamentos extras escolhidos; o preço é recalculado pelo catálogo (no carrinho e no servidor). */
+  acabamentos?: AcabamentoEscolhido[];
+  /** Preço dos acabamentos ao adicionar: só vale enquanto o preço do cliente não chega. */
+  acabamentosPreco?: number;
 };
 
 export type CartArtFile = { id: string; name: string; kind: Exclude<ArtFileKind, "pdf">; /** Tipo de anexo do complementar ("Faca de Corte"…). */ tipo?: string };
@@ -226,6 +231,7 @@ export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderIt
     bundle: item.bundle ?? null,
     unitPrice,
     files: uploadedFilesOf(item),
+    ...(item.acabamentos?.length ? { acabamentos: item.acabamentos } : {}),
   };
 }
 
@@ -266,7 +272,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [allGroups]);
 
   // Revendedor: todo item com grupo vai para a tabela dele. Conta comum: só o que foi salvo com preço de revenda.
-  const needsPrice = useCallback((item: CartItem) => known && Boolean(item.groupId) && (resellerCustomer || item.priceTier === "revenda"), [known, resellerCustomer]);
+  // Revenda, item salvo na tabela de revenda ou com acabamentos (o preço deles acompanha a quantidade): preço recalculado.
+  const needsPrice = useCallback(
+    (item: CartItem) => known && Boolean(item.groupId) && (resellerCustomer || item.priceTier === "revenda" || Boolean(item.acabamentos?.length)),
+    [known, resellerCustomer],
+  );
   const groupIds = useMemo(() => items.filter(needsPrice).map((item) => item.groupId as number), [items, needsPrice]);
   const priceOf = useGroupPrices(groupIds);
 
@@ -329,7 +339,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const lines = useMemo<CartLine[]>(
     () =>
       items.map((item) => {
-        const saved: CartLine = { item, unitPrice: item.unitPrice, total: round2(item.unitPrice * item.quantity), reseller: false, pending: false };
+        const saved: CartLine = { item, unitPrice: item.unitPrice, total: round2(item.unitPrice * item.quantity + (item.acabamentosPreco ?? 0)), reseller: false, pending: false };
         if (!needsPrice(item)) return saved;
         const entry = priceOf(item.groupId as number);
         if (!entry) return { ...saved, pending: true };
@@ -339,6 +349,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           variations: customerVariations({ category, priceTable }, entry.data),
           customSize: entry.data.customSize,
           reseller: entry.data.reseller,
+          acabamentos: entry.data.acabamentos ?? null,
         });
         if (isLineError(priced)) return saved;
         return { item, unitPrice: priced.unitPrice, total: priced.total, reseller: priced.reseller, pending: false };

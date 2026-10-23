@@ -28,6 +28,8 @@ export type GroupPrices = {
   /** Mínimo e máximo de unidades do produto (qtde_minima/qtde_maxima do catálogo; 0 = sem máximo). */
   minQty: number;
   maxQty: number;
+  /** Acabamentos extras (catálogo): a tabela e os índices de cada variação; null quando o produto não tem. */
+  acabamentos: LinePrices["acabamentos"];
 };
 
 const TTL_MS = 10 * 60_000;
@@ -43,6 +45,13 @@ export function catalogProduct(groupId: number): Product | undefined {
 /** Limites de quantidade do produto (os mesmos que a página de produto aplica). */
 export function quantityLimits(product: Product): { minQty: number; maxQty: number } {
   return { minQty: Math.max(1, product.minQty ?? 1), maxQty: Math.max(0, product.maxQty ?? 0) };
+}
+
+/** Acabamentos extras do produto para o preço: tabela e índices por ID de variação (o preço é sempre o do catálogo). */
+export function productFinishes(product: Product): LinePrices["acabamentos"] {
+  if (!product.acabamentos?.length) return null;
+  const porVariacao = Object.fromEntries(product.variations.filter((v) => v.id !== undefined && v.ac?.length).map((v) => [String(v.id), v.ac as number[]]));
+  return { tabela: product.acabamentos, porVariacao };
 }
 
 /** Faixas próprias das variações (Caderno "De 11 até 100"): id → [mínimo, máximo] em unidades. */
@@ -80,7 +89,7 @@ async function resellerTable(groupId: number, account: PriceAccount, cacheOnly =
 export async function groupPrices(groupId: number, account: PriceAccount | null, { cacheOnly = false } = {}): Promise<GroupPrices | null> {
   const product = catalogProduct(groupId);
   if (!product) return null;
-  const base = { groupId, category: product.category, customSize: product.customSize ?? null, local: product.source === "site", ...quantityLimits(product) };
+  const base = { groupId, category: product.category, customSize: product.customSize ?? null, local: product.source === "site", ...quantityLimits(product), acabamentos: productFinishes(product) };
   // Produto novo (API própria): não existe na API da Padrão, então não há tabela de revenda para buscar.
   if (!account?.reseller || base.local) return { ...base, reseller: false, variations: product.variations };
   const variations = await resellerTable(groupId, account, cacheOnly);
@@ -109,6 +118,7 @@ export function linePricesFor(prices: GroupPrices, account: ResellerAccount | nu
     customSize: prices.customSize,
     reseller: prices.reseller,
     limits: { minQty: prices.minQty, maxQty: prices.maxQty },
+    acabamentos: prices.acabamentos,
     ...(prices.local && ordersOn ? { orderable: false } : {}),
   };
 }

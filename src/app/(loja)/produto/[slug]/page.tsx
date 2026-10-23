@@ -110,6 +110,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             printTemplate: productTemplate(product.id),
             summary: product.summary,
             customizacoes: product.customizacoes,
+            acabamentos: product.acabamentos,
             minQty: product.minQty,
             maxQty: product.maxQty,
             category: product.category,

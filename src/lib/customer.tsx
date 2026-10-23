@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import type { CustomSize, Variation } from "./catalog";
+import type { Acabamento } from "./acabamentos";
+import type { LinePrices } from "./orders";
 import { applyResellerDiscount, resellerDiscountRate } from "./reseller";
 
 /*
@@ -127,6 +129,8 @@ export type GroupPrices = {
   customSize: CustomSize | null;
   reseller: boolean;
   variations: Variation[];
+  /** Acabamentos extras do produto (preço do catálogo): o carrinho soma os escolhidos. */
+  acabamentos?: LinePrices["acabamentos"];
 };
 
 export type PriceEntry = { status: "ready"; data: GroupPrices } | { status: "error"; at: number };
@@ -146,6 +150,14 @@ function setPrice(key: string, entry: PriceEntry) {
   priceListeners.forEach((listener) => listener());
 }
 
+/** Acabamentos da resposta do /api/precos: só com a tabela e os índices no formato esperado. */
+function parseFinishes(raw: unknown): LinePrices["acabamentos"] {
+  const d = (raw ?? null) as { tabela?: unknown; porVariacao?: unknown } | null;
+  if (!d || !Array.isArray(d.tabela) || typeof d.porVariacao !== "object" || d.porVariacao === null) return null;
+  const tabela = d.tabela.filter((a): a is Acabamento => typeof a === "object" && a !== null && typeof (a as Acabamento).id === "string" && typeof (a as Acabamento).preco === "number");
+  return tabela.length === d.tabela.length ? { tabela, porVariacao: d.porVariacao as Record<string, number[]> } : null;
+}
+
 function parsePrices(data: unknown): (GroupPrices & { customerId: number | null }) | null {
   const d = (data ?? {}) as Record<string, unknown>;
   if (typeof d.groupId !== "number" || !Array.isArray(d.variations)) return null;
@@ -158,6 +170,7 @@ function parsePrices(data: unknown): (GroupPrices & { customerId: number | null 
     customSize: typeof d.customSize === "object" && d.customSize !== null ? (d.customSize as CustomSize) : null,
     reseller: d.reseller === true,
     variations,
+    acabamentos: parseFinishes(d.acabamentos),
     customerId: typeof d.customerId === "number" ? d.customerId : null,
   };
 }
