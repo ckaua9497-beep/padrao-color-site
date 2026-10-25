@@ -680,16 +680,18 @@ function buildBackpack(pw: number, ph: number, small: boolean) {
   const hh = h / 2;
   const hd = d / 2;
   const printCy = -hh + bottomPad + boxH / 2;
-  const archFrom = printCy + boxH / 2 + 0.6;
-  const o: SoftBody = { w, h, d, r, front: small ? 0.6 : 1.1, back: 0.5, side: small ? 0.35 : 0.6, top: 0.5, taperZ: 0.22, archFrom, arch: 0.6 };
+  // Brinde: topo bem redondo (foto da mochila infantil), arco começando mais baixo.
+  const archFrom = small ? -hh + h * 0.42 : printCy + boxH / 2 + 0.6;
+  const o: SoftBody = { w, h, d, r, front: small ? 0.6 : 1.1, back: 0.5, side: small ? 0.35 : 0.6, top: 0.5, taperZ: 0.22, archFrom, arch: small ? 1 : 0.6 };
   const deform = deformer(o);
   const inner = innerOf(o);
 
   const { geometry: body, seamY } = softBodyGeometry(o, -hh + r + 0.4);
-  const frontZ = deform(vec(0, printCy, hd)).z;
-  // A área impressa é o painel inteiro (retrato): a textura usa a proporção dele, sem distorcer.
-  const artW = boxW;
-  const artH = boxH;
+  // Brinde: a frente inteira é impressa (o arco também); personalizada: o painel da medida da spec.
+  const artCy = small ? 0 : printCy;
+  const frontZ = deform(vec(0, artCy, hd)).z;
+  const artW = small ? w - r * 0.9 : boxW;
+  const artH = small ? h - r * 0.9 : boxH;
 
   const frontPiping = pipingGeometry(onSurface(o, surfaceLoop(o, "z", 1, Math.PI / 4)).points, 0.32);
   const backPiping = pipingGeometry(onSurface(o, surfaceLoop(o, "z", -1, Math.PI / 4)).points, 0.32);
@@ -729,13 +731,34 @@ function buildBackpack(pw: number, ph: number, small: boolean) {
     stitch: 0.35,
   });
 
-  // Bolso lateral de garrafa (lado -x, o que fica para a câmera).
-  const pocket: SoftBody = { w: d * 0.72, h: small ? 7 : 13, d: small ? 1.6 : 2.4, r: 1.0, front: 0.5, side: 0.2 };
+  // Bolso lateral de garrafa em tela (lado -x, o que fica para a câmera); a brinde não tem.
+  const pocket: SoftBody = { w: d * 0.72, h: 13, d: 2.4, r: 1.0, front: 0.5, side: 0.2 };
   const pocketY = -hh + bottomPad + pocket.h / 2 - 0.4;
   const sideX = deform(vec(-hw, pocketY, 0)).x;
   const pocketBody = softBodyGeometry(pocket).geometry;
 
+  // Bolso frontal com zíper (personalizada): a parte de cima e a de baixo do bolso são superfícies do gabarito.
+  let front: { geometry: THREE.BufferGeometry; position: THREE.Vector3; w: number; h: number; d: number; zipper: ZipperParts; pullers: PullerPose[]; upperH: number } | null = null;
+  if (!small) {
+    const fw = boxW * 0.92;
+    const fh = h * 0.36;
+    const fd = 3.4;
+    const fy = -hh + bottomPad * 0.7 + fh / 2;
+    const fo: SoftBody = { w: fw, h: fh, d: fd, r: 1.8, front: 0.9, back: 0.2, side: 0.4, top: 0.5 };
+    const geometry = softBodyGeometry(fo).geometry;
+    const z = deform(vec(0, fy, hd)).z - 0.6 + fd / 2;
+    // Zíper do bolso: atravessa a frente do bolso a 1/3 da altura, de ponta a ponta.
+    const zy = fy + fh * 0.18;
+    const zz = z + fd / 2 + 0.75;
+    const pts = linePoints(vec(-fw / 2 + 1.6, zy, zz), vec(fw / 2 - 1.6, zy, zz), 0.36);
+    const path = { points: pts, normals: pts.map(() => vec(0, 0, 1)) };
+    const zip = zipperGeometries(path, 1.2);
+    const pz = [pullerAt(path, 0.12)].filter((q): q is PullerPose => q !== null);
+    front = { geometry, position: vec(0, fy, z), w: fw, h: fh, d: fd, zipper: zip, pullers: pz, upperH: fh * 0.32 };
+  }
+
   const geometries = [body, frontPiping, backPiping, zipper.tape, zipper.teeth, handle.body, pocketBody];
+  if (front) geometries.push(front.geometry, front.zipper.tape, front.zipper.teeth);
   if (seamPiping) geometries.push(seamPiping);
   if (handle.stitches) geometries.push(handle.stitches);
   straps.forEach(({ padded, webbing }) => {
@@ -745,9 +768,10 @@ function buildBackpack(pw: number, ph: number, small: boolean) {
   return {
     body,
     frontZ,
-    printCy,
+    printCy: artCy,
     artW,
     artH,
+    front,
     decalDepth: d * 0.75,
     frontPiping,
     backPiping,
@@ -762,11 +786,11 @@ function buildBackpack(pw: number, ph: number, small: boolean) {
 }
 
 /**
- * Mochila estofada: corpo de caixa arredondada com frente estufada e topo em arco, painel frontal
- * sublimado (Decal na área de impressão da spec), debrum nas quinas, zíper com dois cursores
- * contornando o topo, alça de mão, alças de ombro acolchoadas com regulador e bolso lateral.
- * Na personalizada a medida é o painel impresso (retrato, maior lado na altura); a "Mochila Brinde"
- * (≤ 24 cm) usa a medida como a peça inteira, fica mais fina e tem alças de fita.
+ * Mochila estofada: corpo de caixa arredondada com frente estufada e topo em arco, debrum nas quinas, zíper com dois
+ * cursores contornando o topo, alça de mão e alças de ombro com regulador (revisão da Padrão de 25/10/2026).
+ * "Mochila Brinde" (≤ 24 cm, a medida é a peça inteira): infantil, topo redondo, a frente toda impressa, o corpo de lona
+ * brilhante na cor de fundo da arte, debrum e alças pretas. Personalizada (a medida é o painel impresso): na cor base da
+ * opção, com o bolso frontal de zíper (as duas partes do bolso são superfícies do gabarito) e bolso lateral de tela.
  */
 export function BackpackModel({ spec, art, label }: ModelProps) {
   const pw = clamp(Math.min(spec.widthCm, spec.heightCm), 10, 60);
@@ -775,19 +799,42 @@ export function BackpackModel({ spec, art, label }: ModelProps) {
   const hw = useHardware();
   const p = useMemo(() => buildBackpack(pw, ph, small), [pw, ph, small]);
   useGeometriesCleanup(p.all);
-  const texture = useArtTexture(p.artW / p.artH, "front", art, label);
-  const base = spec.baseColor;
-  const trim = trimOf(spec);
+  const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
+  const texture = useArtTexture(p.artW / p.artH, "front", panelArt, label);
+  const upperAspect = p.front ? p.front.w / p.front.upperH : 1;
+  const lowerAspect = p.front ? p.front.w / (p.front.h - p.front.upperH) : 1;
+  const upperTexture = useFaceTexture(upperAspect, panelArt, "bolso-frontal-parte-superior", label);
+  const lowerTexture = useFaceTexture(lowerAspect, panelArt, "bolso-frontal-parte-inferior", label);
+  const own = { upper: faceArtOf(art, "bolso-frontal-parte-superior") !== null, lower: faceArtOf(art, "bolso-frontal-parte-inferior") !== null };
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  const base = small ? fill : spec.baseColor;
+  // Brinde: debrum, alças e zíper pretos (foto). Personalizada: zíper claro sobre a cor base, como na foto do produto.
+  const trim = small ? "#1e1f23" : (spec.accentColor ?? shade(base, 0.82));
+  const zipColor = small ? "#1e1f23" : (spec.accentColor ?? (isDark(base) || base.toLowerCase() !== "#ffffff" ? "#ece8df" : "#1e1f23"));
   const stitch = isDark(trim) ? "#6b6c70" : shade(trim, 0.6);
   const sheen = small ? 0.35 : 0.8;
   return (
     <group rotation-y={0.5}>
       <group scale={UNIT}>
         <mesh geometry={p.body}>
-          <Cloth attach="material-0" color={base} sheen={sheen} roughness={small ? 0.95 : 0.9} />
-          <Cloth attach="material-1" color={trim} sheen={0.5} roughness={0.8} />
+          {/* Brinde: lona plastificada brilhante; personalizada: microfibra. */}
+          {small ? <meshPhysicalMaterial attach="material-0" color={base} roughness={0.4} clearcoat={0.6} clearcoatRoughness={0.25} /> : <Cloth attach="material-0" color={base} sheen={sheen} roughness={0.9} />}
+          <Cloth attach="material-1" color={small ? base : trim} sheen={0.5} roughness={0.8} />
           <PanelPrint key={p.body.uuid} map={texture} position={[0, p.printCy, p.frontZ]} size={[p.artW, p.artH]} depth={p.decalDepth} />
         </mesh>
+        {p.front && (
+          <group>
+            <mesh geometry={p.front.geometry} position={p.front.position}>
+              <Cloth color={base} sheen={sheen} roughness={0.9} />
+              {own.upper && <PanelPrint key={`${p.front.geometry.uuid}:sup`} map={upperTexture} position={[0, p.front.h / 2 - p.front.upperH / 2, p.front.d / 2 + 0.5]} size={[p.front.w * 0.94, p.front.upperH]} depth={p.front.d} />}
+              {own.lower && <PanelPrint key={`${p.front.geometry.uuid}:inf`} map={lowerTexture} position={[0, -p.front.upperH / 2, p.front.d / 2 + 0.5]} size={[p.front.w * 0.94, p.front.h - p.front.upperH]} depth={p.front.d} />}
+            </mesh>
+            <Zipper parts={p.front.zipper} color={zipColor} />
+            {p.front.pullers.map((pose, i) => (
+              <Puller key={i} pose={pose} hw={hw} color={zipColor} />
+            ))}
+          </group>
+        )}
         {[p.frontPiping, p.backPiping, p.seamPiping].map((g, i) =>
           g ? (
             <mesh key={i} geometry={g}>
@@ -795,9 +842,9 @@ export function BackpackModel({ spec, art, label }: ModelProps) {
             </mesh>
           ) : null,
         )}
-        <Zipper parts={p.zipper} color={trim} />
+        <Zipper parts={p.zipper} color={zipColor} />
         {p.pullers.map((pose, i) => (
-          <Puller key={i} pose={pose} hw={hw} color={trim} />
+          <Puller key={i} pose={pose} hw={hw} color={zipColor} />
         ))}
         {p.straps.map((s, i) => (
           <group key={i}>
@@ -807,14 +854,16 @@ export function BackpackModel({ spec, art, label }: ModelProps) {
           </group>
         ))}
         <StrapMesh part={p.handle} color={trim} stitch={stitch} />
-        <group position={p.pocket.position} rotation-y={-Math.PI / 2}>
-          <mesh geometry={p.pocket.geometry}>
-            <Cloth color={shade(trim, 1.15)} sheen={0.3} roughness={0.95} />
-          </mesh>
-          <mesh geometry={hw.patch} position={[0, p.pocket.h / 2 - 0.7, p.pocket.d / 2 + 0.35]} scale={[p.pocket.w * 0.94, 1.3, 0.35]}>
-            <Cloth color={trim} sheen={0.5} roughness={0.8} />
-          </mesh>
-        </group>
+        {!small && (
+          <group position={p.pocket.position} rotation-y={-Math.PI / 2}>
+            <mesh geometry={p.pocket.geometry}>
+              <Cloth color={shade(base, 0.85)} sheen={0.3} roughness={0.95} />
+            </mesh>
+            <mesh geometry={hw.patch} position={[0, p.pocket.h / 2 - 0.7, p.pocket.d / 2 + 0.35]} scale={[p.pocket.w * 0.94, 1.3, 0.35]}>
+              <Cloth color={trim} sheen={0.5} roughness={0.8} />
+            </mesh>
+          </group>
+        )}
       </group>
     </group>
   );

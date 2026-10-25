@@ -366,10 +366,6 @@ function frontFrame(p: Profile, s: number, y: number): SurfaceFrame {
 }
 
 /** O mesmo ponto nas costas (o corpo é simétrico em z). */
-function mirrorFrame(f: SurfaceFrame): SurfaceFrame {
-  return { pos: vec(f.pos.x, f.pos.y, -f.pos.z), normal: vec(f.normal.x, f.normal.y, -f.normal.z) };
-}
-
 const along = (f: SurfaceFrame, k: number) => f.pos.clone().addScaledVector(f.normal, k);
 
 const ARC_STEPS = 160;
@@ -694,27 +690,6 @@ function plateGeometry(w: number, h: number, t: number, r: number, hole?: { w: n
   const depth = Math.max(0.002, t - bevel * 2);
   const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 8 });
   g.translate(0, 0, -depth / 2);
-  return g;
-}
-
-/** Caixa com cantos arredondados de verdade: esfera achatada em superelipsoide (encosto de cabeça). */
-function softBoxGeometry(w: number, h: number, d: number, e = 0.32) {
-  const g = new THREE.SphereGeometry(1, 48, 32);
-  const pos = g.getAttribute("position");
-  const f = (v: number) => Math.sign(v) * Math.abs(v) ** e;
-  for (let i = 0; i < pos.count; i += 1) {
-    const x = f(pos.getX(i));
-    const y = f(pos.getY(i));
-    const z = f(pos.getZ(i));
-    // Topo um pouco mais estreito e frente estufada, como uma espuma revestida.
-    pos.setXYZ(i, x * (w / 2) * (1 - 0.06 * (y + 1)), y * (h / 2), z * (d / 2) * (1 + 0.1 * (1 - x * x)));
-  }
-  g.computeVertexNormals();
-  // Nos polos os triângulos degeneram e a normal zera: aponta para cima/baixo.
-  const nor = g.getAttribute("normal");
-  for (let i = 0; i < nor.count; i += 1) {
-    if (Math.hypot(nor.getX(i), nor.getY(i), nor.getZ(i)) < 0.5) nor.setXYZ(i, 0, Math.sign(pos.getY(i)) || 1, 0);
-  }
   return g;
 }
 
@@ -1217,154 +1192,64 @@ function GiftPouch({ spec, art, label }: ModelProps) {
   );
 }
 
-// ---------------------------------------------------------------------------- lixeira de carro no encosto de cabeça
+// ---------------------------------------------------------------------------- lixeira pet de carro
 
-function carProfile(W: number, H: number, D: number): Profile {
-  return {
-    height: H,
-    fillet: Math.min(1.2, D * 0.3),
-    power: 4,
-    halfW: (t) => (W / 2) * (0.94 + 0.06 * t),
-    halfD: (t) => (D / 2) * (0.92 + 0.12 * Math.sin(Math.PI * t)) * (1 - 0.1 * smooth(t, 0.7, 1)),
-    ripple: (t, th) => 0.12 * Math.sin(th * 6 + t * 8) * Math.sin(Math.PI * t),
-  };
-}
-
-/** Encosto de cabeça de carro médio (cm). */
-const HEADREST = { w: 25, h: 16.5, d: 11 };
-
+/**
+ * Lixeira pet para automóveis (revisão da Padrão de 25/10/2026: "saquinho plano com furo de pendurar"): placa de tecido
+ * clara com cantos redondos e a fenda para passar na haste do encosto, e o bolso costurado embaixo, levemente estufado e
+ * aberto em cima, com a arte (gabarito: peça única de 20 × 19 cm).
+ */
 function CarTrashBag({ spec, art, label }: ModelProps) {
-  // Pendurada, a lixeira é mais alta do que larga.
-  const a = cm(spec.widthCm, 19.5, 10, 50);
-  const b = cm(spec.heightCm, 26.5, 10, 60);
-  const W = Math.min(a, b);
-  const H = Math.max(a, b);
-  const D = clamp(cm(spec.depthCm, 10, 2, 20) * 0.7, 4, 10);
-  const fillet = Math.min(1.2, D * 0.3);
-  const y0 = fillet + H * 0.06;
-  const y1 = Math.max(y0 + 2, H - 2.6);
-  const pw = W * 0.8;
-
-  const head = HEADREST;
-  const layout = useMemo(() => {
-    const p = carProfile(W, H, D);
-    const postX = 7.2;
-    const postZ = -(p.halfD(1) + 2.6);
-    const collarY = H + 3.2;
-    const headBottom = H + 10;
-    const loopY = H + 6.2;
-    return { p, postX, postZ, collarY, headBottom, loopY };
-  }, [W, H, D]);
-  const ph = useMemo(() => centerArc(layout.p, y0, y1), [layout, y0, y1]);
-  const printArt = useApparelArt(art);
-  const texture = useArtTexture(pw / ph, "front", printArt, label);
+  const W = Math.min(cm(spec.widthCm, 19.5, 10, 40), cm(spec.heightCm, 26.5, 10, 50));
+  const H = Math.max(cm(spec.widthCm, 19.5, 10, 40), cm(spec.heightCm, 26.5, 10, 50));
+  const pocketH = clamp(H * 0.72, 8, H - 5);
+  const texture = useArtTexture((W - 0.6) / pocketH, "front", art, label);
   const backArt = useMemo(() => backArtOf(art), [art]);
+  const backTexture = useArtTexture((W - 0.6) / pocketH, backArt ? "front" : "blank", backArt ?? art, label);
   const grain = useGrain("weave", 0.4);
-
   const parts = useMemo(() => {
-    const { p, postX, postZ, collarY, headBottom, loopY } = layout;
-    const body = bodyGeometry(p, 56);
-    const print = printGeometry(p, pw, y0, y1);
-    // Debrum: boca, laterais e fundo.
-    const rim = ringGeometry(loopPoints(p, 1, 180, 0.05), 0.38);
-    const bottomPipe = ringGeometry(loopPoints(p, 0, 160, 0.05), 0.28);
-    const sidePipes = [0, Math.PI].map((th) => pipeGeometry(seamPoints(p, th, 0.05), 0.28));
-    const hem = stitchGeometry([{ points: loopPoints(p, tAtY(p, H - 1.6), 220, 0.06), closed: true }]);
-
-    // Laço horizontal em volta das hastes e duas tiras descendo até as costas da bolsa.
-    const r = 0.95;
-    const loop: THREE.Vector3[] = [];
-    for (let k = 0; k <= 10; k += 1) {
-      const ang = -Math.PI / 2 + (k / 10) * Math.PI;
-      loop.push(vec(postX + r * Math.cos(ang), loopY, postZ - r * Math.sin(ang)));
-    }
-    for (let k = 0; k <= 10; k += 1) {
-      const ang = Math.PI / 2 + (k / 10) * Math.PI;
-      loop.push(vec(-postX + r * Math.cos(ang), loopY, postZ - r * Math.sin(ang)));
-    }
-    const loopStrap = strapGeometry(loop, { width: 2.0, thick: 0.18, widthAxis: AXIS_Y, closed: true, samples: 140, stitchInset: 0.3 });
-    const drops = [-1, 1].map((sx) => {
-      const backAt = mirrorFrame(frontFrame(p, sx * (W / 2 - 2.2), H - 3.6));
-      const pts = [
-        vec(sx * postX, loopY, postZ + r - 0.05),
-        vec(sx * (postX + 0.2), H + 3.4, postZ + r + 0.4),
-        vec(sx * (W / 2 - 2.2), H + 0.6, -(p.halfD(1) + 0.4)),
-        along(backAt, 0.25),
-      ];
-      return strapGeometry(pts, { width: 2.0, thick: 0.18, widthAxis: AXIS_X, samples: 48, stitchInset: 0.3 });
-    });
-    const strapStitch = stitchGeometry([...loopStrap.stitches, ...drops.flatMap((d) => d.stitches)], 0.28, 0.18, 0.035);
-    const buckle = plateGeometry(3.0, 2.6, 0.55, 0.45, { w: 2.2, h: 0.5, y: 0.55 });
-
-    // Encosto de cabeça (silhueta neutra) com hastes cromadas e guias plásticas.
-    const headrest = softBoxGeometry(HEADREST.w, HEADREST.h, HEADREST.d);
-    const postLen = headBottom + 1.5 - collarY;
-    const post = new THREE.CylinderGeometry(0.6, 0.6, postLen, 20);
-    const collar = new THREE.CylinderGeometry(1.05, 1.1, 1.4, 24);
-    return {
-      body,
-      print,
-      rim,
-      bottomPipe,
-      sidePipes,
-      hem,
-      loop: loopStrap.geometry,
-      drops: drops.map((d) => d.geometry),
-      strapStitch,
-      buckle,
-      headrest,
-      post,
-      collar,
-      postLen,
-      all: [body, print, rim, bottomPipe, ...sidePipes, hem, loopStrap.geometry, ...drops.map((d) => d.geometry), strapStitch, buckle, headrest, post, collar],
+    const slot = { w: W * 0.46, h: 2.0, y: H / 2 - 3.4 };
+    const panel = plateGeometry(W, H, 0.28, 2.2, slot);
+    const y0 = -H / 2 + 0.2;
+    // Bolso: estufa no meio (o lixo dentro) e abre um pouco na boca; costurado nas laterais e no fundo.
+    const pocketAt = (u: number, v: number, out: THREE.Vector3): THREE.Vector3 => {
+      const side = Math.pow(Math.sin(Math.PI * u), 0.7);
+      const belly = 1.5 * side * (0.3 + 0.7 * smooth(v, 0, 0.45)) * (1 - 0.2 * v);
+      const mouth = 0.5 * side * smooth(v, 0.85, 1);
+      return out.set((u - 0.5) * (W - 0.6), y0 + v * pocketH, 0.16 + belly + mouth);
     };
-  }, [layout, W, H, pw, y0, y1]);
+    const pocket = gridGeometry(40, 40, pocketAt, AXIS_Z);
+    // Verso do bolso (a parte de trás da placa leva a arte do verso, quando tem).
+    const back = gridGeometry(2, 2, (u, v, out) => out.set((0.5 - u) * (W - 0.6), y0 + v * pocketH, -0.16), vec(0, 0, -1));
+    const rimPts = Array.from({ length: 41 }, (_, i) => pocketAt(i / 40, 1, new THREE.Vector3()));
+    const rim = pipeGeometry(rimPts, 0.16);
+    const seamPts = [
+      ...Array.from({ length: 21 }, (_, i) => pocketAt(0, 1 - i / 20, new THREE.Vector3())),
+      ...Array.from({ length: 41 }, (_, i) => pocketAt(i / 40, 0, new THREE.Vector3())),
+      ...Array.from({ length: 21 }, (_, i) => pocketAt(1, i / 20, new THREE.Vector3())),
+    ];
+    const seam = pipeGeometry(seamPts, 0.14);
+    return { panel, pocket, back, rim, seam, all: [panel, pocket, back, rim, seam] };
+  }, [W, H, pocketH]);
   useGeometriesCleanup(parts.all);
-
-  const { postX, postZ, collarY, headBottom, loopY } = layout;
   const fabric = clothColor(spec.baseColor);
-  const trim = trimColor(spec);
-  const scale = TARGET / Math.max(head.w, headBottom + head.h);
-
+  const panelColor = shade(fabric, 0.94);
   return (
-    <group rotation-y={0.34}>
-      <group scale={scale}>
-        <mesh geometry={parts.body}>
-          <Cloth color={fabric} map={grain} />
+    <group rotation-y={0.3}>
+      <group scale={TARGET / H}>
+        <mesh geometry={parts.panel}>
+          <Cloth color={panelColor} map={grain} />
         </mesh>
-        <mesh geometry={parts.body}>
-          <Cloth color={shade(fabric, 0.7)} side={THREE.BackSide} />
-        </mesh>
-        <mesh geometry={parts.print}>
+        <mesh geometry={parts.pocket}>
           <Ink map={texture} />
         </mesh>
-        {backArt && <BackPrint profile={layout.p} pw={pw} y0={y0} y1={y1} aspect={pw / ph} art={backArt} label={label} />}
-        {[parts.rim, parts.bottomPipe, ...parts.sidePipes, parts.loop, ...parts.drops].map((g, i) => (
+        <mesh geometry={parts.back}>
+          <Ink map={backTexture} />
+        </mesh>
+        {[parts.rim, parts.seam].map((g, i) => (
           <mesh key={i} geometry={g}>
-            <Cloth color={trim} sheen={0.5} roughness={0.8} />
+            <Cloth color={panelColor} />
           </mesh>
-        ))}
-        <mesh geometry={parts.hem}>
-          <Thread color={threadColor(fabric)} />
-        </mesh>
-        <mesh geometry={parts.strapStitch}>
-          <Thread color={threadColor(trim)} />
-        </mesh>
-        <mesh geometry={parts.buckle} position={[0, loopY, postZ + 0.95 + 0.38]}>
-          <meshStandardMaterial color="#141416" roughness={0.45} />
-        </mesh>
-        <mesh geometry={parts.headrest} position={[0, headBottom + head.h / 2, postZ]}>
-          <meshPhysicalMaterial color="#2c2d31" roughness={0.85} sheen={0.6} sheenRoughness={0.6} sheenColor="#6d7078" />
-        </mesh>
-        {[-postX, postX].map((x) => (
-          <group key={x}>
-            <mesh geometry={parts.post} position={[x, collarY + parts.postLen / 2, postZ]}>
-              <Metal color="#d9dce0" />
-            </mesh>
-            <mesh geometry={parts.collar} position={[x, collarY - 0.7, postZ]}>
-              <meshStandardMaterial color="#1b1b1d" roughness={0.5} />
-            </mesh>
-          </group>
         ))}
       </group>
     </group>
@@ -1384,8 +1269,9 @@ function pouchShape(kind: PouchKind, spec: MockupSpec): PouchShape {
   const W = Math.max(a, b);
   const H = Math.min(a, b);
   if (kind === "clip") {
-    const D = clamp(H * 0.36, 2, 5);
-    return { W, H, D, power: 4, topStart: 0.42, slit: 0.32, endR: Math.min(0.9, H * 0.12), fillet: Math.min(0.6, D * 0.3), bulge: 0.04 };
+    // Bolsinha plana de courino (foto do produto): quase sem fole, cantos arredondados, o zíper na frente.
+    const D = clamp(H * 0.13, 0.8, 1.6);
+    return { W, H, D, power: 6, topStart: 0.86, slit: D * 0.38, endR: Math.min(0.7, H * 0.08), fillet: Math.min(0.3, D * 0.3), bulge: 0.02 };
   }
   if (kind === "pencil") {
     const D = clamp(cm(spec.depthCm, 10, 2, 20) * 0.5, 2.5, H * 0.7);
@@ -1432,15 +1318,22 @@ function carabinerGeometry() {
   );
 }
 
+/**
+ * Necessaire, necessaire com mosquetão e estojo. A necessaire e a de mosquetão são sublimadas/impressas inteiras (revisão
+ * da Padrão de 25/10/2026): a frente de borda a borda e o resto na cor de fundo da arte. A de mosquetão é plana, com o
+ * zíper na frente perto do topo e o mosquetão numa alça de fita preta no canto direito, como na foto do produto.
+ */
 function ZipPouch({ spec, art, label, kind }: ModelProps & { kind: PouchKind }) {
   const s = pouchShape(kind, spec);
   const { W, H, D, power, topStart, slit, endR, fillet, bulge } = s;
-  const y0 = fillet + H * 0.1;
-  // A estampa sobe pela curva do topo até perto do puxador (medida em arco, então não estica).
-  const reach = kind === "clip" ? 0.7 : kind === "pencil" ? 0.6 : 0.5;
+  const full = kind !== "pencil";
+  const y0 = full ? fillet + 0.25 : fillet + H * 0.1;
+  // A estampa sobe pela curva do topo até perto do zíper (medida em arco, então não estica).
+  const reach = kind === "clip" ? 0.9 : kind === "pencil" ? 0.6 : 0.88;
   const y1 = Math.max(y0 + 1, fillet + (topStart + (1 - topStart) * reach) * (H - fillet));
-  const pw = W * (kind === "pencil" ? 0.84 : 0.8);
+  const pw = W * (kind === "pencil" ? 0.84 : 0.95);
   const leather = kind === "clip";
+  const frontZip = kind === "clip";
   const profile = useMemo(() => pouchProfile({ W, H, D, power, topStart, slit, endR, fillet, bulge }), [W, H, D, power, topStart, slit, endR, fillet, bulge]);
   const ph = useMemo(() => centerArc(profile, y0, y1), [profile, y0, y1]);
   const printArt = useApparelArt(art);
@@ -1453,80 +1346,78 @@ function ZipPouch({ spec, art, label, kind }: ModelProps & { kind: PouchKind }) 
     const body = bodyGeometry(p, 64);
     const print = printGeometry(p, pw, y0, y1);
     const topW = p.halfW(1);
-    const L = Math.max(2, topW * 2 - 0.3);
-    const tapeW = slit * 2 + (kind === "pencil" ? 1.3 : 1.6);
-    const tape = plateGeometry(L + 0.6, tapeW, 0.14, 0.3).rotateX(-Math.PI / 2);
+    // Zíper da frente (mosquetão): na altura de 80% e quase de ponta a ponta.
+    const zipY = H * 0.8;
+    const zipZ = frontZip ? frontFrame(p, 0, zipY).pos.z : 0;
+    const L = frontZip ? W * 0.86 : Math.max(2, topW * 2 - 0.3);
+    const tapeW = frontZip ? 0.75 : slit * 2 + (kind === "pencil" ? 1.3 : 1.6);
+    const tape = frontZip ? plateGeometry(L + 0.4, tapeW, 0.1, 0.3) : plateGeometry(L + 0.6, tapeW, 0.14, 0.3).rotateX(-Math.PI / 2);
     const pitch = kind === "necessaire" ? 0.34 : 0.28;
     const count = Math.max(2, Math.floor((L - 0.4) / pitch));
     const teethDepth = kind === "necessaire" ? 0.46 : 0.38;
     const teeth = boxesGeometry(
-      Array.from({ length: count }, (_, i) => ({
-        c: [-(L - 0.4) / 2 + ((i + 0.5) * (L - 0.4)) / count, H + 0.15, (i % 2 ? 1 : -1) * 0.09] as [number, number, number],
-        s: [pitch * 0.62, 0.16, teethDepth] as [number, number, number],
-      })),
+      Array.from({ length: count }, (_, i) => {
+        const x = -(L - 0.4) / 2 + ((i + 0.5) * (L - 0.4)) / count;
+        return frontZip
+          ? { c: [x, zipY + (i % 2 ? 1 : -1) * 0.07, zipZ + 0.13] as [number, number, number], s: [pitch * 0.5, 0.2, 0.1] as [number, number, number] }
+          : { c: [x, H + 0.15, (i % 2 ? 1 : -1) * 0.09] as [number, number, number], s: [pitch * 0.62, 0.16, teethDepth] as [number, number, number] };
+      }),
     );
     const tapeStitch = stitchGeometry(
       [1, -1].map((sz) => ({
-        points: [vec(-L / 2, H + 0.09, sz * (tapeW / 2 - 0.22)), vec(L / 2, H + 0.09, sz * (tapeW / 2 - 0.22))],
+        points: frontZip
+          ? [vec(-L / 2, zipY + sz * (tapeW / 2 - 0.15), zipZ + 0.09), vec(L / 2, zipY + sz * (tapeW / 2 - 0.15), zipZ + 0.09)]
+          : [vec(-L / 2, H + 0.09, sz * (tapeW / 2 - 0.22)), vec(L / 2, H + 0.09, sz * (tapeW / 2 - 0.22))],
         closed: false,
       })),
       0.26,
       0.16,
       0.03,
     );
-    // Cursor e puxador: o puxador deita sobre a curva da frente.
-    const sliderX = L * 0.26;
-    const slider = plateGeometry(1.6, 1.15, 0.42, 0.4).rotateX(-Math.PI / 2);
-    const tabLen = kind === "necessaire" ? 2.6 : kind === "pencil" ? 2.2 : 1.8;
-    const tab = plateGeometry(0.8, tabLen, 0.14, 0.38, { w: 0.34, h: tabLen * 0.28, y: -tabLen * 0.22 }).translate(0, -tabLen / 2, 0);
-    const hinge = vec(sliderX, H + 0.38, 0.55);
-    const rest = along(frontFrame(p, sliderX, H - tabLen * 0.8), 0.28);
+    // Cursor e puxador: no topo, o puxador deita sobre a curva da frente; no zíper da frente, fica na ponta esquerda,
+    // caído para baixo.
+    const sliderX = frontZip ? -L / 2 + 0.7 : L * 0.26;
+    const slider = frontZip ? plateGeometry(1.0, 0.8, 0.3, 0.3) : plateGeometry(1.6, 1.15, 0.42, 0.4).rotateX(-Math.PI / 2);
+    const tabLen = kind === "necessaire" ? 2.6 : kind === "pencil" ? 2.2 : 1.5;
+    const tab = plateGeometry(frontZip ? 0.55 : 0.8, tabLen, 0.12, 0.27, { w: 0.24, h: tabLen * 0.28, y: -tabLen * 0.22 }).translate(0, -tabLen / 2, 0);
+    const hinge = frontZip ? vec(sliderX, zipY - 0.2, zipZ + 0.32) : vec(sliderX, H + 0.38, 0.55);
+    const rest = frontZip ? vec(sliderX - 0.15, zipY - tabLen, zipZ + 0.34) : along(frontFrame(p, sliderX, H - tabLen * 0.8), 0.28);
     const dir = rest.sub(hinge).normalize();
     const tabQuat = new THREE.Quaternion().setFromUnitVectors(DOWN, dir);
     const endTab = plateGeometry(1.5, tapeW, 0.28, 0.2).rotateX(-Math.PI / 2);
 
     const geos: THREE.BufferGeometry[] = [body, print, tape, teeth, tapeStitch, slider, tab, endTab];
-    // Vivo nas costuras laterais e no fundo (necessaire); o estojo é mais simples.
+    // Vivo nas costuras laterais e no fundo da necessaire (na cor do tecido); o estojo e a plana não têm.
     const piping: THREE.BufferGeometry[] = [];
-    if (kind !== "pencil") {
+    if (kind === "necessaire") {
       piping.push(ringGeometry(loopPoints(p, 0, 160, 0.04), 0.2), ...[0, Math.PI].map((th) => pipeGeometry(seamPoints(p, th, 0.04, 0, 0.97), 0.2)));
     }
     geos.push(...piping);
 
-    // Alça de couro com mosquetão na ponta esquerda.
-    let clip: { tab: THREE.BufferGeometry; ring: THREE.BufferGeometry; position: THREE.Vector3 } | null = null;
+    // Alça de fita preta saindo do canto de cima à direita, dobrada na argola do mosquetão (gancho lagosta).
+    let clip: { tab: THREE.BufferGeometry; ring: THREE.BufferGeometry; eye: THREE.BufferGeometry; ringAt: THREE.Vector3; hookAt: THREE.Vector3 } | null = null;
     if (kind === "clip") {
-      const yA = H * 0.62;
+      const yA = H * 0.78;
       const xe = p.halfW(tAtY(p, yA));
-      const bend = -xe - 2.6;
-      // A alça dobra em "U" em volta da haste do mosquetão, com folga para o arame (r 0,26) passar
-      // por dentro sem atravessar o couro.
-      const loop = [
-        vec(-xe + 0.8, yA, 0.2),
-        vec(-xe - 0.5, yA, 0.32),
-        vec(-xe - 1.5, yA, 0.5),
-        vec(-xe - 2.1, yA, 0.56),
-        vec(bend + 0.12, yA, 0.36),
-        vec(bend, yA, 0),
-        vec(bend + 0.12, yA, -0.36),
-        vec(-xe - 2.1, yA, -0.56),
-        vec(-xe - 1.5, yA, -0.5),
-        vec(-xe - 0.5, yA, -0.32),
-        vec(-xe + 0.8, yA, -0.2),
-      ];
-      const loopTab = strapGeometry(loop, { width: 1.1, thick: 0.12, widthAxis: AXIS_Y, samples: 80 });
-      const ring = carabinerGeometry();
-      // Haste reta (x = 0 local) no meio do "U"; o giro de 0,1 rad no render a desloca ~0,16 cm na altura da alça.
-      clip = { tab: loopTab.geometry, ring, position: vec(bend + 0.52, yA - 1.6, 0) };
-      geos.push(loopTab.geometry, ring);
+      const out = xe + 1.9;
+      const loop = [vec(xe - 0.9, yA, 0.18), vec(xe + 0.2, yA, 0.3), vec(out - 0.2, yA, 0.32), vec(out + 0.25, yA, 0), vec(out - 0.2, yA, -0.32), vec(xe + 0.2, yA, -0.3), vec(xe - 0.9, yA, -0.18)];
+      const loopTab = strapGeometry(loop, { width: 1.3, thick: 0.1, widthAxis: AXIS_Y, samples: 60 });
+      const ring = new THREE.TorusGeometry(0.55, 0.11, 8, 24);
+      const eye = carabinerGeometry().scale(0.62, 0.62, 0.62);
+      clip = { tab: loopTab.geometry, ring, eye, ringAt: vec(out + 0.5, yA, 0), hookAt: vec(out + 1.55, yA + 1.25, 0) };
+      geos.push(loopTab.geometry, ring, eye);
     }
-    return { body, print, tape, teeth, tapeStitch, slider, sliderX, tab, hinge, tabQuat, endTab, L, piping, clip, all: geos };
-  }, [profile, kind, H, slit, pw, y0, y1]);
+    return { body, print, tape, teeth, tapeStitch, slider, sliderX, zipY, zipZ, tab, hinge, tabQuat, endTab, L, piping, clip, all: geos };
+  }, [profile, kind, H, W, slit, pw, y0, y1, frontZip]);
   useGeometriesCleanup(parts.all);
 
-  const fabric = clothColor(spec.baseColor);
-  const trim = trimColor(spec);
-  const metal = metalColor(spec.metal);
+  // Impressa inteira: o corpo sai na cor de fundo da arte.
+  const fill = full && /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  const fabric = clothColor(fill);
+  // Vivo e fita do zíper no tom do tecido (nada de contraste: a foto não tem vivo aparente).
+  const trim = full ? shade(fabric, 0.88) : trimColor(spec);
+  const zipTape = kind === "clip" ? "#151517" : trim;
+  const metal = metalColor(spec.metal === "none" ? "silver" : spec.metal);
   const scale = TARGET / (W + (kind === "clip" ? 5 : 0));
 
   return (
@@ -1544,19 +1435,20 @@ function ZipPouch({ spec, art, label, kind }: ModelProps & { kind: PouchKind }) 
             {leather ? <Leather color={shade(fabric, 0.92)} /> : <Cloth color={trim} sheen={0.5} roughness={0.8} />}
           </mesh>
         ))}
-        <mesh geometry={parts.tape} position-y={H + 0.02}>
-          <Cloth color={trim} sheen={0.4} roughness={0.85} />
+        <mesh geometry={parts.tape} position={frontZip ? [0, parts.zipY, parts.zipZ + 0.06] : [0, H + 0.02, 0]}>
+          <Cloth color={zipTape} sheen={0.4} roughness={0.85} />
         </mesh>
-        <mesh geometry={parts.teeth}>{kind === "pencil" ? <meshStandardMaterial color={shade(trim, 0.85)} roughness={0.4} /> : <Metal color={metal} />}</mesh>
+        <mesh geometry={parts.teeth}>{kind === "pencil" || frontZip ? <meshStandardMaterial color={shade(zipTape, 0.85)} roughness={0.4} /> : <Metal color={metal} />}</mesh>
         <mesh geometry={parts.tapeStitch}>
-          <Thread color={threadColor(trim)} />
+          <Thread color={threadColor(zipTape)} />
         </mesh>
-        {[-1, 1].map((sx) => (
-          <mesh key={sx} geometry={parts.endTab} position={[sx * (parts.L / 2 + 0.45), H - 0.12, 0]} rotation-z={-sx * 0.45}>
-            {leather ? <Leather color={shade(fabric, 0.92)} /> : <Cloth color={trim} sheen={0.4} roughness={0.85} />}
-          </mesh>
-        ))}
-        <mesh geometry={parts.slider} position={[parts.sliderX, H + 0.36, 0]}>
+        {!frontZip &&
+          [-1, 1].map((sx) => (
+            <mesh key={sx} geometry={parts.endTab} position={[sx * (parts.L / 2 + 0.45), H - 0.12, 0]} rotation-z={-sx * 0.45}>
+              {leather ? <Leather color={shade(fabric, 0.92)} /> : <Cloth color={trim} sheen={0.4} roughness={0.85} />}
+            </mesh>
+          ))}
+        <mesh geometry={parts.slider} position={frontZip ? [parts.sliderX, parts.zipY, parts.zipZ + 0.3] : [parts.sliderX, H + 0.36, 0]}>
           <Metal color={metal} />
         </mesh>
         <mesh geometry={parts.tab} position={parts.hinge} quaternion={parts.tabQuat}>
@@ -1565,9 +1457,12 @@ function ZipPouch({ spec, art, label, kind }: ModelProps & { kind: PouchKind }) 
         {parts.clip && (
           <>
             <mesh geometry={parts.clip.tab}>
-              <Leather color={shade(fabric, 0.9)} />
+              <Cloth color="#151517" sheen={0.3} roughness={0.85} />
             </mesh>
-            <mesh geometry={parts.clip.ring} position={parts.clip.position} rotation-z={0.1}>
+            <mesh geometry={parts.clip.ring} position={parts.clip.ringAt} rotation-y={Math.PI / 2}>
+              <Metal color={metal} />
+            </mesh>
+            <mesh geometry={parts.clip.eye} position={parts.clip.hookAt} rotation-z={-0.75}>
               <Metal color={metal} />
             </mesh>
           </>
