@@ -166,7 +166,10 @@ const RULES: Rule[] = [
 // Subtipos por kind, testados em ordem contra o nome normalizado (o primeiro que casa vence).
 // Os modelos 3D leem spec.variant em vez de testar o nome.
 const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
-  pen: [[/\bporcelana\b/, "porcelain"]],
+  pen: [
+    [/\bporcelana\b/, "porcelain"],
+    [/\btouch\b/, "touch"],
+  ],
   paperpack: [
     [/\bfoto\b/, "photo"],
     [/\bsublim/, "sublimation"],
@@ -305,6 +308,8 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
   ],
   coaster: [
     [/\bporta jarra\b/, "pitcher"],
+    // Capa de tecido com elástico (138), por cima de um sousplat.
+    [/\bcapa\b.*\bsousplat\b/, "cover"],
     [/\bsousplat\b/, "placemat"],
   ],
   acrylic: [
@@ -324,7 +329,11 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\btecido\b/, "fabric"],
     [/\bs\/ acabamento\b|\bs\/ impressao\b/, "raw"],
   ],
-  board: [[/\blaser\b/, "laser"]],
+  board: [
+    [/\blaser\b/, "laser"],
+    // Tábua de Carne (139): cantos da esquerda bem arredondados; a de frios é retangular.
+    [/\bcarne\b/, "meat"],
+  ],
   rug: [[/\bcapacho\b/, "doormat"]],
   mat: [
     [/\bgamer\b/, "gamer"],
@@ -506,7 +515,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   const allValues = chosen.map((c) => c.value).join(" | ");
 
   const sizeText =
-    pick(selection, product.options, /^(formato|tamanho da arte|formato da arte)/) ??
+    pick(selection, product.options, /^(formato|tamanho da arte|formato da arte|tamanho( da)? gravacao)/) ??
     pick(selection, product.options, /^tamanho$/) ??
     product.name;
   const parsed = parseSize(sizeText) ?? parseSize(product.name);
@@ -514,6 +523,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   // Xícara London: área de arte menor que a da caneca padrão.
   let [widthCm, heightCm] = parsed ?? (teacup ? [16, 5] : [dw, dh]);
   if (kind === "banner" && /faixa/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
+  // Jogo americano só existe na horizontal (revisão da Padrão de 25/10): "30x44 cm" é 44 de largura por 30 de altura.
+  if (kind === "mat" && /\bjogo americano\b/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
   const kitHeight = kind === "flag" && !parsed ? /(\d+(?:[.,]\d+)?)\s*m\b/.exec(normalizeName(sizeText)) : null;
   if (kitHeight) {
     heightCm = Math.round(Number(kitHeight[1].replace(",", ".")) * 100 * 0.8);
@@ -647,7 +658,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     teacup,
     handle: kind === "mug" || (kind === "tumbler" && (/\btravel mug\b/.test(name) || /\balca\b/.test(allValues))),
     carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
-    thermal: kind === "bottle" && (/\btermic/.test(name) || /\binox\b/.test(name)),
+    // DTF U.V. é um adesivo no tamanho do formato (Garrafa Térmica 396: 9×10 cm), não a faixa de 60% da sublimação.
+    thermal: kind === "bottle" && (/\btermic/.test(name) || /\binox\b/.test(name)) && !/\bdtf\b/.test(allValues),
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
     pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b/.test(name),
     spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),

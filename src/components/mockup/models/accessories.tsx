@@ -12,7 +12,6 @@ import { fontFamily } from "../art";
 import { useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
 import {
-  AcrylicMaterials,
   Dimensions,
   PrintMaterial,
   RoundedBlock,
@@ -391,15 +390,22 @@ type PvcCardProps = {
   slotY?: number;
   slotW?: number;
   slotH?: number;
+  /** Furos redondos [x, y, raio] (credencial com cordão). */
+  holes?: readonly (readonly [number, number, number])[];
 };
 
-/** Cartão rígido com cantos arredondados, núcleo branco, rasgo opcional e laminação brilhante. */
-function PvcCard({ w, h, d, radius, spec, front, back, slotY, slotW = 1.35, slotH = 0.32 }: PvcCardProps) {
+/** Cartão rígido com cantos arredondados, núcleo branco, rasgo ou furos opcionais e laminação brilhante. */
+function PvcCard({ w, h, d, radius, spec, front, back, slotY, slotW = 1.35, slotH = 0.32, holes }: PvcCardProps) {
   const shape = useMemo(() => {
     const s = makeShape("rect", w, h, radius);
     if (slotY !== undefined) s.holes.push(slotPath(slotY, slotW, slotH));
+    for (const [x, y, r] of holes ?? []) {
+      const hole = new THREE.Path();
+      hole.absarc(x, y, r, 0, Math.PI * 2, true);
+      s.holes.push(hole);
+    }
     return s;
-  }, [w, h, radius, slotY, slotW, slotH]);
+  }, [w, h, radius, slotY, slotW, slotH, holes]);
   const bevel = Math.min(0.025, d * 0.3);
   const body = useMemo(() => {
     const g = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 16 });
@@ -911,6 +917,177 @@ function BallpointPens({ spec, art, label }: ModelProps) {
   );
 }
 
+/**
+ * Perfis (raio, altura) em cm da caneta plástica de clique de 14 cm (fotos da 229), da ponta (y = 0) ao botão: ponteira
+ * cônica branca com a esfera de metal, empunhadura colorida, corpo branco, topo afinando e botão colorido.
+ */
+const PLASTIC_PEN: Record<"ball" | "tip" | "grip" | "barrel" | "button", Pt[]> = {
+  ball: [
+    [0, 0],
+    [0.035, 0.01],
+    [0.05, 0.06],
+    [0.06, 0.16],
+    [0, 0.16],
+  ],
+  tip: [
+    [0, 0.12],
+    [0.07, 0.12],
+    [0.12, 0.3],
+    [0.3, 1.2],
+    [0.4, 1.75],
+    [0.43, 1.95],
+    [0, 1.95],
+  ],
+  grip: [
+    [0, 1.92],
+    [0.43, 1.92],
+    [0.46, 2.0],
+    [0.47, 4.45],
+    [0.45, 4.55],
+    [0, 4.55],
+  ],
+  barrel: [
+    [0, 4.5],
+    [0.45, 4.5],
+    [0.49, 4.62],
+    [0.5, 11.9],
+    [0.48, 12.6],
+    [0.41, 13.15],
+    [0.36, 13.25],
+    [0, 13.25],
+  ],
+  button: [
+    [0, 13.0],
+    [0.27, 13.0],
+    [0.29, 13.9],
+    [0.26, 14.08],
+    [0.16, 14.15],
+    [0, 14.15],
+  ],
+};
+
+/** Empunhadura emborrachada: anéis finos ao longo do grip (relevo). */
+function rubberGripProfile(): Pt[] {
+  const rings = 16;
+  const pts: Pt[] = [
+    [0, 1.92],
+    [0.43, 1.92],
+    [0.46, 2.0],
+  ];
+  for (let i = 0; i <= rings; i += 1) pts.push([i % 2 ? 0.455 : 0.475, 2.08 + (i * 2.3) / rings]);
+  pts.push([0.45, 4.55], [0, 4.55]);
+  return pts;
+}
+
+/**
+ * Clipe plástico largo, visto de frente (x = largura, y = comprimento), com a janela vazada perto do topo e a ponta
+ * arredondada; extrudado na espessura e virado para encostar no corpo (normal −x depois do giro).
+ */
+function plasticClipGeometry(width: number, length: number, thickness: number) {
+  const shape = makeShape("rect", width, length, width * 0.42);
+  const hole = new THREE.Path();
+  const hw = width * 0.26;
+  const top = length / 2 - 0.55;
+  hole.moveTo(-hw, top);
+  hole.lineTo(-hw, top - 1.05);
+  hole.quadraticCurveTo(-hw, top - 1.2, -hw + 0.12, top - 1.2);
+  hole.lineTo(hw - 0.12, top - 1.2);
+  hole.quadraticCurveTo(hw, top - 1.2, hw, top - 1.05);
+  hole.lineTo(hw, top);
+  hole.lineTo(-hw, top);
+  shape.holes.push(hole);
+  const g = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2, curveSegments: 10 });
+  g.translate(0, 0, -thickness / 2);
+  g.rotateY(-Math.PI / 2);
+  return g;
+}
+
+type PlasticPenGeometries = Record<keyof typeof PLASTIC_PEN, THREE.BufferGeometry> & { rubber: THREE.BufferGeometry; clip: THREE.BufferGeometry; bridge: THREE.BufferGeometry; band: THREE.BufferGeometry };
+
+/** Plástico injetado brilhante da caneta (branco do corpo e cor dos detalhes). */
+function PenPlastic({ color, roughness = 0.3 }: { color: string; roughness?: number }) {
+  return <meshPhysicalMaterial color={color} roughness={roughness} clearcoat={0.5} clearcoatRoughness={0.15} />;
+}
+
+function PlasticPen({ geometries, accent, rubber, map }: { geometries: PlasticPenGeometries; accent: string; rubber: boolean; map: THREE.Texture }) {
+  const white = "#f6f6f3";
+  return (
+    <group position-y={-7}>
+      <mesh geometry={geometries.ball}>
+        <Chrome roughness={0.2} />
+      </mesh>
+      <mesh geometry={geometries.tip}>
+        <PenPlastic color={white} />
+      </mesh>
+      <mesh geometry={rubber ? geometries.rubber : geometries.grip}>
+        <PenPlastic color={accent} roughness={rubber ? 0.78 : 0.28} />
+      </mesh>
+      <mesh geometry={geometries.barrel}>
+        <PenPlastic color={white} />
+      </mesh>
+      <mesh geometry={geometries.button}>
+        <PenPlastic color={accent} roughness={0.32} />
+      </mesh>
+      {/* Clipe branco do lado −x (para cima com a caneta deitada), preso no topo por uma ponte. */}
+      <mesh geometry={geometries.clip} position={[-0.64, 10.65, 0]}>
+        <PenPlastic color={white} roughness={0.34} />
+      </mesh>
+      <mesh geometry={geometries.bridge} position={[-0.5, 12.75, 0]}>
+        <PenPlastic color={white} roughness={0.34} />
+      </mesh>
+      <mesh geometry={geometries.band}>
+        <meshPhysicalMaterial map={map} roughness={0.3} clearcoat={0.5} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-1} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Caneta plástica (229): branca, com botão e empunhadura na cor escolhida (emborrachada no modelo "Emborrachada
+ * Parcial", plástico liso no "Sem Emborrachamento"), clipe branco vazado e a impressão U.V. no corpo, lendo ao longo
+ * da caneta. Duas canetas deitadas, uma mostrando a arte e a outra o clipe.
+ */
+function PlasticPens({ spec, art, label }: ModelProps) {
+  const printW = clamp(spec.widthCm, 2, 7);
+  const printH = clamp(spec.heightCm, 0.4, 1.4);
+  // A U.V. imprime só o desenho: a imagem enviada sai sem fundo, sobre o branco do corpo.
+  const decal = useMemo(() => (art.src ? { ...art, background: "rgba(0,0,0,0)" } : art), [art]);
+  const map = useArtTexture(printW / printH, "front", decal, label);
+  const geometries = useMemo<PlasticPenGeometries>(() => {
+    const radius = 0.503;
+    const start = Math.max(4.9, 8.2 - printW / 2);
+    const bridge = new THREE.BoxGeometry(0.32, 0.5, 0.5);
+    return {
+      ball: lathe(PLASTIC_PEN.ball, 24),
+      tip: lathe(PLASTIC_PEN.tip, 48),
+      grip: lathe(PLASTIC_PEN.grip, 48),
+      rubber: lathe(rubberGripProfile(), 48),
+      barrel: lathe(PLASTIC_PEN.barrel, 64),
+      button: lathe(PLASTIC_PEN.button, 32),
+      clip: plasticClipGeometry(0.62, 4.6, 0.14),
+      bridge,
+      band: axialBandGeometry(radius, start, printW, Math.min(printH / radius, Math.PI * 0.9)),
+    };
+  }, [printW, printH]);
+  const list = useMemo(() => Object.values(geometries), [geometries]);
+  useGeometriesCleanup(list);
+  const rubber = /emborrachad/.test(spec.details ?? "") && !/\bsem emborrachamento\b/.test(spec.details ?? "");
+  const accent = spec.baseColor;
+  const radius = 0.5;
+  return (
+    <group userData={{ view: { elevation: 0.3 } }}>
+      <group scale={PEN_UNIT}>
+        <LyingPen position={[0, radius, 1.4]} yaw={-0.12} roll={-0.3}>
+          <PlasticPen geometries={geometries} accent={accent} rubber={rubber} map={map} />
+        </LyingPen>
+        <LyingPen position={[0.8, radius, -3]} yaw={Math.PI + 0.3} roll={-0.3}>
+          <PlasticPen geometries={geometries} accent={accent} rubber={rubber} map={map} />
+        </LyingPen>
+      </group>
+    </group>
+  );
+}
+
 /** Perfis em cm do marcador para porcelana (ponta de feltro em y = 0, tampa encaixada atrás). */
 const MARKER_PROFILES: Record<"nib" | "holder" | "barrel" | "band" | "cap", Pt[]> = {
   nib: [
@@ -1049,14 +1226,16 @@ function PorcelainPen({ spec, art, label }: ModelProps) {
 }
 
 /**
- * Caneta: esferográfica de 14 cm em torno (ponteira cromada, grip emborrachado, corpo brilhante, clipe
- * extrudado e botão), com a faixa de impressão de 5 × 0,9 cm contornando o tambor de frente para a câmera.
- * Duas canetas deitadas em diagonal, uma mostrando a arte e a outra o clipe.
+ * Caneta: plástica branca de clique com detalhes coloridos (padrão, PlasticPens). {touch}: esferográfica metálica
+ * de 14 cm em torno (ponteira cromada, grip emborrachado, corpo brilhante, clipe extrudado e botão), com a faixa
+ * de impressão de 5 × 1 cm contornando o tambor de frente para a câmera; duas canetas deitadas em diagonal.
  * {porcelain}: marcador para porcelana com tampa encaixada, ao lado de um prato num cavalete de madeira
  * com a arte desenhada no fundo.
  */
 export function PenModel(props: ModelProps) {
-  return props.spec.variant === "porcelain" ? <PorcelainPen {...props} /> : <BallpointPens {...props} />;
+  if (props.spec.variant === "porcelain") return <PorcelainPen {...props} />;
+  if (props.spec.variant === "touch") return <BallpointPens {...props} />;
+  return <PlasticPens {...props} />;
 }
 
 // ---------------------------------------------------------------------------- ventarola
@@ -1064,11 +1243,9 @@ export function PenModel(props: ModelProps) {
 const FAN_UNIT = 2.4 / 24.6;
 /** Espessura do papel 300 g (cm). */
 const FAN_PAPER = 0.045;
-/** Palito de madeira (cm): largura e espessura. */
-const FAN_STICK = { w: 1.1, t: 0.24 };
 const BEZIER_CIRCLE = 0.5523;
 
-/** Contorno da pá na caixa w × h: elipse, coração ou (padrão) remo de cantos macios, mais estreito embaixo. */
+/** Contorno da pá na caixa w × h: elipse, coração ou (padrão) triângulo arredondado com a pega embaixo. */
 function fanOutline(sink: PathSink, w: number, h: number, shape: MockupSpec["shape"]) {
   const x = w / 2;
   const y = h / 2;
@@ -1094,16 +1271,17 @@ function fanOutline(sink: PathSink, w: number, h: number, shape: MockupSpec["sha
     sink.bezierCurveTo(px(0.9), py(1.05), px(1.1), py(0.45), px(0.5), py(0.05));
     return;
   }
+  // Padrão (fotos da 178): triângulo arredondado de ponta para baixo, como uma palheta. A ponta é a pega; o topo é
+  // quase reto, com cantos de raio grande, e os lados descem retos até a ponta boleada.
   sink.moveTo(0, -y);
-  sink.lineTo(w * 0.2, -y);
-  sink.bezierCurveTo(w * 0.42, -y, x, -h * 0.36, x, -h * 0.1);
-  sink.lineTo(x, h * 0.22);
-  sink.bezierCurveTo(x, h * 0.43, w * 0.42, y, w * 0.24, y);
-  sink.lineTo(-w * 0.24, y);
-  sink.bezierCurveTo(-w * 0.42, y, -x, h * 0.43, -x, h * 0.22);
-  sink.lineTo(-x, -h * 0.1);
-  sink.bezierCurveTo(-x, -h * 0.36, -w * 0.42, -y, -w * 0.2, -y);
-  sink.lineTo(0, -y);
+  sink.bezierCurveTo(w * 0.075, -y, w * 0.13, -h * 0.455, w * 0.18, -h * 0.385);
+  // Tudo dentro da caixa w × h: a pá (plano w × h) e a borda seguem o mesmo contorno.
+  sink.lineTo(w * 0.44, h * 0.08);
+  sink.bezierCurveTo(w * 0.5, h * 0.2, x, h * 0.44, w * 0.31, h * 0.485);
+  sink.bezierCurveTo(w * 0.12, y, -w * 0.12, y, -w * 0.31, h * 0.485);
+  sink.bezierCurveTo(-x, h * 0.44, -w * 0.5, h * 0.2, -w * 0.44, h * 0.08);
+  sink.lineTo(-w * 0.18, -h * 0.385);
+  sink.bezierCurveTo(-w * 0.13, -h * 0.455, -w * 0.075, -y, 0, -y);
 }
 
 /** Pá dobrada em arco (as laterais recuam), como o papel de 300 g se curva na mão. */
@@ -1139,9 +1317,9 @@ function edgeWall(points: THREE.Vector2[], d: number, bendAt: (x: number) => num
 }
 
 /**
- * Ventarola: pá de papel (elipse, coração ou remo de cantos macios) impressa frente e verso, curvada em
- * arco; arte recortada pelo contorno com máscara no canvas. Palito de madeira com veio colado atrás,
- * descendo como cabo e encaixado num pequeno bloco de apoio. Cotas na pá.
+ * Ventarola (178): leque de papel recortado em triângulo arredondado (a ponta de baixo é a pega), impresso frente e
+ * verso e curvado em arco como o papel de 300 g na mão; arte recortada pelo contorno com máscara no canvas. Sem
+ * palito nem base, como o produto. Elipse e coração ficam para os formatos com essas palavras. Cotas na pá.
  */
 export function FanModel({ spec, art, label, showDims }: ModelProps) {
   const w = clamp(spec.widthCm, 8, 40);
@@ -1159,42 +1337,19 @@ export function FanModel({ spec, art, label, showDims }: ModelProps) {
   );
   const front = useArtTexture(artAspect({ widthCm: w, heightCm: h }), "front", art, label, mask);
   const back = useBackTexture(artAspect({ widthCm: w, heightCm: h }), spec, art, label, mask);
-  const wood = useWoodTexture();
 
-  // Palito: sobe até 70% da pá por trás e desce 12 cm como cabo.
-  const stickTop = h * 0.2;
-  const stickBottom = -h / 2 - 12;
   const geometries = useMemo(() => {
     const outline = new THREE.Shape();
     fanOutline(outline, w, h, shape);
-    const length = stickTop - stickBottom;
-    const slat = new THREE.ExtrudeGeometry(makeShape("rect", FAN_STICK.w, length, FAN_STICK.w / 2), {
-      depth: FAN_STICK.t,
-      bevelEnabled: true,
-      bevelThickness: 0.04,
-      bevelSize: 0.04,
-      bevelSegments: 2,
-      curveSegments: 12,
-    });
-    slat.translate(0, 0, -FAN_STICK.t / 2);
-    // Veio da madeira ao longo do palito.
-    const uv = slat.attributes.uv;
-    const pos = slat.attributes.position;
-    for (let i = 0; i < pos.count; i += 1) uv.setXY(i, pos.getX(i) / FAN_STICK.w + 0.5, pos.getY(i) / length + 0.5);
-    uv.needsUpdate = true;
     return {
       front: bentPlane(w, h, bendAt, FAN_PAPER / 2, false),
       back: bentPlane(w, h, bendAt, -FAN_PAPER / 2, true),
       edge: edgeWall(outline.getSpacedPoints(220).slice(0, -1), FAN_PAPER, bendAt),
-      slat,
     };
-  }, [w, h, shape, bendAt, stickTop, stickBottom]);
+  }, [w, h, shape, bendAt]);
   const list = useMemo(() => Object.values(geometries), [geometries]);
   useGeometriesCleanup(list);
   const [lw, lh] = sizeLabels(spec);
-  const stickZ = -FAN_PAPER / 2 - FAN_STICK.t / 2 - 0.045;
-  const baseH = 2.6;
-  const inserted = 1.6;
   return (
     <group rotation-y={-0.32}>
       <group scale={FAN_UNIT}>
@@ -1207,10 +1362,6 @@ export function FanModel({ spec, art, label, showDims }: ModelProps) {
         <mesh geometry={geometries.edge}>
           <meshStandardMaterial color="#f6f5f1" roughness={0.9} side={THREE.DoubleSide} />
         </mesh>
-        <mesh geometry={geometries.slat} position={[0, (stickTop + stickBottom) / 2, stickZ]}>
-          <meshStandardMaterial map={wood} roughness={0.75} />
-        </mesh>
-        <RoundedBlock w={5.2} h={baseH} d={5.2} radius={0.7} color="#dedbd4" roughness={0.88} position={[0, stickBottom + inserted - baseH / 2, stickZ]} />
       </group>
       {showDims && KIND_INFO[spec.kind].dims && <Dimensions w={w * FAN_UNIT} h={h * FAN_UNIT} z={0.04} labelW={lw} labelH={lh} />}
     </group>
@@ -1386,7 +1537,48 @@ function ClipBadge({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Credencial: cartão rígido dentro de um envelope de PVC cristal com fecho e rasgo, pendurado num cordão curto. */
+/** Bolso da credencial: placa fina na frente, embaixo, recortada da mesma placa (a arte continua por cima dela). */
+function CredentialPocket({ w, h, pocketH, d, radius, spec, front }: { w: number; h: number; pocketH: number; d: number; radius: number; spec: MockupSpec; front: THREE.Texture }) {
+  const parts = useMemo(() => {
+    // Contorno nas coordenadas do cartão (para a UV seguir a arte do cartão inteiro): cantos de baixo arredondados.
+    const y0 = -h / 2;
+    const y1 = y0 + pocketH;
+    const r = Math.min(radius, pocketH / 2);
+    const shape = new THREE.Shape();
+    shape.moveTo(-w / 2, y1);
+    shape.lineTo(-w / 2, y0 + r);
+    shape.quadraticCurveTo(-w / 2, y0, -w / 2 + r, y0);
+    shape.lineTo(w / 2 - r, y0);
+    shape.quadraticCurveTo(w / 2, y0, w / 2, y0 + r);
+    shape.lineTo(w / 2, y1);
+    shape.lineTo(-w / 2, y1);
+    const body = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false, curveSegments: 12 });
+    return { body, face: faceGeometry(shape, w, h) };
+  }, [w, h, pocketH, d, radius]);
+  const list = useMemo(() => [parts.body, parts.face], [parts]);
+  useGeometriesCleanup(list);
+  return (
+    <group>
+      <mesh geometry={parts.body}>
+        <meshStandardMaterial color="#e4e4e1" roughness={0.5} />
+      </mesh>
+      <mesh geometry={parts.face} position-z={d + 0.004}>
+        <PrintMaterial map={front} spec={spec} />
+      </mesh>
+      {/* Sombra de contato logo acima da boca do bolso: marca a fenda como na foto. */}
+      <mesh position={[0, -h / 2 + pocketH + 0.05, 0.008]}>
+        <planeGeometry args={[w - 0.1, 0.1]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.28} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Credencial (338): placa de PS 1 mm impressa (9,5 × 15 cm), cantos arredondados, dois furos no alto por onde passa
+ * um cordão redondo preto (nó atrás de cada furo) e o bolso embaixo, como na foto do produto. Pendurada pelo
+ * cordão, um pouco de três quartos.
+ */
 function Credential({ spec, art, label, showDims }: ModelProps) {
   const w = clamp(spec.widthCm, 4, 20);
   const h = clamp(spec.heightCm, 4, 25);
@@ -1394,78 +1586,69 @@ function Credential({ spec, art, label, showDims }: ModelProps) {
   const backKind = backKindOf(spec, art);
   const back = useBackTexture(w / h, spec, art, label);
   const d = 0.1;
-  // Envelope: 4 mm de folga dos lados, cabeçalho de 2,7 cm com o rasgo.
-  const sleeveW = w + 0.8;
-  const sleeveH = h + 0.35 + 2.7;
-  // Envelope com folga para o cartão (o cartão chanfrado tem ±0,08 cm): as faces não se encostam.
-  const sleeveD = d + 0.14;
-  const sleeveBottom = -h / 2 - 0.35;
-  const sleeveCenter = sleeveBottom + sleeveH / 2;
-  const slotY = sleeveBottom + sleeveH - 1.05;
-  const lobsterY = slotY + 2.72;
-  const crimpY = lobsterY + 1.95;
-  const base = crimpY + 0.4;
-  const loopH = Math.max(8, h * 0.62);
-  const strapColor = spec.accentColor ?? "#1d1d1f";
-
-  const parts = useMemo(() => {
-    const shape = makeShape("rect", sleeveW, sleeveH, 0.6);
-    shape.holes.push(slotPath(slotY - sleeveCenter, 1.6, 0.36));
-    const envelope = new THREE.ExtrudeGeometry(shape, { depth: sleeveD, bevelEnabled: false, curveSegments: 16 });
-    envelope.translate(0, 0, -sleeveD / 2);
-    const loop: V3[] = [
-      [-0.3, base, 0.12],
-      [-2.0, base + loopH * 0.27, 0.2],
-      [-2.8, base + loopH * 0.58, 0.2],
-      [-1.9, base + loopH * 0.87, 0.1],
-      [-0.6, base + loopH, 0.02],
-      [0.6, base + loopH, -0.02],
-      [1.9, base + loopH * 0.87, -0.1],
-      [2.8, base + loopH * 0.58, -0.2],
-      [2.0, base + loopH * 0.27, -0.2],
-      [0.3, base, -0.12],
+  const radius = 0.5;
+  const holeR = 0.22;
+  const holeX = w / 2 - 0.8;
+  const holeY = h / 2 - 0.75;
+  const pocketH = Math.min(2.2, h * 0.15);
+  const pocketD = 0.05;
+  const loopH = Math.max(9, h * 0.85);
+  const holes = useMemo(
+    () =>
+      [
+        [-holeX, holeY, holeR],
+        [holeX, holeY, holeR],
+      ] as const,
+    [holeX, holeY],
+  );
+  const cord = useMemo(() => {
+    // Sai da frente de cada furo, sobe em gota até o gancho (pescoço) e desce do outro lado.
+    const top = holeY + loopH;
+    const points: V3[] = [
+      [-holeX, holeY, 0.06],
+      [-holeX - 0.15, holeY + 0.9, 0.12],
+      [-holeX + 0.1, holeY + loopH * 0.3, 0.1],
+      [-holeX * 0.6, holeY + loopH * 0.62, 0],
+      [-holeX * 0.22, top - 0.6, -0.08],
+      [0, top, -0.1],
+      [holeX * 0.22, top - 0.6, -0.08],
+      [holeX * 0.6, holeY + loopH * 0.62, 0],
+      [holeX - 0.1, holeY + loopH * 0.3, 0.1],
+      [holeX + 0.15, holeY + 0.9, 0.12],
+      [holeX, holeY, 0.06],
     ];
-    const curve = new THREE.CatmullRomCurve3(loop.map(vec), false, "centripetal");
-    const facing = () => new THREE.Vector3(0, 0, 1);
-    const frames = Array.from({ length: 121 }, (_, i) => frameAt(curve, i / 120, facing, 0, i / 120));
-    const strap = ribbonGeometry(frames, 1.5, 0.09);
-    return { envelope, strap };
-  }, [sleeveW, sleeveH, sleeveD, slotY, sleeveCenter, base, loopH]);
-  const list = useMemo(() => [parts.envelope, parts.strap], [parts]);
-  useGeometriesCleanup(list);
-  const top = base + loopH + 0.6;
-  const unit = 2.8 / (top - sleeveBottom);
+    const curve = new THREE.CatmullRomCurve3(points.map(vec), false, "centripetal");
+    return new THREE.TubeGeometry(curve, 200, 0.12, 12, false);
+  }, [holeX, holeY, loopH]);
+  useGeometryCleanup(cord);
+  const laminate = useMemo<MockupSpec>(() => ({ ...spec, finish: "gloss", clearcoat: 1 }), [spec]);
+  const top = holeY + loopH + 0.2;
+  const unit = 2.8 / (top + h / 2);
   const [lw, lh] = sizeLabels(spec);
+  const cordColor = "#1b1b1d";
   return (
     <group rotation={[-0.03, -0.28, 0]}>
       <group scale={unit}>
-        <PvcCard w={w} h={h} d={d} radius={0.45} spec={spec} front={front} back={backKind === "blank" ? null : back} />
-        <mesh geometry={parts.envelope} position-y={sleeveCenter}>
-          <AcrylicMaterials />
-        </mesh>
-        {/* Fecho zip do envelope, logo acima do cartão. */}
-        <mesh position={[0, h / 2 + 0.45, 0]}>
-          <boxGeometry args={[sleeveW - 0.1, 0.16, sleeveD + 0.02]} />
-          <meshPhysicalMaterial color="#e9f1f2" transparent opacity={0.55} roughness={0.2} depthWrite={false} />
-        </mesh>
-        <group position={[0, lobsterY, 0]} rotation-y={1.0}>
-          <LobsterClip />
+        <PvcCard w={w} h={h} d={d} radius={radius} spec={spec} front={front} back={backKind === "blank" ? null : back} holes={holes} />
+        <group position-z={d / 2 + 0.03}>
+          <CredentialPocket w={w} h={h} pocketH={pocketH} d={pocketD} radius={radius} spec={laminate} front={front} />
         </group>
-        <group position={[0, crimpY, 0]}>
-          <CrimpAndRing />
-        </group>
-        <mesh geometry={parts.strap}>
-          <meshPhysicalMaterial attach="material-0" color={strapColor} roughness={0.45} sheen={0.6} sheenRoughness={0.4} sheenColor="#ffffff" />
-          <meshPhysicalMaterial attach="material-1" color={strapColor} roughness={0.45} sheen={0.6} sheenRoughness={0.4} sheenColor="#ffffff" />
-          <meshStandardMaterial attach="material-2" color={strapColor} roughness={0.6} />
+        <mesh geometry={cord}>
+          <meshStandardMaterial color={cordColor} roughness={0.62} />
         </mesh>
-        {/* Trava de segurança (breakaway) no alto do cordão. */}
-        {/* Mais alta que a fita (1,5 cm), que entra pelos lados. */}
-        <RoundedBlock w={2.5} h={2.0} d={0.72} radius={0.32} color={shade(strapColor, 0.8)} roughness={0.5} position={[0, base + loopH, 0]} />
-        <mesh position={[0, base + loopH, 0]}>
-          <boxGeometry args={[0.06, 2.04, 0.76]} />
-          <meshStandardMaterial color={shade(strapColor, 0.45)} roughness={0.6} />
-        </mesh>
+        {/* O cordão atravessa cada furo e termina num nó atrás da placa. */}
+        {[-holeX, holeX].map((x) => (
+          <group key={x}>
+            <mesh position={[x, holeY, 0]} rotation-x={Math.PI / 2}>
+              <cylinderGeometry args={[0.12, 0.12, d + 0.16, 12]} />
+              <meshStandardMaterial color={cordColor} roughness={0.62} />
+            </mesh>
+            <mesh position={[x, holeY - 0.08, -d / 2 - 0.2]} scale={[1, 0.8, 0.9]}>
+              <sphereGeometry args={[0.24, 16, 12]} />
+              <meshStandardMaterial color={cordColor} roughness={0.62} />
+            </mesh>
+          </group>
+        ))}
       </group>
       {showDims && KIND_INFO[spec.kind].dims && <Dimensions w={w * unit} h={h * unit} z={0.03} labelW={lw} labelH={lh} />}
     </group>
@@ -1475,8 +1658,8 @@ function Credential({ spec, art, label, showDims }: ModelProps) {
 /**
  * Crachá: cartão de PVC 0,76 mm com cantos arredondados, rasgo vazado, núcleo branco e laminação
  * brilhante; arte na frente (verso conforme 4/0 ou 4/4) e jacaré com alça de vinil cristal passando
- * pelo rasgo. {credential}: cartão vertical dentro de envelope de PVC cristal com fecho, mosquetão no
- * rasgo e um cordão curto subindo até a trava. Cotas no cartão.
+ * pelo rasgo, sempre no lado de cima (horizontal ou vertical, conforme a medida da spec).
+ * {credential}: placa de PS com dois furos, cordão redondo e bolso embaixo. Cotas no cartão.
  */
 export function BadgeModel(props: ModelProps) {
   return props.spec.variant === "credential" ? <Credential {...props} /> : <ClipBadge {...props} />;

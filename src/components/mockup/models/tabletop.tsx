@@ -2,8 +2,8 @@
 
 // Peças de mesa e chão, deitadas como na vida real (a câmera sobe via userData.view em vez de inclinar a peça):
 // mouse pad com borda overlock, mouse pad gamer com mouse, jogo americano com prato e talheres, tapete de pelúcia,
-// capacho de vinil com borda de borracha, tábua de madeira (painel sublimado ou gravação a laser), porta-copos
-// com base de cortiça, porta-jarra com jarra de vidro e sousplat com prato.
+// capacho de vinil com borda de borracha, tábua de madeira (painel sublimado, gravação a laser ou talhada na fresa),
+// porta-copos com base de cortiça, porta-jarra com jarra de vidro, sousplat com prato e capa de sousplat com elástico.
 //
 // Convenção: a peça é montada no plano XY (arte em +z, topo da arte em +y) e o grupo gira -90° em x; assim o
 // topo da arte fica no fundo da mesa e a leitura é direta para a câmera. Medidas em cm viram unidades de cena
@@ -14,7 +14,7 @@ import * as THREE from "three";
 import type { MockupShape, MockupSpec } from "@/lib/mockup";
 import { KIND_INFO, artAspect } from "@/lib/mockup-kinds";
 import { Dimensions, PrintMaterial, faceGeometry, makeShape, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
-import { lathe, smoothProfile, type Pt } from "./vessel";
+import { ENGRAVE_MASK_GLSL, engravesDirect, lathe, smoothProfile, type Pt } from "./vessel";
 
 /** Lado maior da peça principal, em unidades de cena. */
 const TARGET = 2.4;
@@ -159,7 +159,7 @@ function contourTube(points: THREE.Vector3[], radius: number) {
 // Texturas procedurais (canvas)
 // ---------------------------------------------------------------------------------------------
 
-type SurfaceKind = "weave" | "pile" | "coil" | "cork" | "wood" | "overlock" | "stitch";
+type SurfaceKind = "weave" | "pile" | "coil" | "cork" | "wood" | "pine" | "overlock" | "stitch";
 type Painter = (ctx: CanvasRenderingContext2D, w: number, h: number, rand: () => number, tint: string) => void;
 
 /** Disco que se repete nas bordas do ladrilho (textura sem emenda). */
@@ -290,6 +290,38 @@ const paintWood: Painter = (ctx, w, h, rand) => {
   for (let i = 0; i < 1600; i += 1) ctx.fillRect(rand() * w, rand() * h, 2 + rand() * 6, 1);
 };
 
+/**
+ * Pinus (tábuas da 139/140): fundo claro amarelado com veios marcados, mais escuros e acinzentados, em faixas
+ * paralelas de largura variável (o "listrado" do pinus das fotos). Veio ao longo de x.
+ */
+const paintPine: Painter = (ctx, w, h, rand) => {
+  ctx.fillStyle = "#e0c99f";
+  ctx.fillRect(0, 0, w, h);
+  // Lenho de verão (faixas largas, mais claras) e de inverno (linhas escuras), ondulando juntos.
+  let y = 0;
+  while (y < h + 20) {
+    const gap = 9 + rand() * 30;
+    const amp = 2 + rand() * 8;
+    const f = ((0.5 + rand() * 1.2) * Math.PI * 2) / w;
+    const p = rand() * Math.PI * 2;
+    ctx.strokeStyle = `rgba(${132 + rand() * 30},${98 + rand() * 20},${64 + rand() * 18},${0.35 + rand() * 0.4})`;
+    ctx.lineWidth = 1.6 + rand() * 5.5;
+    ctx.beginPath();
+    for (let x = -8; x <= w + 8; x += 8) {
+      const yy = y + amp * Math.sin(x * f + p) + amp * 0.3 * Math.sin(x * f * 2.7 + p * 1.3);
+      if (x === -8) ctx.moveTo(x, yy);
+      else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(250,236,206,${0.08 + rand() * 0.14})`;
+    ctx.lineWidth = gap * 0.5;
+    ctx.stroke();
+    y += gap;
+  }
+  ctx.fillStyle = "rgba(96,70,44,0.16)";
+  for (let i = 0; i < 1400; i += 1) ctx.fillRect(rand() * w, rand() * h, 2 + rand() * 7, 1);
+};
+
 /** Viés com ponto overlock: fios diagonais envolvendo a borda. */
 const paintOverlock: Painter = (ctx, w, h, _rand, tint) => {
   ctx.fillStyle = tone(tint, "#000000", 0.45);
@@ -320,6 +352,7 @@ const SURFACES: Record<SurfaceKind, { size: [number, number]; seed: number; pain
   coil: { size: [256, 256], seed: 37, paint: paintCoil },
   cork: { size: [128, 128], seed: 41, paint: paintCork },
   wood: { size: [1024, 512], seed: 53, paint: paintWood },
+  pine: { size: [1024, 768], seed: 59, paint: paintPine },
   overlock: { size: [64, 64], seed: 67, paint: paintOverlock },
   stitch: { size: [64, 16], seed: 71, paint: paintStitch },
 };
@@ -338,6 +371,11 @@ function paintSurface(kind: SurfaceKind, repeatX: number, repeatY: number, tint:
   texture.repeat.set(Math.max(repeatX, 0.01), Math.max(repeatY, 0.01));
   texture.anisotropy = 8;
   return texture;
+}
+
+/** Pinus das tábuas (o mesmo da tábua talhada), para a tábua de frios dentro da caixa acrílica (boxes.tsx). */
+export function usePineTexture() {
+  return useSurfaceTexture("pine", 1, 1);
 }
 
 /** Textura de superfície com repetição (ladrilhos por peça); liberada ao trocar ou desmontar. */
@@ -904,6 +942,182 @@ function CuttingBoard({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
+/** Raios dos cantos [sup. esq., sup. dir., inf. dir., inf. esq.]. */
+type Corners = [number, number, number, number];
+
+/** Retângulo w × h centrado com um raio por canto (arcos de círculo de verdade, mesmo nos raios grandes). */
+function cornerRect(w: number, h: number, [tl, tr, br, bl]: Corners) {
+  const x = w / 2;
+  const y = h / 2;
+  const s = new THREE.Shape();
+  s.moveTo(-x + bl, -y);
+  s.lineTo(x - br, -y);
+  s.absarc(x - br, -y + br, br, -Math.PI / 2, 0, false);
+  s.lineTo(x, y - tr);
+  s.absarc(x - tr, y - tr, tr, 0, Math.PI / 2, false);
+  s.lineTo(-x + tl, y);
+  s.absarc(-x + tl, y - tl, tl, Math.PI / 2, Math.PI, false);
+  s.lineTo(-x, -y + bl);
+  s.absarc(-x + bl, -y + bl, bl, Math.PI, Math.PI * 1.5, false);
+  return s;
+}
+
+/** Contorno da tábua talhada (cm): a de carne (139) tem os cantos da esquerda bem redondos; a de frios (140), cantos justos. */
+function boardCorners(meat: boolean, W: number, H: number): Corners {
+  const m = Math.min(W, H);
+  return meat ? [0.3 * H, 0.17 * H, 0.06 * H, 0.3 * H] : [0.03 * m, 0.03 * m, 0.03 * m, 0.03 * m];
+}
+
+/** Placa de madeira com arestas boleadas e cantos próprios (mesma montagem de softLayerGeometry). */
+function boardGeometry(corners: Corners, w: number, h: number, t: number, bevel: number) {
+  const b = Math.max(0, Math.min(bevel, t * 0.49, w * 0.2, h * 0.2));
+  const shape = cornerRect(Math.max(w - 2 * b, 1e-3), Math.max(h - 2 * b, 1e-3), corners.map((r) => Math.max(r - b, 1e-4)) as Corners);
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: Math.max(t - 2 * b, 1e-4), bevelEnabled: b > 0, bevelThickness: b, bevelSize: b, bevelSegments: 4, curveSegments: 24 });
+  geometry.translate(0, 0, b);
+  planarUv(geometry, w, h);
+  smoothNormals(geometry);
+  return geometry;
+}
+
+/**
+ * Canal de suco (cm), aberto no canto de baixo à direita como nas fotos: começa na borda de baixo, contorna a
+ * esquerda, o topo e desce pela direita até um quarto da altura. Pontos no plano da tábua.
+ */
+function grooveLine(W: number, H: number, corners: Corners, inset: number) {
+  const x = W / 2 - inset;
+  const y = H / 2 - inset;
+  const [tl, tr, , bl] = corners.map((r) => Math.max(r - inset, 0.4));
+  const points: THREE.Vector2[] = [new THREE.Vector2(W * 0.24, -y)];
+  const arc = (cx: number, cy: number, r: number, a0: number, a1: number) => {
+    for (let i = 0; i <= 16; i += 1) {
+      const a = a0 + ((a1 - a0) * i) / 16;
+      points.push(new THREE.Vector2(cx + r * Math.cos(a), cy + r * Math.sin(a)));
+    }
+  };
+  arc(-x + bl, -y + bl, bl, -Math.PI / 2, -Math.PI);
+  arc(-x + tl, y - tl, tl, Math.PI, Math.PI / 2);
+  arc(x - tr, y - tr, tr, Math.PI / 2, 0);
+  points.push(new THREE.Vector2(x, -H * 0.24));
+  return points;
+}
+
+/** Textura do canal (alfa = profundidade): traço largo e um fio mais escuro no lado da sombra. */
+function grooveTexture(W: number, H: number, corners: Corners) {
+  const cw = 1024;
+  const ch = Math.round((cw * H) / W);
+  const canvas = document.createElement("canvas");
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext("2d");
+  const texture = new THREE.CanvasTexture(canvas);
+  if (!ctx) return texture;
+  const k = cw / W;
+  const line = grooveLine(W, H, corners, Math.max(1.1, 0.045 * Math.min(W, H)));
+  const trace = (dx: number, dy: number) => {
+    ctx.beginPath();
+    line.forEach((p, i) => {
+      const px = (p.x + W / 2) * k + dx;
+      const py = (H / 2 - p.y) * k + dy;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+  };
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(0,0,0,0.2)";
+  ctx.lineWidth = 0.62 * k;
+  trace(0, 0);
+  // Parede do lado da luz (alto à esquerda) na sombra: fio escuro deslocado para lá.
+  ctx.strokeStyle = "rgba(0,0,0,0.42)";
+  ctx.lineWidth = 0.18 * k;
+  trace(-0.17 * k, -0.17 * k);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+// Talhado na madeira (fresa): onde a arte marca, o fundo do talho fica mais escuro (fibra cortada) e a parede do
+// lado da luz faz sombra; o canal de suco entra pela mesma conta. Multiplica a madeira (os veios seguem por baixo).
+const CARVE_FRAGMENT = /* glsl */ `
+uniform sampler2D map;
+uniform sampler2D groove;
+uniform vec2 texel;
+uniform vec3 tone;
+varying vec2 vUv;
+${ENGRAVE_MASK_GLSL}
+void main() {
+  float c = engraveAt(vUv);
+  vec2 o = texel * 5.0;
+  float shade = c * (1.0 - engraveAt(vUv + vec2(-o.x, o.y)));
+  float g = texture2D(groove, vUv).a;
+  vec3 color = mix(vec3(1.0), tone, c) * (1.0 - 0.5 * shade) * (1.0 - g);
+  gl_FragColor = vec4(color, 1.0);
+}`;
+
+/** Camada do talho sobre o tampo (multiplica a madeira). `direct`: a arte já vem num tom só (processo talhamento). */
+function Carving({ map, groove, w, h, z, direct }: { map: THREE.Texture; groove: THREE.Texture; w: number; h: number; z: number; direct: boolean }) {
+  const image = map.image as { width?: number; height?: number } | undefined;
+  const uniforms = useMemo(
+    () => ({
+      map: { value: map },
+      groove: { value: groove },
+      texel: { value: new THREE.Vector2(1 / (image?.width ?? 1024), 1 / (image?.height ?? 1024)) },
+      tone: { value: new THREE.Vector3(0.8, 0.7, 0.58) },
+    }),
+    [map, groove, image?.width, image?.height],
+  );
+  return (
+    <mesh position={[0, 0, z + 0.0012]}>
+      <planeGeometry args={[w, h]} />
+      {/* Como no LaserEngraving: textura nova pede material novo (o renderer guarda os uniforms). */}
+      <shaderMaterial
+        key={`${map.uuid}:${groove.uuid}:${direct}`}
+        uniforms={uniforms}
+        vertexShader={BURN_VERTEX}
+        fragmentShader={direct ? `#define ENGRAVE_DIRECT\n${CARVE_FRAGMENT}` : CARVE_FRAGMENT}
+        transparent
+        depthWrite={false}
+        blending={THREE.MultiplyBlending}
+        premultipliedAlpha
+        polygonOffset
+        polygonOffsetFactor={-2}
+      />
+    </mesh>
+  );
+}
+
+/**
+ * Tábua talhada na fresa (139/140): pinus maciço sem furo, contorno de cada tábua (a de carne com os cantos da
+ * esquerda redondos), canal de suco em volta aberto no canto de baixo à direita e a arte talhada em baixo-relevo
+ * sobre o tampo inteiro (texto e vetor: grava o que se destaca do fundo da arte).
+ */
+function CarvedBoard({ spec, art, label, showDims }: ModelProps) {
+  const W = spec.widthCm;
+  const H = spec.heightCm;
+  const s = cmScale(W, H);
+  const T = Math.min(3, Math.max(1.8, spec.depthCm));
+  const corners = useMemo(() => boardCorners(spec.variant === "meat", W, H), [spec.variant, W, H]);
+  const front = useArtTexture(artAspect(spec), "front", art, label);
+  const tauari = /\btauari\b/.test(spec.details ?? "");
+  const wood = useSurfaceTexture(tauari ? "wood" : "pine", 1, 1);
+  const board = useMemo(() => boardGeometry(corners.map((r) => r * s) as Corners, W * s, H * s, T * s, 0.45 * s), [corners, W, H, T, s]);
+  useGeometryCleanup(board);
+  const groove = useMemo(() => grooveTexture(W, H, corners), [W, H, corners]);
+  useEffect(() => () => groove.dispose(), [groove]);
+  const [lw, lh] = sizeLabels(spec);
+  return (
+    <group userData={{ view: { elevation: 0.7, azimuth: 0.35 } satisfies View }}>
+      <group rotation-x={FLAT}>
+        <mesh geometry={board}>
+          <meshPhysicalMaterial map={wood} bumpMap={wood} bumpScale={0.05} roughness={0.66} clearcoat={0.08} clearcoatRoughness={0.6} />
+        </mesh>
+        <Carving map={front} groove={groove} w={W * s} h={H * s} z={T * s} direct={engravesDirect(art)} />
+        {hasDims(spec, showDims) && <Dimensions w={W * s} h={H * s} z={T * s + 0.02} labelW={lw} labelH={lh} />}
+      </group>
+    </group>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // coaster: porta-copos, porta-jarra e sousplat
 // ---------------------------------------------------------------------------------------------
@@ -1021,6 +1235,129 @@ function Sousplat({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
+/** Capa de sousplat (cm, do gabarito da 138): costura em Ø35 (o tampo) e tecido até Ø40, que dobra por baixo. */
+const COVER = { seamR: 17.5, cutR: 20, disc: 0.5, fabric: 0.06, gathers: 56 };
+
+/**
+ * Casca de tecido da capa: tampo plano até a costura, borda boleada em volta do disco e a aba que entra por baixo,
+ * franzida pelo elástico. UV radial pelo comprimento do tecido (o círculo de Ø40 do gabarito): o que passa da costura
+ * é a parte da arte que vai para baixo. Montada em y para cima (sem o FLAT), topo da arte para o fundo.
+ */
+function coverShellGeometry() {
+  const { seamR, cutR, disc, fabric, gathers } = COVER;
+  const rho = disc / 2 + fabric;
+  type Ring = { r: number; y: number; s: number; under: number };
+  const rings: Ring[] = [];
+  for (let i = 0; i <= 24; i += 1) rings.push({ r: (seamR * i) / 24, y: rho, s: (seamR * i) / 24, under: 0 });
+  for (let i = 1; i <= 12; i += 1) {
+    const a = Math.PI / 2 - (Math.PI * i) / 12;
+    rings.push({ r: seamR + rho * Math.cos(a), y: rho * Math.sin(a), s: seamR + rho * (Math.PI / 2 - a), under: 0 });
+  }
+  const lipStart = seamR + rho * Math.PI;
+  const lip = cutR - lipStart;
+  for (let i = 1; i <= 10; i += 1) {
+    const k = i / 10;
+    rings.push({ r: seamR - lip * k, y: -rho - 0.05 * k, s: lipStart + lip * k, under: k });
+  }
+  const cols = 192;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  rings.forEach((ring) => {
+    for (let i = 0; i <= cols; i += 1) {
+      const phi = (i / cols) * Math.PI * 2;
+      // Franzido do elástico: o tecido sobra na volta menor e faz pregas que crescem até a bainha.
+      const pleat = ring.under * (0.5 + 0.5 * Math.sin(phi * gathers));
+      const r = ring.r + ring.under * 0.35 * Math.sin(phi * gathers + 1.1);
+      positions.push(r * Math.cos(phi), ring.y - pleat * 0.7, r * Math.sin(phi));
+      uvs.push(0.5 + (ring.s / (2 * cutR)) * Math.cos(phi), 0.5 - (ring.s / (2 * cutR)) * Math.sin(phi));
+    }
+  });
+  for (let j = 0; j < rings.length - 1; j += 1) {
+    for (let i = 0; i < cols; i += 1) {
+      const p = j * (cols + 1) + i;
+      const q = p + cols + 1;
+      indices.push(p, p + 1, q, p + 1, q + 1, q);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return { geometry, hemR: seamR - lip, hemY: -rho - 0.05 };
+}
+
+/** Capa sobre o disco do sousplat (y para cima, centro na origem do disco). */
+function CoveredSousplat({ shell, hem, front, weave }: { shell: { geometry: THREE.BufferGeometry; hemR: number; hemY: number }; hem: THREE.BufferGeometry; front: THREE.Texture; weave: THREE.Texture }) {
+  return (
+    <group>
+      <mesh>
+        <cylinderGeometry args={[COVER.seamR - 0.05, COVER.seamR - 0.05, COVER.disc, 96]} />
+        <meshStandardMaterial color="#ecebe7" roughness={0.7} />
+      </mesh>
+      <mesh geometry={shell.geometry}>
+        <meshPhysicalMaterial map={front} bumpMap={weave} bumpScale={0.25} roughness={0.82} sheen={0.45} sheenRoughness={0.5} sheenColor="#ffffff" side={THREE.DoubleSide} />
+      </mesh>
+      {/* Bainha com o elástico, fechando a aba por baixo. */}
+      <mesh geometry={hem} position-y={shell.hemY - 0.1} rotation-x={Math.PI / 2}>
+        <meshPhysicalMaterial map={front} roughness={0.85} sheen={0.4} sheenColor="#ffffff" />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Capa p/ Sousplat (138): Oxford sublimado esticado sobre o sousplat, a arte do círculo de Ø40 passando pela borda e
+ * indo até embaixo, onde o elástico franze o tecido. Uma capa de frente e outra virada atrás, mostrando o franzido
+ * (como na foto do produto).
+ */
+function SousplatCover({ spec, art, label, showDims }: ModelProps) {
+  const s = cmScale(2.25 * COVER.cutR, 2.25 * COVER.cutR);
+  const front = useArtTexture(1, "front", art, label);
+  const weave = useSurfaceTexture("weave", 40 / 0.7, 40 / 0.7);
+  const parts = useMemo(() => {
+    const shell = coverShellGeometry();
+    // Bainha: anel (tubo) na borda de dentro da aba, com a UV no fim do círculo da arte.
+    const hem = new THREE.TorusGeometry(shell.hemR, 0.22, 8, 160);
+    const uv = hem.getAttribute("uv");
+    for (let i = 0; i < uv.count; i += 1) {
+      const phi = uv.getX(i) * Math.PI * 2;
+      uv.setXY(i, 0.5 + 0.495 * Math.cos(phi), 0.5 - 0.495 * Math.sin(phi));
+    }
+    return { shell, hem };
+  }, []);
+  useEffect(
+    () => () => {
+      parts.shell.geometry.dispose();
+      parts.hem.dispose();
+    },
+    [parts],
+  );
+  const [lw, lh] = sizeLabels(spec);
+  // Altura do centro do disco: a de frente apoia nas pregas da aba; a virada, no tampo.
+  const lift = COVER.disc / 2 + COVER.fabric + 0.75;
+  const liftFlipped = COVER.disc / 2 + COVER.fabric + 0.01;
+  return (
+    <group userData={{ view: { elevation: 0.8, azimuth: 0.3 } satisfies View }}>
+      <group scale={s}>
+        <group position={[-13, lift, 10]} rotation-y={0.2}>
+          <CoveredSousplat shell={parts.shell} hem={parts.hem} front={front} weave={weave} />
+        </group>
+        {/* A outra, de cabeça para baixo: a aba franzida pelo elástico, com a arte até a bainha. */}
+        <group position={[15, liftFlipped, -14]} rotation={[Math.PI, -0.5, 0]}>
+          <CoveredSousplat shell={parts.shell} hem={parts.hem} front={front} weave={weave} />
+        </group>
+      </group>
+      {hasDims(spec, showDims) && (
+        <group position={[-13 * s, (lift + COVER.disc) * s, 10 * s]} rotation-x={FLAT}>
+          <Dimensions w={2 * COVER.seamR * s} h={2 * COVER.seamR * s} z={0.01} labelW={lw} labelH={lh} />
+        </group>
+      )}
+    </group>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Exportados
 // ---------------------------------------------------------------------------------------------
@@ -1029,11 +1366,12 @@ function Sousplat({ spec, art, label, showDims }: ModelProps) {
  * Peças planas de mesa e chão (kinds mat, rug e board), deitadas e vistas de cima (userData.view):
  * mouse pad com viés overlock e base de borracha ({gamer} com mouse), jogo americano com prato e talheres
  * ({placemat}), tapete de pelúcia com base de borracha, capacho de vinil em espiral ({doormat}) e tábua
- * de madeira com veios procedurais e furo, com painel sublimado ou gravação a laser ({laser}).
+ * de madeira com veios procedurais e furo, com painel sublimado ou gravação a laser ({laser}); com "Fresa" nas
+ * opções, tábua de pinus talhada em baixo-relevo com canal de suco ({meat}: cantos da esquerda redondos).
  */
 export function MatModel(props: ModelProps) {
   const { spec } = props;
-  if (spec.kind === "board") return <CuttingBoard {...props} />;
+  if (spec.kind === "board") return /\bfresa\b/.test(spec.details ?? "") ? <CarvedBoard {...props} /> : <CuttingBoard {...props} />;
   if (spec.kind === "rug") return spec.variant === "doormat" ? <Doormat {...props} /> : <Rug {...props} />;
   if (spec.variant === "placemat") return <Placemat {...props} />;
   return <MousePad {...props} />;
@@ -1041,11 +1379,12 @@ export function MatModel(props: ModelProps) {
 
 /**
  * Porta-copos: jogo de 4 com base de cortiça (um em destaque e três empilhados), porta-jarra emborrachado
- * com jarra de vidro ({pitcher}) e sousplat redondo com prato ({placemat}).
+ * com jarra de vidro ({pitcher}), sousplat redondo com prato ({placemat}) e capa de tecido com elástico ({cover}).
  */
 export function CoasterModel(props: ModelProps) {
   const { spec } = props;
   if (spec.variant === "pitcher") return <Trivet {...props} />;
+  if (spec.variant === "cover") return <SousplatCover {...props} />;
   if (spec.variant === "placemat") return <Sousplat {...props} />;
   return <CoasterSet {...props} />;
 }

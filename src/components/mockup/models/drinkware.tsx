@@ -7,7 +7,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { normalizeName, type MockupSpec } from "@/lib/mockup";
 import { useAnimate } from "../viewer-hooks";
 import { bandGeometry, metalColor, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
-import { UNIT, radiusOnProfile, smoothProfile, type Pt } from "./vessel";
+import { UNIT, radiusOnProfile, smoothProfile, useStudioReflection, type Pt } from "./vessel";
 
 /*
  * Canecas e xícaras em escala real (UNIT = cm → cena, de vessel.tsx). A arte é uma faixa com a largura
@@ -103,8 +103,11 @@ function v3(x: number, y: number, z = 0) {
   return new THREE.Vector3(x, y, z);
 }
 
-/** Alça em D do lado +x, com seção oval (mais larga em z, como a alça de cerâmica de verdade). */
-function classicHandle(r: number, bottom: number, top: number, reach: number, radius: number, widen: number) {
+/**
+ * Alça em D do lado +x, com seção oval (mais larga em z, como a alça de cerâmica de verdade). `rBottom`: raio da
+ * parede onde a ponta de baixo encosta (menor na caneca cônica).
+ */
+function classicHandle(r: number, bottom: number, top: number, reach: number, radius: number, widen: number, rBottom = r) {
   const span = top - bottom;
   const mid = (top + bottom) / 2;
   const curve = new THREE.CatmullRomCurve3(
@@ -114,8 +117,8 @@ function classicHandle(r: number, bottom: number, top: number, reach: number, ra
       v3(r + reach * 0.88, top - span * 0.06),
       v3(r + reach, mid + span * 0.12),
       v3(r + reach * 0.95, bottom + span * 0.22),
-      v3(r + reach * 0.62, bottom - span * 0.015),
-      v3(r - 0.03, bottom),
+      v3((r + rBottom) / 2 + reach * 0.62, bottom - span * 0.015),
+      v3(rBottom - 0.03, bottom),
     ],
     false,
     "centripetal",
@@ -270,24 +273,66 @@ function knockoutWhite(shader: { fragmentShader: string }) {
 
 const knockoutKey = () => "drinkware-knockout";
 
+/*
+ * Sublimação em cromado e em glitter: a tinta entra no verniz da peça e tinge o metal (ou os flocos), sem tinta
+ * branca. A cor da arte multiplica a do metal; onde a arte é branca ou transparente fica o metal puro, e o brilho
+ * (reflexo, flocos) continua por baixo da tinta, como nas fotos do produto.
+ */
+const TINT_CHUNK = /* glsl */ `
+#ifdef USE_MAP
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+  diffuseColor.rgb *= mix( vec3( 1.0 ), sampledDiffuseColor.rgb, sampledDiffuseColor.a );
+#endif
+`;
+
+function tintMetal(shader: { fragmentShader: string }) {
+  shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", TINT_CHUNK);
+}
+
+const tintKey = () => "drinkware-tint";
+
 function Glaze({ color, side }: { color: string; side?: THREE.Side }) {
   return <meshPhysicalMaterial color={color} roughness={0.1} clearcoat={1} clearcoatRoughness={0.035} side={side ?? THREE.FrontSide} />;
 }
 
-function Chrome({ color }: { color: string }) {
-  return <meshPhysicalMaterial color={color} metalness={1} roughness={0.07} clearcoat={0.4} clearcoatRoughness={0.05} />;
+type MetalProps = { color: string; env: THREE.Texture; map?: THREE.Texture };
+
+/** Props da faixa de arte sobre metal: a textura, o tingimento e o deslocamento contra a parede de baixo. */
+function inkProps(map: THREE.Texture | undefined) {
+  if (!map) return {};
+  return { map, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, onBeforeCompile: tintMetal, customProgramCacheKey: tintKey };
 }
 
-function Glitter({ color, map }: { color: string; map: THREE.Texture | null }) {
+/** Cromado espelhado; com `map`, a arte sublimada tinge o metal (tintMetal). */
+function Chrome({ color, env, map }: MetalProps) {
+  return (
+    <meshPhysicalMaterial
+      color={color}
+      metalness={1}
+      roughness={0.06}
+      clearcoat={1}
+      clearcoatRoughness={0.04}
+      envMap={env}
+      envMapIntensity={1}
+      {...inkProps(map)}
+    />
+  );
+}
+
+/** Glitter: flocos metálicos (normal map) sob verniz; com `map`, a arte tinge os flocos e eles seguem brilhando. */
+function Glitter({ color, normal, env, map }: MetalProps & { normal: THREE.Texture | null }) {
   return (
     <meshPhysicalMaterial
       color={color}
       metalness={0.85}
       roughness={0.3}
-      normalMap={map}
+      normalMap={normal}
       normalScale={[0.9, 0.9]}
       clearcoat={1}
       clearcoatRoughness={0.03}
+      envMap={env}
+      envMapIntensity={0.85}
+      {...inkProps(map)}
     />
   );
 }
@@ -424,6 +469,8 @@ function CeramicMug({ spec, art, label }: ModelProps) {
   const { magic, chrome, glitter, glitterBase } = look;
   const handleStyle = spec.variant === "heart-handle" ? "heart" : "classic";
   const spoon = spec.variant === "spoon";
+  // A caneca de colher é cônica (fotos da 404): a base tem 82% do diâmetro da boca e o pé é boleado largo.
+  const taper = spoon ? 0.82 : 1;
 
   const parts = useMemo(() => {
     const { r, h } = mugSize(spec.widthCm, spec.heightCm);
@@ -431,37 +478,69 @@ function CeramicMug({ spec, art, label }: ModelProps) {
     const floor = 0.1;
     const edge = 0.065;
     const lip = 0.018;
+    const rb = r * taper;
     // Pé sem esmalte, corpo com quina arredondada e lábio boleado; o interior começa no topo do lábio.
-    const foot: Pt[] = [[0, 0.022], [r - 0.15, 0.022], [r - 0.12, 0.006], [r - 0.1, 0], [r - edge, 0]];
-    const wall: Pt[] = [...arc(r - edge, edge, edge, -Math.PI / 2, 0, 10), [r, h - lip], ...arc(r - lip, h - lip, lip, 0, Math.PI / 2, 6)];
-    const inner: Pt[] = [[r - lip, h], ...arc(r - t + lip, h - lip, lip, Math.PI / 2, Math.PI, 6), [r - t, floor + 0.12], ...arc(r - t - 0.12, floor + 0.12, 0.12, 0, -Math.PI / 2, 10), [0, floor]];
+    const foot: Pt[] = [[0, 0.022], [rb - 0.15, 0.022], [rb - 0.12, 0.006], [rb - 0.1, 0], [rb - edge, 0]];
+    const rim = arc(r - lip, h - lip, lip, 0, Math.PI / 2, 6);
+    const wall: Pt[] =
+      taper === 1
+        ? [...arc(r - edge, edge, edge, -Math.PI / 2, 0, 10), [r, h - lip], ...rim]
+        : [
+            ...smoothProfile(
+              [[rb - edge, 0], [rb - edge * 0.25, edge * 0.35], [rb + (r - rb) * 0.1, edge * 1.6], [rb + (r - rb) * 0.42, h * 0.33], [rb + (r - rb) * 0.76, h * 0.66], [r, h - lip]],
+              40,
+            ),
+            ...rim.slice(1),
+          ];
+    // Raio da parede externa numa altura (constante na caneca reta).
+    const wallAt = (y: number) => (taper === 1 ? r : radiusOnProfile(wall, Math.min(y, h - lip)));
+    const innerWall: Pt[] =
+      taper === 1
+        ? [[r - t, floor + 0.12]]
+        : Array.from({ length: 12 }, (_, i): Pt => {
+            const y = h - lip - ((h - lip - floor - 0.12) * (i + 1)) / 12;
+            return [wallAt(y) - t, y];
+          });
+    const innerFloorR = innerWall[innerWall.length - 1][0];
+    const inner: Pt[] = [[r - lip, h], ...arc(r - t + lip, h - lip, lip, Math.PI / 2, Math.PI, 6), ...innerWall, ...arc(innerFloorR - 0.12, floor + 0.12, 0.12, 0, -Math.PI / 2, 10), [0, floor]];
     const baseH = glitterBase ? 1.7 * UNIT : 0;
     const split = baseH ? splitAt(wall, baseH) : null;
     const lowerPts = split ? split[0] : null;
     const upperPts = split ? split[1] : wall;
-    const bandLo = split ? baseH + 0.045 : 0.08;
+    const bandLo = split ? baseH + 0.045 : taper === 1 ? 0.08 : 0.16;
     const bandHi = h - 0.05;
+    const bandCenter = (bandLo + bandHi) / 2;
     const bandR = r + 0.0015;
-    const fit = fitBand(spec.widthCm, spec.heightCm, bandR * (Math.PI * 2 - HANDLE_GAP), bandHi - bandLo);
+    const fit = fitBand(spec.widthCm, spec.heightCm, (wallAt(bandLo) + 0.0015) * (Math.PI * 2 - HANDLE_GAP), bandHi - bandLo);
     return {
       r,
       h,
+      wallAt,
       foot: latheArc(foot),
       lower: lowerPts ? latheArc(lowerPts) : null,
       upper: latheArc(upperPts),
       inner: latheArc(inner),
-      band: bandGeometry({ radiusTop: bandR, radiusBottom: bandR, height: fit.height, width: fit.width, segments: 160, rows: 4 }),
-      bandCenter: (bandLo + bandHi) / 2,
+      band: bandGeometry({
+        radiusTop: bandR,
+        radiusBottom: bandR,
+        height: fit.height,
+        width: fit.width,
+        segments: 160,
+        rows: taper === 1 ? 4 : 16,
+        radiusAt: taper === 1 ? undefined : (y) => wallAt(bandCenter + y) + 0.0015,
+      }),
+      bandCenter,
+      bandSize: fit,
       glitterLength: profileLength(lowerPts ?? upperPts),
     };
-  }, [spec.widthCm, spec.heightCm, glitterBase]);
+  }, [spec.widthCm, spec.heightCm, glitterBase, taper]);
   useGeometryCleanup(parts.foot);
   useGeometryCleanup(parts.lower);
   useGeometryCleanup(parts.upper);
   useGeometryCleanup(parts.inner);
   useGeometryCleanup(parts.band);
 
-  const { r, h } = parts;
+  const { r, h, wallAt } = parts;
   const handleTop = h * 0.82;
   const handleBottom = h * 0.21;
   const reach = 0.4 * (h / 1.5);
@@ -471,8 +550,8 @@ function CeramicMug({ spec, art, label }: ModelProps) {
     () =>
       handleStyle === "heart"
         ? heartHandle(r, h * 0.5, 0.56, 0.74, 0.046, 1.35)
-        : classicHandle(r, handleBottom, handleTop, reach, handleRadius, widen),
-    [handleStyle, r, h, handleBottom, handleTop, reach],
+        : classicHandle(wallAt(handleTop), handleBottom, handleTop, reach, handleRadius, widen, wallAt(handleBottom)),
+    [handleStyle, r, h, handleBottom, handleTop, reach, wallAt],
   );
   useGeometryCleanup(handle);
   const nub = useMemo(() => new THREE.SphereGeometry(1, 20, 14), []);
@@ -482,17 +561,19 @@ function CeramicMug({ spec, art, label }: ModelProps) {
     if (!spec.glitter) return null;
     const body = glitterNormalMap(Math.round((Math.PI * 2 * r) / GLITTER_TILE), parts.glitterLength / GLITTER_TILE);
     const grip = glitterNormalMap(3, 1);
-    return { body, grip };
-  }, [spec.glitter, r, parts.glitterLength]);
+    // Faixa da arte: mesma densidade de flocos da parede, para a tinta não "alisar" o glitter.
+    const band = glitterNormalMap(parts.bandSize.width / GLITTER_TILE, parts.bandSize.height / GLITTER_TILE);
+    return { body, grip, band };
+  }, [spec.glitter, r, parts.glitterLength, parts.bandSize]);
   useEffect(() => () => {
     glitterMaps?.body.dispose();
     glitterMaps?.grip.dispose();
+    glitterMaps?.band.dispose();
   }, [glitterMaps]);
+  const studio = useStudioReflection();
 
   const reveal = useMemo(() => (magic ? revealMask() : null), [magic]);
   useEffect(() => () => reveal?.dispose(), [reveal]);
-
-  const inkTint = useMemo(() => (chrome ? `#${new THREE.Color(metalColor(spec.metal)).lerp(new THREE.Color("#ffffff"), 0.55).getHexString()}` : "#ffffff"), [chrome, spec.metal]);
 
   // Caneca mágica: o calor sobe e desce devagar, revelando e escondendo a arte.
   const bandMaterial = useRef<THREE.MeshPhysicalMaterial>(null);
@@ -518,12 +599,25 @@ function CeramicMug({ spec, art, label }: ModelProps) {
 
   const bodyColor = chrome || (glitter && spec.metal !== "none") ? metalColor(spec.metal) : spec.baseColor;
   const innerColor = glitterBase ? spec.baseColor : spec.innerColor;
-  // Alça colorida só nas canecas "alça e interior coloridos" / alça coração; a de colher tem alça branca.
-  const accent = !spec.glitter && !chrome && !spoon && spec.accentColor ? spec.accentColor : null;
+  // Alça colorida nas canecas "alça e interior coloridos", na alça coração e na de colher (alça, colher e interior
+  // na mesma cor, como nas fotos da 404).
+  const accent = !spec.glitter && !chrome && spec.accentColor ? spec.accentColor : null;
   const handleColor = accent ?? bodyColor;
 
-  const bodyMaterial = chrome ? <Chrome color={bodyColor} /> : glitter ? <Glitter color={bodyColor} map={glitterMaps?.body ?? null} /> : <Glaze color={bodyColor} />;
-  const handleMaterial = chrome ? <Chrome color={bodyColor} /> : glitter ? <Glitter color={bodyColor} map={glitterMaps?.grip ?? null} /> : <Glaze color={handleColor} />;
+  const bodyMaterial = chrome ? (
+    <Chrome color={bodyColor} env={studio} />
+  ) : glitter ? (
+    <Glitter color={bodyColor} normal={glitterMaps?.body ?? null} env={studio} />
+  ) : (
+    <Glaze color={bodyColor} />
+  );
+  const handleMaterial = chrome ? (
+    <Chrome color={bodyColor} env={studio} />
+  ) : glitter ? (
+    <Glitter color={bodyColor} normal={glitterMaps?.grip ?? null} env={studio} />
+  ) : (
+    <Glaze color={handleColor} />
+  );
 
   let ink = <InkGlaze map={texture} />;
   if (magic) {
@@ -543,23 +637,9 @@ function CeramicMug({ spec, art, label }: ModelProps) {
       />
     );
   } else if (chrome) {
-    ink = (
-      <meshPhysicalMaterial
-        map={texture}
-        color={inkTint}
-        metalness={0.5}
-        roughness={0.18}
-        clearcoat={1}
-        clearcoatRoughness={0.04}
-        transparent
-        depthWrite={false}
-        polygonOffset
-        polygonOffsetFactor={-2}
-        polygonOffsetUnits={-2}
-        onBeforeCompile={knockoutWhite}
-        customProgramCacheKey={knockoutKey}
-      />
-    );
+    ink = <Chrome color={bodyColor} env={studio} map={texture} />;
+  } else if (glitter) {
+    ink = <Glitter color={bodyColor} normal={glitterMaps?.band ?? null} env={studio} map={texture} />;
   }
 
   return (
@@ -569,7 +649,7 @@ function CeramicMug({ spec, art, label }: ModelProps) {
       </mesh>
       {parts.lower && (
         <mesh geometry={parts.lower}>
-          <Glitter color={spec.accentColor ?? bodyColor} map={glitterMaps?.body ?? null} />
+          <Glitter color={spec.accentColor ?? bodyColor} normal={glitterMaps?.body ?? null} env={studio} />
         </mesh>
       )}
       <mesh geometry={parts.upper}>{bodyMaterial}</mesh>
@@ -584,7 +664,7 @@ function CeramicMug({ spec, art, label }: ModelProps) {
         <mesh geometry={handle}>{handleMaterial}</mesh>
         {handleStyle === "classic" &&
           [handleTop, handleBottom].map((y) => (
-            <mesh key={y} geometry={nub} position={[r - 0.004, y, 0]} scale={[0.03, handleRadius * 1.3, handleRadius * widen * 1.2]}>
+            <mesh key={y} geometry={nub} position={[wallAt(y) - 0.004, y, 0]} scale={[0.03, handleRadius * 1.3, handleRadius * widen * 1.2]}>
               {handleMaterial}
             </mesh>
           ))}
