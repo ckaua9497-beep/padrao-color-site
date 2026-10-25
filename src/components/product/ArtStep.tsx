@@ -26,6 +26,7 @@ import {
   sourceOf,
   styleOf,
   surfaceArt,
+  withMono,
   withSurfaceArt,
   type ArtFamily,
   type ArtRender,
@@ -51,6 +52,7 @@ import { ART_ACCEPT } from "@/lib/image-prep";
 import { uploadProblem } from "@/lib/art-files";
 import { ARQUIVO_UNICO, camposVisiveis } from "@/lib/customizacao";
 import type { Superficie } from "@/lib/superficies";
+import { PROCESSO_INFO, acceptDo, corServe, monoDo, type Processo } from "@/lib/processo";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
@@ -103,6 +105,11 @@ type Props = {
    * abas, lados…). Sem a lista, vale a regra antiga: frente e verso nas peças de duas faces e no gabarito com verso.
    */
   surfaces?: readonly Superficie[];
+  /**
+   * Processo que limita a arte (src/lib/processo.ts): P&B só em cinza, laser e talhamento num tom só (e talhamento só
+   * vetor), DTF sem fundo. Mostra o aviso e filtra as cores, o fundo e os arquivos aceitos.
+   */
+  processo?: Processo | null;
   /** Superfície em edição ("front", "back" ou o id da extra): a página vira o mockup 3D para ela. */
   onSide?: (side: string) => void;
   /** Gabarito oficial da seleção (medidas, sangria, corte e segurança): o editor e o PDF seguem ele. */
@@ -142,7 +149,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -162,6 +169,12 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
   // Superfície ainda vazia: mesmo estilo, fonte e cores da frente (identidade estável para o editor).
   const sideArt = useMemo(() => surfaceArt(art, side), [side, art]);
+  // Processo: a prévia (estilos, editor, gabarito) já sai em cinza ou num tom só; a arte guardada fica sem ele.
+  const mono = monoDo(processo);
+  const shownArt = useMemo(() => (mono ? { ...sideArt, mono } : sideArt), [sideArt, mono]);
+  const shownAll = useMemo(() => withMono(art, mono), [art, mono]);
+  // Laser, talhamento e DTF não imprimem fundo.
+  const noBackground = processo === "laser" || processo === "talhamento" || processo === "dtf";
   const onSideArt = (update: (a: ArtSettings) => ArtSettings) => onArt((a) => withSurfaceArt(a, side, update));
   const mode: Mode = uploadOnly ? "imagem" : (modes[side] ?? (sideArt.src ? "imagem" : "texto"));
   const setMode = (value: Mode) => setModes((m) => ({ ...m, [side]: value }));
@@ -299,6 +312,12 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
         </p>
       )}
 
+      {processo && (
+        <p role="note" className="mb-3 rounded-control bg-mist px-3 py-2 text-caption text-ink">
+          <strong>{PROCESSO_INFO[processo].titulo}.</strong> {PROCESSO_INFO[processo].texto}
+        </p>
+      )}
+
       {thermal && (
         <p className="mb-3 rounded-control bg-cyan-50 px-3 py-2 text-caption font-semibold text-ink">
           Área personalizável: 60% da garrafa (frente e laterais). A parte de trás fica na cor da garrafa.
@@ -388,7 +407,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
                 <span className="text-caption font-normal text-muted">{styleInfo.hint}</span>
               </p>
               <StylePicker
-                art={sideArt}
+                art={shownArt}
                 family={family}
                 kind={pieceKind}
                 aspect={editorAspect}
@@ -450,7 +469,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
               />
             </div>
 
-            {!neon && !apparel && (
+            {!neon && !apparel && !noBackground && (
               <div>
                 <p className="mb-2 text-[15px] font-bold">
                   Fundo <span className="font-normal text-muted">· {ART_BACKGROUNDS.find((b) => b.value === sideArt.background)?.label ?? "Personalizado"}</span>
@@ -467,7 +486,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
                       return { ...a, background, textColor };
                     })
                   }
-                  options={ART_BACKGROUNDS.map((b) => ({ value: b.value, label: b.label, color: b.value }))}
+                  options={ART_BACKGROUNDS.filter((b) => corServe(processo, b.value)).map((b) => ({ value: b.value, label: b.label, color: b.value }))}
                 />
               </div>
             )}
@@ -482,7 +501,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
                   variant="swatch"
                   value={sideArt.textColor}
                   onChange={(textColor) => onSideArt((a) => ({ ...a, textColor }))}
-                  options={TEXT_COLORS.map((c) => ({ value: c.value, label: c.label, color: c.value }))}
+                  options={TEXT_COLORS.filter((c) => corServe(processo, c.value)).map((c) => ({ value: c.value, label: c.label, color: c.value }))}
                 />
                 {apparel && <p className="mt-2 text-caption text-muted">A estampa sai sem fundo: escolha uma cor que contraste com o tecido.</p>}
                 {lowContrast && (
@@ -499,15 +518,15 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
           </div>
         ) : (
           <ImagePanel
-            art={sideArt}
+            art={shownArt}
             onArt={onSideArt}
             name={upload.name}
             error={upload.error}
             busy={upload.busy}
             onFile={upload.onFile}
-            accept={upload.accept}
-            hint={upload.hint}
-            canChooseBackground={!neon && !apparel}
+            accept={acceptDo(processo) ?? upload.accept}
+            hint={processo === "talhamento" ? "SVG, PDF, AI, CDR ou EPS (vetor) · ou arraste aqui" : upload.hint}
+            canChooseBackground={!neon && !apparel && !noBackground}
             removable={!isFront}
             styleName={styleInfo.label}
             report={fitReport(sideArt, sideFit)}
@@ -518,7 +537,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
         <div className="border-t border-line pt-5">
           <ArtEditor2D
-            art={sideArt}
+            art={shownArt}
             onArt={onSideArt}
             kind={pieceKind}
             family={family}
@@ -538,7 +557,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
         {gabarito && !blank && (
           <div className="border-t border-line pt-5">
-            <GabaritoPanel gabarito={gabarito} art={art} side={side} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
+            <GabaritoPanel gabarito={gabarito} art={shownAll} side={side} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
           </div>
         )}
       </div>

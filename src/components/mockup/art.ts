@@ -40,6 +40,12 @@ export type ArtSettings = {
    * superfície aqui, a peça sai na cor do fundo (como antes).
    */
   faces?: Record<string, ArtSettings> | null;
+  /**
+   * Processo que limita a cor (src/lib/processo.ts): "gray" = impressão P&B (tons de cinza); "black" = um tom só, na
+   * gravação a laser e no talhamento (o escuro vira a gravação, o claro some). Aplicado no fim do paintArt: vale igual no
+   * 3D, no editor e no PDF.
+   */
+  mono?: "gray" | "black" | null;
   /** Cores de LED escolhidas pelo cliente no neon (sobrepõem a cor da opção do produto). */
   ledColors?: string[] | null;
   /** Chinelo: região personalizada ("inteira", "dedos", "meio", "calcanhar"). */
@@ -146,6 +152,13 @@ export function surfaceArt(art: ArtSettings, id: string): ArtSettings {
   if (id === "front") return art;
   const own = id === "back" ? art.back : art.faces?.[id];
   return { ...(own ?? blankBack(art)), back: null, faces: null };
+}
+
+/** A arte com o processo (`mono`) em todas as superfícies, para pintar (a arte guardada fica sem ele). */
+export function withMono<T extends ArtSettings>(art: T, mono: ArtSettings["mono"]): T {
+  if (!mono) return art;
+  const faces = art.faces ? Object.fromEntries(Object.entries(art.faces).map(([id, face]) => [id, { ...face, mono }])) : art.faces;
+  return { ...art, mono, ...(art.back ? { back: { ...art.back, mono } } : {}), ...(faces ? { faces } : {}) };
 }
 
 /** A arte com a superfície `id` trocada pelo resultado de `update`. */
@@ -2759,11 +2772,21 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
   } else {
     paintArea(ctx, w, h, art, image, label, info);
   }
-  if (variant === "gray") {
+  if (variant === "gray" || art.mono === "gray") {
     const data = ctx.getImageData(0, 0, w, h);
     for (let i = 0; i < data.data.length; i += 4) {
       const lum = data.data[i] * 0.299 + data.data[i + 1] * 0.587 + data.data[i + 2] * 0.114;
       data.data[i] = data.data[i + 1] = data.data[i + 2] = lum;
+    }
+    ctx.putImageData(data, 0, 0);
+  } else if (art.mono === "black") {
+    // Um tom só (laser, talhamento): o que é escuro vira a gravação em preto; o claro (e o fundo) some.
+    const data = ctx.getImageData(0, 0, w, h);
+    for (let i = 0; i < data.data.length; i += 4) {
+      const lum = data.data[i] * 0.299 + data.data[i + 1] * 0.587 + data.data[i + 2] * 0.114;
+      const ink = lum < 150 && data.data[i + 3] > 40;
+      data.data[i] = data.data[i + 1] = data.data[i + 2] = 0;
+      data.data[i + 3] = ink ? 255 : 0;
     }
     ctx.putImageData(data, 0, 0);
   }

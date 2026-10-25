@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "r
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, neonTextBox, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, neonTextBox, withMono, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { keepArtFiles, uploadedFileOf } from "./art-source";
@@ -28,6 +28,8 @@ import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
 import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
 import { formatSize, mockupSpec, normalizeName } from "@/lib/mockup";
 import { rotulosDosLados, superficieDaPeca, superficiesDe, temVerso } from "@/lib/superficies";
+import { PROCESSO_INFO, arquivoServe, monoDo, processoDa } from "@/lib/processo";
+import { orientacaoDe, orientacaoLivre, orientar, type Orientacao } from "@/lib/orientacao";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
 import { describePanel, hasBackPanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, piecesOf, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
 import {
@@ -168,6 +170,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   // Lado da arte em edição (camisa, almofada, cama pet): o mockup 3D vira para ele.
   // Superfície em edição: "front", "back" ou o id da extra (miolo, lâmina, aba…). O 3D vira ou abre nela.
   const [artSide, setArtSide] = useState("front");
+  // Orientação escolhida (crachá, canvas e banners de medida definida); null = a da opção.
+  const [orientation, setOrientation] = useState<Orientacao | null>(null);
   const [counts, setCounts] = useState<SizeCounts>(() => initialCounts(product));
   const [speed, setSpeed] = useState<Speed>("economico");
   // Depois de uma tentativa de compra, medida e grade mostram todos os erros (inclusive campo vazio).
@@ -248,12 +252,20 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       setSize({ width: String(w), height: String(h) });
     }
   }
-  const spec = useMemo(() => {
-    if (!measured || !modelWidth || !modelHeight) return baseSpec;
+  // Horizontal ou vertical (revisão da Padrão de 25/10/2026): a peça gira no 3D e o gabarito acompanha a proporção.
+  // Formato quadrado (canvas 25x25) não tem o que girar.
+  const canOrient =
+    baseSpec.widthCm !== baseSpec.heightCm &&
+    orientacaoLivre({ kind: baseSpec.kind, variant: baseSpec.variant, name: normalizeName(product.name), medidaLivre: measured, options: product.options });
+  const naturalOrientation = orientacaoDe(baseSpec.widthCm, baseSpec.heightCm);
+  // Sem useMemo: o React Compiler memoriza.
+  const spec = (() => {
+    const oriented = canOrient ? orientar(baseSpec, orientation) : baseSpec;
+    if (!measured || !modelWidth || !modelHeight) return oriented === baseSpec ? baseSpec : { ...oriented, label: formatSize(oriented.widthCm, oriented.heightCm) };
     const w = Math.min(modelWidth, MAX_MODEL_CM);
     const h = Math.min(modelHeight, MAX_MODEL_CM);
     return { ...baseSpec, widthCm: w, heightCm: h, label: formatSize(w, h) };
-  }, [baseSpec, measured, modelWidth, modelHeight]);
+  })();
   const family = artFamily(spec.kind);
 
   // Customização da variação escolhida: sem personalização e neon de modelo pronto não recebem arte (a do editor é
@@ -277,6 +289,13 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const fitArea = fitAreaFor(spec);
   const transparentBase = fitArea.transparentBase;
 
+  // Processo que limita a arte (P&B, laser, talhamento, DTF): a prévia, o 3D e o PDF saem como a produção faz.
+  const processo = semArte ? null : processoDa({ kind: spec.kind, name: normalizeName(product.name), selection });
+  const renderArt = useMemo(() => {
+    const painted = withMono(art, monoDo(processo));
+    // DTF: a imagem vai sem o retângulo de fundo (aplicação localizada).
+    return processo === "dtf" ? { ...painted, background: "rgba(0,0,0,0)" } : painted;
+  }, [art, processo]);
   // Verso pela cor e pelo tipo de peça (4/1, 4/4, "frente e verso", camisa, almofada, wind banner…), com ou sem gabarito.
   const versoPelaCor = !semArte && temVerso({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name), selection, anexos: custom.anexos });
   // Gabarito oficial da seleção: folhas (no tamanho de referência, nas camisas), painel da frente e do verso.
@@ -431,6 +450,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     ...(area ? [["Medida", `${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm`] as [string, string]] : []),
     ...(apparel ? [["Tamanhos", sizeSummary(sizes, counts) || "nenhum"] as [string, string]] : []),
     ...(finishQuote.itens.length ? [["Acabamentos", resumoAcabamentos(finishQuote.itens)] as [string, string]] : []),
+    ...(processo ? [["Processo", PROCESSO_INFO[processo].titulo] as [string, string]] : []),
+    ...(canOrient ? [["Orientação", (orientation ?? naturalOrientation) === "vertical" ? "Vertical" : "Horizontal"] as [string, string]] : []),
     ...(expressAvailable ? [["Prazo", `${expressChosen ? "Expresso" : "Econômico"}${leadDays ? ` · ${daysText(leadDays)}` : ""}`] as [string, string]] : []),
   ];
   const avisos = avisosDoProduto(product.groupId);
@@ -465,6 +486,10 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // Grande demais: avisa sem cancelar um envio que ainda está em andamento.
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
       setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.`);
+      return;
+    }
+    if (!arquivoServe(processo, file.name)) {
+      setUploadError("Para o talhamento na madeira, envie arte vetorial (SVG, PDF, AI, CDR ou EPS) ou escreva o texto.");
       return;
     }
     const seq = ++uploadSeq.current;
@@ -544,7 +569,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     if (gabarito && !artLater && ownArt && !singleFile) {
       try {
         const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
-        const sheets = printSheets(gabarito, art);
+        const sheets = printSheets(gabarito, renderArt);
         const blob = await buildPrintPdf(sheets, { title: `${product.name} — arte no gabarito`, variant: family === "neon" ? "neon" : "front", label: product.name, transparent: gabarito.transparent });
         const id = crypto.randomUUID();
         const name = printFileName(product.slug);
@@ -637,7 +662,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               )}
             </div>
           ) : (
-            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={shownSide === "back" ? "back" : "front"} face={shownSide !== "front" && shownSide !== "back" ? shownSide : null} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
+            <Mockup3D spec={spec} art={renderArt} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={shownSide === "back" ? "back" : "front"} face={shownSide !== "front" && shownSide !== "back" ? shownSide : null} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
           )
         ) : (
           <div className="flex gap-3 lg:mx-auto lg:w-[min(100%,calc(var(--lado)+4.75rem))]">
@@ -754,6 +779,23 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             <AcabamentosStep step={finishStep} total={totalSteps} disponiveis={finishes} escolhidos={chosenFinishes} onChange={setFinishing} unidades={pieces} />
           )}
 
+          {canOrient && !semArte && (
+            <li>
+              <p className="mb-2.5 text-[15px] font-bold">
+                Orientação da arte <span className="text-caption font-normal text-muted">· na horizontal ou na vertical, como preferir</span>
+              </p>
+              <OptionGroup
+                label="Orientação da arte"
+                value={orientation ?? naturalOrientation}
+                onChange={(value) => setOrientation(value === "vertical" ? "vertical" : "horizontal")}
+                options={[
+                  { value: "horizontal", label: "Horizontal" },
+                  { value: "vertical", label: "Vertical" },
+                ]}
+              />
+            </li>
+          )}
+
           {/* Variação sem personalização (produto liso, neon pronto): sem configuração de arte. */}
           {!semArte && (
             <ArtStep
@@ -761,6 +803,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               family={family}
               spec={spec}
               surfaces={surfaces}
+              processo={processo}
               onSide={setArtSide}
               extraTypes={producao}
               extraFiles={extraFiles}
@@ -851,7 +894,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
           onAdd={addToCart}
           adding={adding}
           spec={spec}
-          art={art}
+          art={renderArt}
           name={product.name}
           fallbackImage={product.image}
           captureRef={captureRef}
