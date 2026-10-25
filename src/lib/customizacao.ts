@@ -105,6 +105,19 @@ export function customizacaoDa(product: { customizacoes?: readonly Customizacao[
   return perfis[variation?.cz ?? 0] ?? perfis[0];
 }
 
+/**
+ * Preço da criação de arte de cada variação (ID → preço), para o carrinho e o servidor recalcularem o item; null quando
+ * nenhuma variação oferece (regra 5).
+ */
+export function criacaoPorVariacao(product: { customizacoes?: readonly Customizacao[] | null; variations: readonly { id?: number; cz?: number }[] }): Record<string, number> | null {
+  const entries: [string, number][] = [];
+  for (const variation of product.variations) {
+    const c = customizacaoDa(product, variation);
+    if (variation.id !== undefined && recebeArte(c) && c.criacao) entries.push([String(variation.id), c.criacao]);
+  }
+  return entries.length ? Object.fromEntries(entries) : null;
+}
+
 /** A variação recebe arte do cliente (arquivo, texto ou neon personalizado)? */
 export const recebeArte = (c: Customizacao) => c.modo !== "nenhuma" && c.modo !== "neon-modelo";
 
@@ -115,14 +128,18 @@ export const ARQUIVO_UNICO = "Arquivo Único";
 
 /**
  * Campos de "Arquivos para a produção" da variação (revisão da Padrão de 25/10/2026, "Anexo de Arquivos"): o "Arquivo
- * Único" (sempre, primeiro) e os separados que a API dispara em `tipos_anexo` (Impressão Frente/Verso, verniz, faca,
- * máscara de branco, capa, miolo, posição do LED). Variação que só aceita o arquivo único não tem o bloco: a arte do
- * editor já é ele.
+ * Único" (sempre, primeiro, mesmo na variação que só aceita ele) e os separados que a API dispara em `tipos_anexo`
+ * (Impressão Frente/Verso, verniz, faca, máscara de branco, capa, miolo, posição do LED). São a opção principal do
+ * "Enviar sua arte" (pedido de 25/10: os arquivos de produção vêm antes da arte montada no site).
  */
 export function anexosDeProducao(c: Customizacao): string[] {
   if (!recebeArte(c)) return [];
-  const separados = c.anexos.filter((nome) => nome !== ARQUIVO_UNICO);
-  return separados.length ? [ARQUIVO_UNICO, ...separados] : [];
+  return [ARQUIVO_UNICO, ...c.anexos.filter((nome) => nome !== ARQUIVO_UNICO)];
+}
+
+/** Os arquivos enviados cobrem a frente (arquivo único ou "Impressão Frente"): a arte montada no site não vai. */
+export function frenteEnviada(enviados: Readonly<Record<string, unknown>>): boolean {
+  return Boolean(enviados[ARQUIVO_UNICO] || enviados["Impressão Frente"]);
 }
 
 /**

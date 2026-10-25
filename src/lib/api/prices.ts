@@ -7,6 +7,7 @@ import { NEON_MIN_AREA_M2 } from "../pricing";
 import { applyResellerDiscount, resellerDiscountRate, variationsFromApi, type ResellerAccount } from "../reseller";
 import { ApiError } from "./client";
 import { getProdutos } from "./padrao";
+import { criacaoPorVariacao } from "../customizacao";
 
 /*
  * Preços por cliente no servidor (GET /api/precos e POST /api/pedidos).
@@ -34,6 +35,8 @@ export type GroupPrices = {
   maxQty: number;
   /** Acabamentos extras (catálogo): a tabela e os índices de cada variação; null quando o produto não tem. */
   acabamentos: LinePrices["acabamentos"];
+  /** Preço da criação de arte por variação (catálogo); null quando nenhuma oferece. */
+  criacao: LinePrices["criacao"];
 };
 
 const TTL_MS = 10 * 60_000;
@@ -99,7 +102,16 @@ async function resellerTable(groupId: number, account: PriceAccount, cacheOnly =
 export async function groupPrices(groupId: number, account: PriceAccount | null, { cacheOnly = false, listagem = false } = {}): Promise<GroupPrices | null> {
   const product = await catalogProduct(groupId, { listagem });
   if (!product) return null;
-  const base = { groupId, category: product.category, customSize: product.customSize ?? null, neon: product.neon ?? null, local: product.source === "site", ...quantityLimits(product), acabamentos: productFinishes(product) };
+  const base = {
+    groupId,
+    category: product.category,
+    customSize: product.customSize ?? null,
+    neon: product.neon ?? null,
+    local: product.source === "site",
+    ...quantityLimits(product),
+    acabamentos: productFinishes(product),
+    criacao: criacaoPorVariacao(product),
+  };
   // Produto novo (API própria): não existe na API da Padrão, então não há tabela de revenda para buscar.
   if (!account?.reseller || base.local) return { ...base, reseller: false, variations: product.variations };
   const variations = await resellerTable(groupId, account, cacheOnly);

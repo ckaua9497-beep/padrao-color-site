@@ -51,13 +51,14 @@ import { fitToTemplate, madeForTemplate, type Gabarito } from "./gabarito/jobs";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { ART_ACCEPT } from "@/lib/image-prep";
 import { uploadProblem } from "@/lib/art-files";
-import { ARQUIVO_UNICO, camposVisiveis } from "@/lib/customizacao";
+import { frenteEnviada } from "@/lib/customizacao";
 import type { Superficie } from "@/lib/superficies";
-import { PROCESSO_INFO, acceptDo, corServe, monoDo, type Processo } from "@/lib/processo";
+import { PROCESSO_INFO, acceptDo, arquivoServe, corServe, monoDo, type Processo } from "@/lib/processo";
 import type { Contorno } from "@/lib/contorno";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
+import { CreationSummary, ProductionSummary, SendArtDialog, type ArtCreation, type ArtDetails } from "./SendArtDialog";
 
 type Props = {
   /** Grade de tamanhos e medidas da camisa (manequim proporcional). */
@@ -69,8 +70,9 @@ type Props = {
   /** Produto vendido sem impressão: a arte serve só para simular, não é exigida. */
   blank?: boolean;
   /**
-   * Campos de "Arquivos para a produção" da variação (anexosDeProducao: o arquivo único e os separados da API) e os já
-   * escolhidos, por tipo de anexo.
+   * Arquivos para a produção da variação (anexosDeProducao: o arquivo único e os separados da API) e os já escolhidos,
+   * por tipo de anexo. São a opção principal do "Enviar sua arte" (modal): com o arquivo único ou a "Impressão Frente",
+   * a arte montada no site não vai para a produção e o passo mostra só os arquivos. A página põe a frente no 3D.
    */
   extraTypes?: readonly string[];
   extraFiles?: Record<string, File>;
@@ -129,6 +131,15 @@ type Props = {
   onStylePick?: (style: ArtStyle) => void;
   /** Título no lugar do "Sua arte" padrão (a fachada usa o mesmo título numerado dos outros passos). */
   heading?: ReactNode;
+  /** Cabeçalho do "Selecione a arte": nome do produto e preço do item agora. */
+  itemName?: string;
+  priceLabel?: string | null;
+  /** Foto do mockup 3D da página com a arte (PNG sem fundo), para o modal destacar a arte no produto. */
+  snapMockup?: (() => string | null) | null;
+  /** Nome da arte e observação (vão no pedido: nome do trabalho e descrição). */
+  details?: ArtDetails | null;
+  /** Criação de arte pela equipe (preço da variação); null quando a variação não oferece. */
+  creation?: ArtCreation | null;
 };
 
 type Mode = "texto" | "imagem";
@@ -158,7 +169,45 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, automaticFiles = [], onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({
+  step,
+  family,
+  blank = false,
+  extraTypes = [],
+  extraFiles = {},
+  onExtraFile,
+  art,
+  onArt,
+  artName,
+  onFile,
+  uploadError,
+  uploading,
+  uploadOnly = false,
+  artLater = false,
+  onArtLater,
+  missing,
+  kind,
+  aspect,
+  ledColors,
+  label = "",
+  sizes,
+  sizeChart,
+  spec,
+  surfaces,
+  processo = null,
+  contorno = null,
+  automaticFiles = [],
+  onSide,
+  gabarito = null,
+  slug = "",
+  onStylePick,
+  heading,
+  itemName,
+  priceLabel = null,
+  snapMockup = null,
+  details = null,
+  creation = null,
+}: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -236,12 +285,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
   // Imagem do verso e das outras superfícies: lida aqui (a da frente vai pelo onFile da página, que também anexa o
   // PDF ao pedido). Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
+  // `quiet`: prévia de um arquivo de produção (o "Impressão Verso" no 3D); sem prévia, ele vai do mesmo jeito.
   const surfaceSeq = useRef(0);
-  const onBackFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
-    if (!file) return;
-    const target = side;
+  const loadSurface = async (target: string, file: File, { raw = false, quiet = false }: { raw?: boolean; quiet?: boolean } = {}) => {
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-      setSideUpload(target, (u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
+      if (!quiet) setSideUpload(target, (u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
       return;
     }
     const seq = ++surfaceSeq.current;
@@ -250,7 +298,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
     try {
       // Superfície no gabarito: arquivo feito nele entra como veio; os outros, encaixados nele. Sem gabarito, o
       // tratador encaixa na área do mockup.
-      const backSide = sideGabarito;
+      const backSide = target === "back" ? (gabarito?.back ?? null) : (gabarito?.faces?.[target] ?? null);
       const src = pdf
         ? (await (await import("./gabarito/pdf-artwork")).readPdfArtwork(file)).src
         : (
@@ -275,11 +323,38 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       setSideUpload(target, () => ({ name: file.name, error: null, busy: false }));
     } catch (error) {
       if (seq !== surfaceSeq.current) return;
+      if (quiet) {
+        setSideUpload(target, (u) => ({ ...u, busy: false }));
+        return;
+      }
       const message =
         error instanceof IntakeError ? error.message : pdf ? "Não conseguimos ler esse PDF. Tente exportar de novo ou envie PNG/JPG." : "Não conseguimos ler essa imagem. Tente PNG, JPG, WEBP ou SVG.";
       setSideUpload(target, (u) => ({ ...u, error: message, busy: false }));
     }
   };
+  const onBackFile = (file: File | undefined, options?: { raw?: boolean }) => {
+    if (file) void loadSurface(side, file, options);
+  };
+
+  // "Enviar sua arte": os arquivos de produção vêm primeiro (modal). O "Impressão Verso" aparece no verso do 3D; a
+  // frente (arquivo único ou "Impressão Frente") a página mostra.
+  const [sending, setSending] = useState(false);
+  const canSend = !blank && !artLater && extraTypes.length > 0 && Boolean(onExtraFile);
+  const sentFiles: Record<string, File> = canSend ? Object.fromEntries(extraTypes.filter((tipo) => extraFiles[tipo]).map((tipo) => [tipo, extraFiles[tipo]])) : {};
+  const anySent = Object.keys(sentFiles).length > 0;
+  // Criação pedida: a arte vem da equipe (os arquivos e a arte montada não vão).
+  const requested = canSend && creation?.request ? { ...creation, request: creation.request } : null;
+  const frontSent = !requested && frenteEnviada(sentFiles);
+  const pickProduction = (tipo: string, file: File | null) => {
+    onExtraFile?.(tipo, file);
+    if (tipo !== "Impressão Verso") return;
+    if (file) void loadSurface("back", file, { quiet: true });
+    else onArt((all) => withSurfaceArt(all, "back", (a) => ({ ...a, src: null, layout: a.layout?.text ? { text: a.layout.text } : null })));
+  };
+  const checkProduction = (file: File) =>
+    uploadProblem(file.name, file.size) ?? (arquivoServe(processo, file.name) ? null : "Para o talhamento na madeira, envie arte vetorial (SVG, PDF, AI, CDR ou EPS).");
+  const editorFront = frontSent ? null : art.src ? artName : hasArtContent(art) ? "texto" : null;
+  const editorBack = art.back?.src ? (uploads.back?.name ?? "imagem do verso") : hasArtContent(art.back) ? "texto" : null;
 
   // Imagem tratada (margem cortada ou fundo tirado): o cliente pode voltar ao arquivo como enviou.
   const source = sourceOf(sideArt.src);
@@ -355,6 +430,20 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
         </div>
       )}
 
+      {requested ? (
+        <CreationSummary creation={requested} onChange={() => setSending(true)} />
+      ) : frontSent ? (
+        <ProductionSummary
+          types={extraTypes}
+          files={sentFiles}
+          automatic={automaticFiles}
+          editorFront={editorFront}
+          editorBack={editorBack}
+          onChange={() => setSending(true)}
+          onClear={() => Object.keys(sentFiles).forEach((tipo) => pickProduction(tipo, null))}
+        />
+      ) : (
+        <>
       <div className="flex flex-wrap items-center gap-2">
         {list.length > 1 && list.length <= 3 && !list.some((s) => s.pagina) && (
           <SegmentedControl
@@ -381,10 +470,14 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
           <SegmentedControl
             label="Como montar a arte"
             value={mode}
-            onChange={setMode}
+            onChange={(value) => {
+              setMode(value);
+              // "Enviar sua arte" abre o envio com os arquivos de produção primeiro.
+              if (value === "imagem" && canSend && !sideArt.src) setSending(true);
+            }}
             options={[
               { value: "texto", label: "Escrever texto" },
-              { value: "imagem", label: "Enviar imagem" },
+              { value: "imagem", label: canSend ? "Enviar sua arte" : "Enviar imagem" },
             ]}
           />
         )}
@@ -532,8 +625,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             )}
             {neon && <p className="text-caption text-muted">O estilo muda a espessura do tubo, o brilho e os extras (moldura, sublinhado); as letras e as cores são suas.</p>}
           </div>
+        ) : canSend && !sideArt.src && !(isFront && artName) ? (
+          <SendArtCard onOpen={() => setSending(true)} />
         ) : (
           <ImagePanel
+            onProduction={canSend ? () => setSending(true) : null}
             art={shownArt}
             onArt={onSideArt}
             name={upload.name}
@@ -580,9 +676,49 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
       {spec?.spotVarnish && !blank && !neon && <VarnishPicker art={sideArt} onArt={onSideArt} sideLabel={list.length > 1 ? sideInfo.label : null} />}
 
+      {anySent && !requested && (
+        <ProductionSummary
+          types={extraTypes}
+          files={sentFiles}
+          automatic={automaticFiles}
+          editorFront={editorFront}
+          editorBack={editorBack}
+          onChange={() => setSending(true)}
+          onClear={() => Object.keys(sentFiles).forEach((tipo) => pickProduction(tipo, null))}
+        />
+      )}
+        </>
+      )}
+
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
 
-      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} automatic={automaticFiles} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
+      {canSend && (
+        <SendArtDialog
+          open={sending}
+          onClose={() => setSending(false)}
+          initialTab={requested ? "criar" : "enviar"}
+          productName={itemName ?? label}
+          priceLabel={priceLabel}
+          snapMockup={snapMockup}
+          previewKey={art.src || art.back?.src ? `${art.src ?? ""}|${art.back?.src ?? ""}` : ""}
+          previewImage={art.src}
+          details={details}
+          creation={creation}
+          types={extraTypes}
+          files={sentFiles}
+          onFile={pickProduction}
+          check={checkProduction}
+          automatic={automaticFiles}
+          editorFront={editorFront}
+          editorBack={editorBack}
+          editorAccept={acceptDo(processo) ?? upload.accept}
+          onEditorImage={(file) => {
+            setSending(false);
+            setMode("imagem");
+            upload.onFile(file);
+          }}
+        />
+      )}
 
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
@@ -603,15 +739,6 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   );
 }
 
-/** Arquivos prontos para a produção: PDF, imagens, PSD, AI, CDR, EPS e SVG (o servidor confere a extensão e o tamanho). */
-const PRODUCTION_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.svg,.tif,.tiff,.psd,.ai,.eps,.cdr,.zip,.rar";
-
-/**
- * "Arquivos para a produção" (revisão da Padrão de 25/10/2026, "Anexo de Arquivos"): para quem já tem a arte pronta.
- * Um arquivo único com todas as páginas ou um arquivo por parte (frente, verso, verniz, faca…), conforme a variação
- * aceita na API. Enviar o arquivo único esconde os separados e enviar um separado esconde o único (camposVisiveis). Sem
- * arquivo próprio na frente ou no verso, vale a imagem enviada no editor acima.
- */
 const VARNISH_OPTIONS: { value: Varnish; label: string }[] = [
   { value: "tudo", label: "Imagem e texto" },
   { value: "imagem", label: "Só a imagem" },
@@ -640,82 +767,29 @@ function VarnishPicker({ art, onArt, sideLabel }: { art: ArtSettings; onArt: (up
   );
 }
 
-function ProductionFiles({
-  types,
-  files,
-  onFile,
-  automatic,
-  editorFront,
-  editorBack,
-}: {
-  types: readonly string[];
-  files: Record<string, File>;
-  onFile: (tipo: string, file: File | null) => void;
-  /** Anexos que o site faz sozinho a partir da arte (faca de corte, posição do LED, máscara de verniz) quando o cliente não envia. */
-  automatic: readonly string[];
-  editorFront: string | null;
-  editorBack: string | null;
-}) {
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const pick = (tipo: string, file: File | undefined) => {
-    if (!file) return;
-    const problem = uploadProblem(file.name, file.size);
-    setErrors((e) => ({ ...e, [tipo]: problem ?? "" }));
-    if (!problem) onFile(tipo, file);
-  };
-  const visible = camposVisiveis(types, files);
-  const single = visible.filter((tipo) => tipo === ARQUIVO_UNICO);
-  const separate = visible.filter((tipo) => tipo !== ARQUIVO_UNICO);
-  const fromEditor = (tipo: string) => (tipo === "Impressão Frente" ? editorFront : tipo === "Impressão Verso" ? editorBack : null);
-  const row = (tipo: string) => {
-    const file = files[tipo];
-    const editor = !file ? fromEditor(tipo) : null;
-    const auto = !file && automatic.includes(tipo);
-    return (
-      <li key={tipo} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="min-w-36 text-sm font-semibold">{tipo === ARQUIVO_UNICO ? "Arquivo único" : tipo}</span>
-        {file ? (
-          <>
-            <span className="min-w-0 flex-1 truncate text-sm text-muted">{file.name}</span>
-            <Button variant="link" size="sm" onClick={() => onFile(tipo, null)}>
-              Remover
-            </Button>
-          </>
-        ) : (
-          <>
-            {editor && <span className="min-w-0 flex-1 truncate text-sm text-muted">a imagem enviada acima ({editor})</span>}
-            {auto && <span className="min-w-0 flex-1 truncate text-sm text-muted">feito automaticamente a partir da sua arte</span>}
-            <label className="cursor-pointer text-sm font-bold text-coral-700 underline-offset-2 hover:underline">
-              {editor ? "Trocar" : auto ? "Enviar a sua" : "Enviar arquivo"}
-              <input type="file" accept={PRODUCTION_ACCEPT} className="sr-only" onChange={(event) => pick(tipo, event.target.files?.[0])} />
-            </label>
-          </>
-        )}
-        {errors[tipo] && (
-          <p role="alert" className="w-full text-caption font-semibold text-coral-700">
-            {errors[tipo]}
-          </p>
-        )}
-      </li>
-    );
-  };
+/**
+ * "Enviar sua arte" antes de qualquer arquivo: um botão grande que abre o envio (arquivos de produção primeiro; montar
+ * a arte no site por último).
+ */
+function SendArtCard({ onOpen }: { onOpen: () => void }) {
   return (
-    <div className="mt-4 rounded-card bg-white p-4 ring-1 ring-line">
-      <p className="text-[15px] font-bold">
-        Arquivos para a produção <span className="font-normal text-muted">· opcionais</span>
-      </p>
-      <p className="mt-1 text-caption text-muted">
-        Já tem a arte pronta? Envie um arquivo único com todas as páginas ou um arquivo para cada parte (PDF, JPG, PNG, PSD, AI, CDR, EPS ou SVG).
-        {files[ARQUIVO_UNICO] ? " O arquivo único vai para a produção no lugar da arte montada acima." : ""}
-      </p>
-      {single.length > 0 && <ul className="mt-3 grid gap-2">{single.map(row)}</ul>}
-      {single.length > 0 && separate.length > 0 && <p className="my-2 text-center text-sm font-bold text-coral-700">ou</p>}
-      {separate.length > 0 && <ul className={cx("grid gap-2", !single.length && "mt-3")}>{separate.map(row)}</ul>}
-    </div>
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full flex-col items-center gap-2 rounded-control border-2 border-dashed border-line-strong py-6 text-center transition-colors hover:border-ink"
+    >
+      <span className="grid size-12 place-items-center rounded-full bg-coral-50 text-coral-700">
+        <IconUpload className="size-6" />
+      </span>
+      <span className="text-[15px] font-bold">Enviar sua arte</span>
+      <span className="max-w-sm text-caption text-muted">Arquivo pronto para a produção (arquivo único ou um por parte) ou uma imagem para montar aqui no site</span>
+    </button>
   );
 }
 
 type ImagePanelProps = {
+  /** Abre o envio dos arquivos de produção (a imagem daqui é a arte montada no site). */
+  onProduction?: (() => void) | null;
   art: ArtSettings;
   onArt: (update: (art: ArtSettings) => ArtSettings) => void;
   name: string | null;
@@ -736,7 +810,7 @@ type ImagePanelProps = {
 };
 
 /** Envio da imagem (clique ou arraste) e o fundo atrás dela; a posição fica no editor 2D. */
-function ImagePanel({ art, onArt, name, error, busy, onFile, accept, hint, canChooseBackground, removable, styleName, report = null, fitControls = null, onOriginal = null }: ImagePanelProps) {
+function ImagePanel({ onProduction = null, art, onArt, name, error, busy, onFile, accept, hint, canChooseBackground, removable, styleName, report = null, fitControls = null, onOriginal = null }: ImagePanelProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   return (
     <div
@@ -793,6 +867,14 @@ function ImagePanel({ art, onArt, name, error, busy, onFile, accept, hint, canCh
       {error && (
         <p role="alert" className="mt-3 text-sm font-semibold text-coral-700">
           {error}
+        </p>
+      )}
+      {onProduction && (
+        <p className="mt-3 text-caption text-muted">
+          Tem a arte pronta?{" "}
+          <Button variant="link" size="sm" className="min-h-6 text-caption" onClick={onProduction}>
+            Enviar os arquivos para a produção
+          </Button>
         </p>
       )}
 

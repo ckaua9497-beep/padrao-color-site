@@ -417,8 +417,16 @@ Base de arte da revisão da Padrão de 25/10/2026 ("Observações Site Novo"). T
   - **Anexo:** "Verniz Local Frente/Verso" separados quando a variação tem esses tipos, senão "Verniz Localizado".
   - **No 3D:** a mesma máscara (em branco) é o `clearcoatMap` da frente impressa (`useArtTexture`, `PrintMaterial`).
 - **Arquivo do cliente primeiro.** A faca, a posição do LED e a máscara de verniz só são geradas quando o cliente não mandou a
-  dele nem o arquivo único. Em "Arquivos para a produção", esses anexos aparecem como "feito automaticamente a partir da sua
-  arte". Variação que não lista o tipo recebe o arquivo como "Arquivo Único" (`attachmentType`).
+  dele nem o arquivo único. No "Selecione a arte", esses anexos aparecem como "feito automaticamente a partir da sua arte".
+  - **Máscara de verniz:** não sai quando a frente veio pronta (arquivo único ou "Impressão Frente").
+  - **Variação que não lista o tipo:** recebe o arquivo como "Arquivo Único" (`attachmentType`).
+- **"Enviar sua arte" (modal "Selecione a arte", `SendArtDialog.tsx`).**
+  - **Arquivos de produção primeiro:** o arquivo único sozinho ou um por parte.
+  - **Montar a arte no site:** com uma imagem, por último.
+  - **Prévia:** a arte aparece no mockup 3D quando o arquivo é lido.
+  - **Criação de arte pela equipe:** custa o preço da variação, somado uma vez no item (`criacaoArte`, `PricedLine.criacao`).
+  - **Nome da arte e observação:** vão para o pedido.
+  - **Frente pronta** (`frenteEnviada`): a arte montada não vai e não sai o PDF do editor.
 - **Conferência:**
   - `npm run shots -- --p=41,337 --modo=mark` fotografa com a arte da marca sem fundo.
   - `--faces=back,manga-direita` dá estampa própria (em outras cores) ao verso e às superfícies extras.

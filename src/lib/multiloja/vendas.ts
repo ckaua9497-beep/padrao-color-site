@@ -30,6 +30,7 @@ import {
 } from "./repo-vendas";
 import type { Loja } from "./repo";
 import { baseFactor, lojaItens, type LojaItem } from "./tenant";
+import { criacaoPorVariacao } from "../customizacao";
 
 /*
  * Fechamento e acompanhamento dos pedidos da multiloja (servidor).
@@ -48,6 +49,8 @@ function linePrices(product: Product, margin: number): LinePrices {
     reseller: false,
     limits: { minQty: Math.max(1, product.minQty ?? 1), maxQty: Math.max(0, product.maxQty ?? 0) },
     orderable: product.source !== "site",
+    // Criação de arte: o preço da Padrão, sem a margem da loja.
+    criacao: criacaoPorVariacao(product),
   };
 }
 
