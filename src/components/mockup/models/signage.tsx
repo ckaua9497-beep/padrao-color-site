@@ -614,91 +614,6 @@ function StripBanner({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-const UP = new THREE.Vector3(0, 1, 0);
-
-/** Mini banner de mesa num suporte X: base pesada, haste cromada e varetas presas nos ilhós dos cantos. */
-function MiniBanner({ spec, art, label, showDims }: ModelProps) {
-  const { w, h, scale: s } = fitFlat(spec, 1.9);
-  const { front, back } = useBannerArt(spec, art, label);
-  const gs = Math.max(s, 0.008);
-  const inset = 1.7 * gs;
-  const thickness = Math.max(0.05 * s, 0.0012);
-  const hz = Math.max(3 * s, 0.05);
-  const lift = Math.max(5 * s, 0.1);
-  const baseTop = -h / 2 - lift;
-  const baseT = Math.max(1.4 * s, 0.025);
-  const baseW = Math.max(w * 0.55, 0.3);
-  const baseD = Math.max(baseW * 0.42, hz * 2.8);
-  const armR = Math.max(0.3 * s, 0.0055);
-  const cx = w / 2 - inset;
-  const cy = h / 2 - inset;
-  const corners: V3[] = [
-    [-cx, cy, 0],
-    [cx, cy, 0],
-    [-cx, -cy, 0],
-    [cx, -cy, 0],
-  ];
-  const parts = useMemo(() => {
-    const arm = new THREE.CylinderGeometry(armR, armR, 1, 10);
-    const pin = new THREE.CylinderGeometry(armR * 0.7, armR * 0.7, thickness + armR * 3, 10);
-    pin.rotateX(Math.PI / 2);
-    const tip = new THREE.SphereGeometry(armR * 1.15, 12, 8);
-    const plate = new THREE.ExtrudeGeometry(makeShape("rect", baseW, baseD, baseD * 0.45), { depth: baseT * 0.6, bevelEnabled: true, bevelThickness: baseT * 0.2, bevelSize: baseT * 0.25, bevelSegments: 3, curveSegments: 16 });
-    plate.rotateX(-Math.PI / 2);
-    plate.translate(0, baseT * 0.2, 0);
-    return { arm, pin, tip, plate };
-  }, [armR, thickness, baseW, baseD, baseT]);
-  useGeometryCleanup(parts.arm);
-  useGeometryCleanup(parts.pin);
-  useGeometryCleanup(parts.tip);
-  useGeometryCleanup(parts.plate);
-  const hub = new THREE.Vector3(0, 0, -hz);
-  const arms = corners.map(([x, y]) => {
-    const end = new THREE.Vector3(x, y, -thickness - armR);
-    const dir = end.clone().sub(hub);
-    const length = dir.length();
-    return { key: `${x}:${y}`, length, mid: hub.clone().add(end).multiplyScalar(0.5), quaternion: new THREE.Quaternion().setFromUnitVectors(UP, dir.normalize()) };
-  });
-  const [lw, lh] = sizeLabels(spec);
-  return (
-    <group rotation-y={0.3}>
-      <BannerSheet spec={spec} w={w} h={h} thickness={thickness} drape={FLAT} front={front} back={back} detail={20} />
-      <Grommets points={corners} gs={gs} thickness={thickness} />
-      {arms.map((arm) => (
-        <mesh key={arm.key} geometry={parts.arm} position={arm.mid} quaternion={arm.quaternion} scale-y={arm.length}>
-          <meshStandardMaterial color="#1b1c1f" roughness={0.4} />
-        </mesh>
-      ))}
-      {corners.map(([x, y]) => (
-        <group key={`${x}:${y}`} position={[x, y, 0]}>
-          <mesh geometry={parts.pin}>
-            <meshStandardMaterial color="#c9ccd0" metalness={1} roughness={0.25} />
-          </mesh>
-          <mesh geometry={parts.tip} position-z={armR * 1.4}>
-            <meshStandardMaterial color="#d8dadd" metalness={1} roughness={0.2} />
-          </mesh>
-        </group>
-      ))}
-      <mesh position={[0, 0, -hz]} rotation-x={Math.PI / 2}>
-        <cylinderGeometry args={[armR * 3, armR * 3, armR * 4, 20]} />
-        <meshStandardMaterial color="#141416" roughness={0.45} />
-      </mesh>
-      <mesh position={[0, baseTop / 2, -hz]}>
-        <cylinderGeometry args={[armR * 1.3, armR * 1.3, -baseTop, 14]} />
-        <meshStandardMaterial color="#d3d6da" metalness={1} roughness={0.22} />
-      </mesh>
-      <mesh position={[0, baseTop + baseT * 0.5, -hz]}>
-        <cylinderGeometry args={[armR * 2.6, armR * 3.2, baseT * 1.2, 20]} />
-        <meshStandardMaterial color="#141416" roughness={0.45} />
-      </mesh>
-      <mesh geometry={parts.plate} position={[0, baseTop - baseT, -hz]}>
-        <meshPhysicalMaterial color="#161618" roughness={0.3} clearcoat={0.6} clearcoatRoughness={0.2} />
-      </mesh>
-      {showDims && <Dimensions w={w} h={h} z={0.03} labelW={lw} labelH={lh} />}
-    </group>
-  );
-}
-
 /** Banner de tecido: bolsões costurados com bastões de madeira torneada, dobras macias e cordão de sisal. */
 function FabricBanner({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale: s } = fitFlat(spec, 2.4);
@@ -846,7 +761,7 @@ function RawBanner({ spec, art, label, showDims }: ModelProps) {
  */
 export function BannerModel(props: ModelProps) {
   const { variant, grommets } = props.spec;
-  if (variant === "mini") return <MiniBanner {...props} />;
+  // O mini banner é o mesmo banner de tubete e corda, só menor (pedido da Padrão em 25/10/2026).
   if (variant === "strip") return <StripBanner {...props} />;
   if (variant === "fabric") return <FabricBanner {...props} />;
   // Lona sem impressão (vendida crua) é a folha solta com prendedores; a arte segue como simulação.

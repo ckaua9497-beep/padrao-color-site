@@ -16,10 +16,10 @@ import {
   PrintMaterial,
   faceGeometry,
   makeShape,
-  metalColor,
   sizeLabels,
   useArtTexture,
   useGeometryCleanup,
+  type MaskPath,
   type ModelProps,
   useBackTexture,
   backKindOf,
@@ -66,46 +66,6 @@ function paintTexture(width: number, height: number, draw: (ctx: CanvasRendering
     texture.repeat.set(repeat[0], repeat[1]);
   }
   return texture;
-}
-
-/** Fio torcido de algodão: listras diagonais (multiplicam a cor do cordão). u corre ao longo do tubo. */
-function twistTexture(repeatU: number) {
-  return paintTexture(
-    64,
-    64,
-    (ctx, w, h) => {
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = "#bdb7ad";
-      ctx.lineWidth = 10;
-      for (let i = -2; i <= 2; i += 1) {
-        ctx.beginPath();
-        ctx.moveTo((i * w) / 2, 0);
-        ctx.lineTo((i * w) / 2 + w, h);
-        ctx.stroke();
-      }
-    },
-    [Math.max(1, repeatU), 1],
-  );
-}
-
-/** Fios paralelos da franja do pingente (variam em u, ao redor do torno). */
-function threadTexture(repeatU: number) {
-  return paintTexture(
-    64,
-    8,
-    (ctx, w, h) => {
-      const rand = seeded(11);
-      for (let x = 0; x < w; x += 4) {
-        const shade = 200 + Math.round(rand() * 55);
-        ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
-        ctx.fillRect(x, 0, 3, h);
-        ctx.fillStyle = "#8f8a82";
-        ctx.fillRect(x + 3, 0, 1, h);
-      }
-    },
-    [repeatU, 1],
-  );
 }
 
 /** Folhas empilhadas vistas pelo corte: linhas finas creme. vertical = linhas variam em u. */
@@ -216,49 +176,6 @@ function CutCard({ geometry, spec, front, back, edgeColor, backColor = "#f6f5f1"
         {back ? <PrintMaterial map={back} spec={spec} /> : <meshStandardMaterial color={backColor} roughness={0.88} />}
       </mesh>
     </group>
-  );
-}
-
-/** Tubo ao longo de uma curva (cordão, fio, gancho). */
-function useTube(points: Vec3[], radius: number, closed = false, segments = 64) {
-  const key = JSON.stringify(points);
-  const geometry = useMemo(() => {
-    const list = (JSON.parse(key) as Vec3[]).map((p) => new THREE.Vector3(p[0], p[1], p[2]));
-    const curve = new THREE.CatmullRomCurve3(list, closed, "centripetal");
-    return new THREE.TubeGeometry(curve, segments, radius, 8, closed);
-  }, [key, radius, closed, segments]);
-  useGeometryCleanup(geometry);
-  return geometry;
-}
-
-/** Comprimento aproximado de uma polilinha (para repetir a textura do fio sem esticar). */
-function pathLength(points: Vec3[], closed = false) {
-  let total = 0;
-  const n = points.length;
-  for (let i = 0; i < n - (closed ? 0 : 1); i += 1) {
-    const a = points[i];
-    const b = points[(i + 1) % n];
-    total += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  }
-  return total;
-}
-
-type CordGeometry = { geometry: THREE.BufferGeometry; map: THREE.Texture };
-
-/** Cordão de algodão torcido: tubo + textura de torção repetida conforme o comprimento. */
-function useCord(points: Vec3[], radius: number, closed = false): CordGeometry {
-  const geometry = useTube(points, radius, closed, closed ? 140 : 72);
-  const length = pathLength(points, closed);
-  const map = useMemo(() => twistTexture(Math.round(length / (radius * 9))), [length, radius]);
-  useTextureCleanup(map);
-  return { geometry, map };
-}
-
-function Cord({ cord, color }: { cord: CordGeometry; color: string }) {
-  return (
-    <mesh geometry={cord.geometry}>
-      <meshStandardMaterial color={color} map={cord.map} roughness={0.95} />
-    </mesh>
   );
 }
 
@@ -704,8 +621,11 @@ export function PaperpackModel({ spec, art, label }: ModelProps) {
 /* Calendário de parede                                                */
 /* ------------------------------------------------------------------ */
 
-const MONTH = { name: "JANEIRO", year: 2027, days: 31, prevDays: 31, holidays: [1] };
+const CAL_YEAR = 2027;
+const CAL_MONTHS = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
 const WEEKDAYS = ["D", "S", "T", "Q", "Q", "S", "S"];
+/** Feriados nacionais de 2027 (e o carnaval) por mês, em vermelho como os domingos. */
+const CAL_HOLIDAYS: number[][] = [[1], [8, 9], [26], [21], [1, 27], [], [], [], [7], [12], [2, 15, 20], [25]];
 
 /** Dia da semana (0 = domingo), algoritmo de Sakamoto. */
 function weekday(year: number, month: number, day: number) {
@@ -714,67 +634,77 @@ function weekday(year: number, month: number, day: number) {
   return (y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) + t[month - 1] + day) % 7;
 }
 
-/** Grade do mês: nome e ano, iniciais dos dias, números (fins de semana e feriado em coral). */
-function calendarTexture(aspect: number) {
-  const canvas = canvasFor(aspect, 1024);
+function daysIn(year: number, month: number) {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/**
+ * Os 12 meses do ano em cartões brancos (faixa escura com o nome do mês, iniciais da semana, dias; domingos e
+ * feriados em vermelho): a parte de baixo do calendário quando o cliente ainda não mandou a arte pronta. Com
+ * `background`, os cartões ficam sobre a cor de fundo da arte; com null, sobre a própria imagem (canvas transparente).
+ */
+function yearGridTexture(aspect: number, background: string | null) {
+  const canvas = canvasFor(aspect, 2048);
   const ctx = canvas.getContext("2d");
   if (ctx) {
     const W = canvas.width;
     const H = canvas.height;
     const font = fontFamily();
-    const pad = W * 0.06;
-    ctx.fillStyle = "#fdfdfb";
-    ctx.fillRect(0, 0, W, H);
+    if (background) {
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      ctx.clearRect(0, 0, W, H);
+    }
+    const cols = 3;
+    const rows = 4;
+    const pad = W * 0.05;
+    const gap = W * 0.03;
+    const cellW = (W - pad * 2 - gap * (cols - 1)) / cols;
+    const cellH = (H - pad * 1.6 - gap * (rows - 1)) / rows;
+    for (let m = 0; m < 12; m += 1) {
+      const x = pad + (m % cols) * (cellW + gap);
+      const y = pad * 0.6 + Math.floor(m / cols) * (cellH + gap);
+      const r = cellW * 0.06;
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.28)";
+      ctx.shadowBlur = cellW * 0.05;
+      ctx.shadowOffsetY = cellW * 0.015;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.roundRect(x, y, cellW, cellH, r);
+      ctx.fill();
+      ctx.restore();
+      const barH = cellH * 0.16;
+      ctx.fillStyle = "#141414";
+      ctx.beginPath();
+      ctx.roundRect(x, y, cellW, barH, [r, r, 0, 0]);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `800 ${barH * 0.58}px ${font}`;
+      ctx.fillText(CAL_MONTHS[m], x + cellW / 2, y + barH * 0.54, cellW * 0.9);
 
-    ctx.textBaseline = "alphabetic";
-    ctx.textAlign = "left";
-    ctx.fillStyle = "#151515";
-    ctx.font = `800 ${H * 0.1}px ${font}`;
-    ctx.fillText(MONTH.name, pad, H * 0.16);
-    ctx.textAlign = "right";
-    ctx.fillStyle = CORAL;
-    ctx.fillText(String(MONTH.year), W - pad, H * 0.16);
-
-    const cw = (W - pad * 2) / 7;
-    ctx.textAlign = "center";
-    ctx.font = `700 ${H * 0.045}px ${font}`;
-    WEEKDAYS.forEach((d, i) => {
-      ctx.fillStyle = i === 0 || i === 6 ? CORAL : "#8a8a8a";
-      ctx.fillText(d, pad + cw * (i + 0.5), H * 0.265);
-    });
-    ctx.fillStyle = "#e2e2e2";
-    ctx.fillRect(pad, H * 0.295, W - pad * 2, Math.max(1, H * 0.003));
-
-    const top = H * 0.32;
-    const rowH = (H * 0.97 - top) / 6;
-    const first = weekday(MONTH.year, 1, 1);
-    ctx.font = `600 ${rowH * 0.42}px ${font}`;
-    for (let k = 0; k < 42; k += 1) {
-      const col = k % 7;
-      const row = Math.floor(k / 7);
-      let day = k - first + 1;
-      let inMonth = true;
-      if (day < 1) {
-        day += MONTH.prevDays;
-        inMonth = false;
-      } else if (day > MONTH.days) {
-        day -= MONTH.days;
-        inMonth = false;
-      }
-      const x = pad + cw * (col + 0.5);
-      const y = top + rowH * (row + 0.62);
-      const weekend = col === 0 || col === 6;
-      const holiday = inMonth && MONTH.holidays.includes(day);
-      ctx.fillStyle = !inMonth ? "#d4d4d4" : weekend || holiday ? CORAL : "#1d1d1d";
-      ctx.fillText(String(day), x, y);
-      if (holiday) {
-        ctx.beginPath();
-        ctx.arc(x, y + rowH * 0.18, rowH * 0.045, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      if (row > 0 && col === 0) {
-        ctx.fillStyle = "#efefef";
-        ctx.fillRect(pad, top + rowH * row, W - pad * 2, Math.max(1, H * 0.002));
+      const inner = cellW * 0.06;
+      const cw = (cellW - inner * 2) / 7;
+      const weekY = y + barH + cellH * 0.08;
+      ctx.font = `800 ${cw * 0.5}px ${font}`;
+      WEEKDAYS.forEach((d, i) => {
+        ctx.fillStyle = i === 0 ? CORAL : "#1d1d1d";
+        ctx.fillText(d, x + inner + cw * (i + 0.5), weekY);
+      });
+      const top = weekY + cellH * 0.06;
+      const rowH = (y + cellH - inner * 0.8 - top) / 6;
+      const first = weekday(CAL_YEAR, m + 1, 1);
+      const holidays = CAL_HOLIDAYS[m];
+      ctx.font = `700 ${Math.min(cw * 0.46, rowH * 0.72)}px ${font}`;
+      for (let day = 1; day <= daysIn(CAL_YEAR, m + 1); day += 1) {
+        const k = first + day - 1;
+        const col = k % 7;
+        ctx.fillStyle = col === 0 || holidays.includes(day) ? CORAL : "#1d1d1d";
+        ctx.fillText(String(day), x + inner + cw * (col + 0.5), top + rowH * (Math.floor(k / 7) + 0.5));
       }
     }
   }
@@ -784,135 +714,111 @@ function calendarTexture(aspect: number) {
   return texture;
 }
 
-/** Folha com o recorte de meia-lua no topo (onde aparece o gancho). */
-function calendarPageShape(w: number, h: number, notchR: number, notchD: number) {
-  const s = new THREE.Shape();
-  s.moveTo(-w / 2, -h / 2);
-  s.lineTo(w / 2, -h / 2);
-  s.lineTo(w / 2, h / 2);
-  s.lineTo(notchR, h / 2);
-  s.absellipse(0, h / 2, notchR, notchD, 0, Math.PI, true, 0);
-  s.lineTo(-w / 2, h / 2);
-  s.closePath();
-  return s;
-}
-
 const CAL_CM = 0.08;
+/** Furo de pendurar do gabarito: 5 mm, centrado, a 10,5 mm do topo. */
+const CAL_HOLE_R = 0.25;
+const CAL_HOLE_TOP = 1.05;
+/** Faixa de cima com a arte quando o calendário ainda não veio pronto (o resto mostra os 12 meses). */
+const CAL_HEAD = 0.27;
 
 /**
- * Calendário de parede: metade de cima com a arte, metade de baixo com a grade do mês (canvas),
- * faixa de furos com wire-o duplo, recorte central com gancho em V apoiado num prego, folhas
- * de trás levemente abertas e base de papelão.
+ * Como a arte entra no calendário: "ready" = arquivo feito no gabarito (o calendário pronto, folha inteira);
+ * "backdrop" = foto ou fundo cobrindo a folha, com os 12 meses por cima; "header" = texto, modelo ou logo na faixa
+ * de cima, com os meses embaixo sobre a cor de fundo.
+ */
+function calendarLayout(art: ModelProps["art"]): "ready" | "backdrop" | "header" {
+  if (!art.src) return "header";
+  const fit = art.templateFit?.src === art.src ? art.templateFit : null;
+  if (fit && fit.match !== "other") return "ready";
+  return fit?.mode === "whole" ? "header" : "backdrop";
+}
+
+/**
+ * Calendário de parede: folha única de couchê 250 g, impressa inteira, com o furo do gabarito no topo,
+ * pendurada num prego. O arquivo pronto no gabarito cobre a folha toda; uma foto vira o fundo dos 12 meses do
+ * ano, e texto, modelo ou logo ficam na faixa de cima, com os meses embaixo, como na foto do produto.
  */
 export function WallCalendarModel({ spec, art, label, showDims }: ModelProps) {
   const w = Math.max(8, spec.widthCm);
   const h = Math.max(10, spec.heightCm);
-  const strip = 1.4;
-  const artH = h / 2 - strip;
-  const gridH = h / 2;
-  const front = useArtTexture(w / artH, "front", art, label);
-  const grid = useMemo(() => calendarTexture(w / gridH), [w, gridH]);
+  // Couchê 250 g (~0,3 mm), um pouco exagerado para a borda aparecer de lado.
+  const d = 0.04;
+  const layout = calendarLayout(art);
+  const headH = h * CAL_HEAD;
+  const holeY = h / 2 - CAL_HOLE_TOP;
+  const areaH = layout === "header" ? headH : h;
+  // O furo sai recortado na própria arte (alpha): uma face com furo triangulada deixa uma fissura no "ponto" do furo.
+  const holeMask = useMemo<MaskPath>(
+    () => (ctx, cw, ch) => {
+      const r = (CAL_HOLE_R / w) * cw;
+      const cy = (CAL_HOLE_TOP / areaH) * ch;
+      ctx.beginPath();
+      ctx.rect(0, 0, cw, ch);
+      ctx.moveTo(cw / 2 + r, cy);
+      ctx.arc(cw / 2, cy, r, 0, Math.PI * 2, true);
+    },
+    [w, areaH],
+  );
+  const front = useArtTexture(w / areaH, "front", art, label, holeMask);
+  const gridBackground = layout === "header" ? art.background : null;
+  const grid = useMemo(() => yearGridTexture(w / (h - headH), gridBackground), [w, h, headH, gridBackground]);
   useTextureCleanup(grid);
 
-  const notchR = 1.8;
-  const page = useMemo(() => {
-    const shape = calendarPageShape(w, h, notchR, 0.9);
-    const sheet = new THREE.ShapeGeometry(shape, 24);
-    const board = new THREE.ExtrudeGeometry(shape, { depth: 0.18, bevelEnabled: false, curveSegments: 24 });
-    return { sheet, board };
-  }, [w, h]);
-  useGeometryCleanup(page.sheet);
-  useGeometryCleanup(page.board);
+  const geo = useMemo(() => {
+    const sheet = makeShape("rect", w, h, 0.06);
+    addHole(sheet, 0, holeY, CAL_HOLE_R);
+    const edge = new THREE.ExtrudeGeometry(sheet, { depth: d, bevelEnabled: false, curveSegments: 24 });
+    edge.translate(0, 0, -d / 2);
+    // Faces impressas sem o furo (ele vem recortado na arte); o verso liso pode ter o furo na malha.
+    const face = faceGeometry(makeShape("rect", w, h, 0.06), w, h);
+    // Faixa de cima em UV próprio, para a arte não esticar sobre a grade dos meses.
+    const head = faceGeometry(makeShape("rect", w, headH, 0.0005), w, headH);
+    head.translate(0, h / 2 - headH / 2, 0);
+    return { edge, face, back: mirroredFace(faceGeometry(sheet, w, h)), head };
+  }, [w, h, d, headH, holeY]);
+  useGeometryCleanup(geo.edge);
+  useGeometryCleanup(geo.face);
+  useGeometryCleanup(geo.back);
+  useGeometryCleanup(geo.head);
 
-  const ringR = 0.5;
-  const holeY = h / 2 - 0.6;
-  const axisY = holeY + ringR;
-  const axisZ = -0.13;
-  const ring = useMemo(() => new THREE.TorusGeometry(ringR, 0.045, 6, 28), []);
-  useGeometryCleanup(ring);
-  const ringXs = useMemo(() => {
-    const list: number[] = [];
-    const pitch = 0.85;
-    const half = w / 2 - 0.8;
-    const n = Math.floor((half * 2) / pitch);
-    const start = -(n * pitch) / 2;
-    for (let i = 0; i <= n; i += 1) {
-      const x = start + i * pitch;
-      if (Math.abs(x) > notchR + 1.1) list.push(x);
-    }
-    return list;
-  }, [w]);
-  const hanger = useTube(
-    [
-      [-(notchR + 0.8), axisY, axisZ],
-      [-(notchR - 0.1), axisY + 0.9, axisZ + 0.04],
-      [-0.6, axisY + 2.5, axisZ + 0.08],
-      [-0.25, axisY + 3.05, axisZ + 0.1],
-      [0, axisY + 3.2, axisZ + 0.1],
-      [0.25, axisY + 3.05, axisZ + 0.1],
-      [0.6, axisY + 2.5, axisZ + 0.08],
-      [notchR - 0.1, axisY + 0.9, axisZ + 0.04],
-      [notchR + 0.8, axisY, axisZ],
-    ],
-    0.06,
-  );
-  const wire = metalColor(spec.metal);
+  // Afastamento das faces impressas da chapa: com menos, a emenda da triangulação do furo na tampa aparece por cima.
+  const lift = 0.02;
+  // O prego encosta no alto do furo: a folha fica pendurada nele.
+  const nailR = 0.09;
+  const nailY = holeY + CAL_HOLE_R - nailR;
   const [lw, lh] = sizeLabels(spec);
 
   return (
     <group>
       <group scale={CAL_CM}>
-        {/* Página da frente */}
-        <mesh geometry={page.sheet}>
-          <meshStandardMaterial color="#fbfbf9" roughness={0.8} />
+        <mesh geometry={geo.edge}>
+          <meshStandardMaterial color="#f3f2ee" roughness={0.9} />
         </mesh>
-        <mesh position={[0, h / 2 - strip - artH / 2, 0.015]}>
-          <planeGeometry args={[w, artH]} />
-          <PrintMaterial map={front} spec={spec} />
+        <mesh geometry={layout === "header" ? geo.head : geo.face} position-z={d / 2 + lift}>
+          <PrintMaterial map={front} spec={spec} transparent />
         </mesh>
-        <mesh position={[0, -h / 4, 0.015]}>
-          <planeGeometry args={[w, gridH]} />
-          <PrintMaterial map={grid} spec={spec} />
-        </mesh>
-        {ringXs.map((x) => (
-          <mesh key={`h${x}`} position={[x, holeY, 0.02]}>
-            <planeGeometry args={[0.42, 0.3]} />
-            <meshStandardMaterial color="#4a4a4a" roughness={0.9} />
+        {layout !== "ready" && (
+          <mesh position={[0, -headH / 2, d / 2 + lift * 2]}>
+            <planeGeometry args={[w, h - headH]} />
+            <PrintMaterial map={grid} spec={spec} transparent={layout === "backdrop"} />
           </mesh>
-        ))}
-        {/* Folhas de trás, cada uma descendo um pouco na base (espessura do bloco) */}
-        {[1, 2].map((i) => (
-          <mesh key={i} geometry={page.sheet} position={[0, -0.1 * i, -0.04 * i]}>
-            <meshStandardMaterial color={i === 1 ? "#f6f6f3" : "#f1f1ed"} roughness={0.85} side={THREE.DoubleSide} />
-          </mesh>
-        ))}
-        <mesh geometry={page.board} position={[0, -0.3, -0.3]}>
-          <meshStandardMaterial color="#9c968b" roughness={0.95} />
-        </mesh>
-        {/* Wire-o duplo */}
-        {ringXs.flatMap((x) =>
-          [-0.13, 0.13].map((dx) => (
-            <mesh key={`r${x}${dx}`} geometry={ring} position={[x + dx, axisY, axisZ]} rotation-y={Math.PI / 2}>
-              <meshStandardMaterial color={wire} metalness={1} roughness={0.28} />
-            </mesh>
-          )),
         )}
-        <mesh geometry={hanger}>
-          <meshStandardMaterial color={wire} metalness={1} roughness={0.28} />
+        <mesh geometry={geo.back} position-z={-d / 2 - lift}>
+          <meshStandardMaterial color="#f7f6f2" roughness={0.88} />
         </mesh>
-        {/* Prego */}
-        <group position={[0, axisY + 3.2 - 0.06 - 0.13, axisZ]}>
-          <mesh position-z={-0.45} rotation-x={Math.PI / 2}>
-            <cylinderGeometry args={[0.11, 0.11, 2.2, 16]} />
+        {/* Prego: cabeça à frente da folha, haste atravessando o furo até a parede. */}
+        <group position={[0, nailY, 0]}>
+          <mesh position-z={-0.62} rotation-x={Math.PI / 2}>
+            <cylinderGeometry args={[nailR, nailR, 1.6, 16]} />
             <meshStandardMaterial color="#9da1a6" metalness={1} roughness={0.35} />
           </mesh>
-          <mesh position-z={0.68} rotation-x={Math.PI / 2}>
-            <cylinderGeometry args={[0.32, 0.3, 0.1, 24]} />
+          <mesh position-z={d / 2 + 0.14} rotation-x={Math.PI / 2}>
+            <cylinderGeometry args={[0.3, 0.28, 0.07, 28]} />
             <meshStandardMaterial color="#a7abb0" metalness={1} roughness={0.3} />
           </mesh>
         </group>
       </group>
-      {showDims && KIND_INFO[spec.kind].dims && <Dimensions w={w * CAL_CM} h={h * CAL_CM} z={0.05 * CAL_CM} labelW={lw} labelH={lh} />}
+      {showDims && KIND_INFO[spec.kind].dims && <Dimensions w={w * CAL_CM} h={h * CAL_CM} z={(d / 2 + 0.3) * CAL_CM} labelW={lw} labelH={lh} />}
     </group>
   );
 }
@@ -1105,108 +1011,35 @@ export function PassportModel({ spec, art, label }: ModelProps) {
 /* Tag                                                                 */
 /* ------------------------------------------------------------------ */
 
-type TagGeometry = { shape: THREE.Shape; hole: [number, number]; dir: [number, number] };
 
-/** Contorno da tag com furo: retangular com cantos chanfrados do lado do furo, oval ou redonda. */
-function tagGeometry(kind: MockupSpec["shape"], w: number, h: number): TagGeometry {
-  const holeR = 0.26;
-  const landscape = w >= h * 1.15;
-  if (kind === "round" || kind === "heart") {
-    const shape = kind === "heart" ? makeShape("heart", w, h, 0) : makeShape("round", w, h, 0);
-    if (landscape && kind === "round") {
-      const hole: [number, number] = [-w / 2 + 0.85, 0];
-      addHole(shape, hole[0], hole[1], holeR);
-      return { shape, hole, dir: [-1, 0] };
-    }
-    const hole: [number, number] = [0, kind === "heart" ? h * 0.12 : h / 2 - 0.8];
-    addHole(shape, hole[0], hole[1], holeR);
-    return { shape, hole, dir: [0, 1] };
+/**
+ * Contorno da tag com o furo de 4 mm nas posições do gabarito: redonda com o furo no topo, oval com o furo
+ * à esquerda e retangular (cantos vivos) com o furo no canto de cima à esquerda, todos a 7 mm da borda.
+ */
+function tagShape(kind: MockupSpec["shape"], w: number, h: number): THREE.Shape {
+  const holeR = 0.2;
+  const inset = 0.7;
+  if (kind === "heart") {
+    const shape = makeShape("heart", w, h, 0);
+    addHole(shape, 0, h * 0.12, holeR);
+    return shape;
   }
-  // Retangular: monta deitada (furo à esquerda) e gira 90° quando a tag é em pé (furo no topo).
-  const L = landscape ? w : h;
-  const S = landscape ? h : w;
-  const c = Math.min(0.9, S * 0.22);
-  const r = Math.min(0.35, S * 0.15);
-  const pts: [number, number][] = [
-    [-L / 2 + c, -S / 2],
-    [L / 2 - r, -S / 2],
-  ];
-  for (let i = 1; i <= 6; i += 1) {
-    const a = -Math.PI / 2 + (i / 6) * (Math.PI / 2);
-    pts.push([L / 2 - r + Math.cos(a) * r, -S / 2 + r + Math.sin(a) * r]);
+  if (kind === "round") {
+    const shape = makeShape("round", w, h, 0);
+    if (w >= h * 1.15) addHole(shape, -w / 2 + inset, 0, holeR);
+    else addHole(shape, 0, h / 2 - inset, holeR);
+    return shape;
   }
-  pts.push([L / 2, S / 2 - r]);
-  for (let i = 1; i <= 6; i += 1) {
-    const a = (i / 6) * (Math.PI / 2);
-    pts.push([L / 2 - r + Math.cos(a) * r, S / 2 - r + Math.sin(a) * r]);
-  }
-  pts.push([-L / 2 + c, S / 2], [-L / 2, S / 2 - c], [-L / 2, -S / 2 + c]);
-  const map = (p: [number, number]): THREE.Vector2 => (landscape ? new THREE.Vector2(p[0], p[1]) : new THREE.Vector2(p[1], -p[0]));
-  const shape = new THREE.Shape(pts.map(map));
-  const hole = map([-L / 2 + 0.8, 0]);
-  addHole(shape, hole.x, hole.y, holeR);
-  return { shape, hole: [hole.x, hole.y], dir: landscape ? [-1, 0] : [0, 1] };
-}
-
-type TagStringPaths = { loop: Vec3[]; tails: Vec3[][]; knot: Vec3 };
-
-/** Laço de algodão passando pelo furo, com nó e duas pontas caindo pela gravidade. */
-function tagString(hole: [number, number], dir: [number, number]): TagStringPaths {
-  const [hx, hy] = hole;
-  const [dx, dy] = dir;
-  const px = -dy;
-  const py = dx;
-  const pt = (a: number, b: number, z: number): Vec3 => [hx + dx * a + px * b, hy + dy * a + py * b, z];
-  const knot = pt(4.0, 0.1, 0);
-  const loop: Vec3[] = [pt(0.12, 0, 0.12), pt(1.0, 0.35, 0.32), pt(2.6, 0.55, 0.2), knot, pt(2.6, -0.4, -0.2), pt(1.0, -0.3, -0.32), pt(0.12, 0, -0.12)];
-  // Pontas: seguem um pouco na direção do laço e caem (−y).
-  const side = dx !== 0 ? dx : 1;
-  const tails: Vec3[][] = [
-    [knot, [knot[0] + side * 0.5, knot[1] - 0.3, 0.05], [knot[0] + side * 0.8, knot[1] - 1.3, 0.08], [knot[0] + side * 0.7, knot[1] - 2.4, 0.04]],
-    [knot, [knot[0] + side * 0.3, knot[1] - 0.4, -0.06], [knot[0] + side * 0.35, knot[1] - 1.6, -0.1], [knot[0] + side * 0.15, knot[1] - 2.9, -0.06]],
-  ];
-  return { loop, tails, knot };
+  const shape = makeShape("rect", w, h, 0.04);
+  addHole(shape, -w / 2 + inset, h / 2 - inset, holeR);
+  return shape;
 }
 
 const TAG_CM = 0.16;
 
-type TagPieceProps = {
-  card: CardGeometry;
-  hole: [number, number];
-  spec: MockupSpec;
-  front: THREE.Texture;
-  back: THREE.Texture | null;
-  eyelet: THREE.BufferGeometry;
-  knotGeometry: THREE.BufferGeometry;
-  metal: string;
-  cords: CordGeometry[];
-  knot: Vec3;
-  cordColor: string;
-};
-
-/** Uma tag montada; as geometrias vêm prontas e são compartilhadas entre as três peças. */
-function TagPiece({ card, hole, spec, front, back, eyelet, knotGeometry, metal, cords, knot, cordColor }: TagPieceProps) {
-  return (
-    <group>
-      <CutCard geometry={card} spec={spec} front={front} back={back} edgeColor="#f1eee7" />
-      {[1, -1].map((side) => (
-        <mesh key={side} geometry={eyelet} position={[hole[0], hole[1], side * (card.d / 2 + 0.025)]} scale={[1, 1, 0.55]}>
-          <meshStandardMaterial color={metal} metalness={1} roughness={0.25} />
-        </mesh>
-      ))}
-      {cords.map((cord, i) => (
-        <Cord key={i} cord={cord} color={cordColor} />
-      ))}
-      <mesh geometry={knotGeometry} position={knot} scale={[1, 0.8, 0.8]}>
-        <meshStandardMaterial color={cordColor} roughness={0.95} />
-      </mesh>
-    </group>
-  );
-}
-
 /**
- * Tags de roupa em cartão grosso: três peças sobrepostas em leque (a da frente com a arte, uma
- * virada mostrando o verso), furo com ilhós metálico e laço de algodão torcido com nó e pontas.
+ * Tags de couchê 250 g, vendidas sem cordão: três peças sobrepostas em leque (a da frente com a arte, uma
+ * virada mostrando o verso), com o furo vazado do gabarito, como nas fotos do produto.
  */
 /** Tags (padrão) ou cartela de bijuteria (jewelry.tsx, produto novo). */
 export function HangtagModel(props: ModelProps) {
@@ -1219,33 +1052,14 @@ function HangTags({ spec, art, label, showDims }: ModelProps) {
   const h = Math.max(1, spec.heightCm);
   // Couchê 250 g (~0,3 mm), levemente exagerado para a borda aparecer de lado.
   const d = 0.05;
-  const geo = useMemo(() => tagGeometry(spec.shape, w, h), [spec.shape, w, h]);
+  const shape = useMemo(() => tagShape(spec.shape, w, h), [spec.shape, w, h]);
   const front = useArtTexture(w / h, "front", art, label);
   const backKind = backKindOf(spec, art);
   const backTex = useBackTexture(w / h, spec, art, label);
   const back = backKind === "blank" ? null : backTex;
-  const card = useCardGeometry(geo.shape, w, h, d);
-  const parts = useMemo(() => ({ eyelet: new THREE.TorusGeometry(0.33, 0.075, 10, 32), knot: new THREE.SphereGeometry(0.16, 14, 10) }), []);
-  useGeometryCleanup(parts.eyelet);
-  useGeometryCleanup(parts.knot);
-  const string = useMemo(() => tagString(geo.hole, geo.dir), [geo]);
-  const loop = useCord(string.loop, 0.055, true);
-  const tailA = useCord(string.tails[0], 0.05);
-  const tailB = useCord(string.tails[1], 0.05);
+  const card = useCardGeometry(shape, w, h, d);
   const [lw, lh] = sizeLabels(spec);
-  const piece: TagPieceProps = {
-    card,
-    hole: geo.hole,
-    spec,
-    front,
-    back,
-    eyelet: parts.eyelet,
-    knotGeometry: parts.knot,
-    metal: metalColor(spec.metal),
-    cords: [loop, tailA, tailB],
-    knot: string.knot,
-    cordColor: spec.accentColor ?? "#efe6d4",
-  };
+  const piece: CardProps = { geometry: card, spec, front, back, edgeColor: "#f1eee7" };
   const heroTilt = -0.04;
 
   return (
@@ -1253,18 +1067,18 @@ function HangTags({ spec, art, label, showDims }: ModelProps) {
       <group scale={TAG_CM}>
         {/* Terceira tag, atrás à esquerda */}
         <group position={[-w * 0.2, h * 0.58, -2.6]} rotation-z={0.16}>
-          <TagPiece {...piece} />
+          <CutCard {...piece} />
         </group>
         {/* Tag virada mostrando o verso: gira para que a ponta do furo venha para a frente fora da
             tag principal (girar para o outro lado faria a ponta atravessar a arte da frente). */}
         <group position={[w * 0.42, h * 0.45, -1.5]} rotation-z={0.1}>
           <group rotation-y={Math.PI - 0.36}>
-            <TagPiece {...piece} />
+            <CutCard {...piece} />
           </group>
         </group>
         {/* Tag principal com a arte */}
         <group rotation-z={heroTilt}>
-          <TagPiece {...piece} />
+          <CutCard {...piece} />
         </group>
       </group>
       {showDims && KIND_INFO[spec.kind].dims && (
@@ -1280,67 +1094,12 @@ function HangTags({ spec, art, label, showDims }: ModelProps) {
 /* Marcador de livro                                                   */
 /* ------------------------------------------------------------------ */
 
-/** Pingente de franja: cabeça torneada, amarração e saia de fios (textura de fios ao redor). */
-function Tassel({ color }: { color: string }) {
-  const geo = useMemo(() => {
-    // Perfis de baixo para cima: o torno só gera normais para fora com y crescente.
-    const head = new THREE.LatheGeometry(
-      [
-        [0, -0.96],
-        [0.2, -0.95],
-        [0.26, -0.85],
-        [0.33, -0.55],
-        [0.3, -0.25],
-        [0.18, -0.05],
-        [0, 0],
-      ].map(([x, y]) => new THREE.Vector2(x, y)),
-      28,
-    );
-    const skirt = new THREE.LatheGeometry(
-      [
-        [0, -5.12],
-        [0.38, -5.1],
-        [0.47, -4.9],
-        [0.44, -4.0],
-        [0.33, -2.6],
-        [0.24, -1.4],
-        [0.2, -1.0],
-        [0, -0.98],
-      ].map(([x, y]) => new THREE.Vector2(x, y)),
-      36,
-    );
-    const wrap = new THREE.TorusGeometry(0.22, 0.075, 8, 28);
-    wrap.rotateX(Math.PI / 2);
-    wrap.translate(0, -1.08, 0);
-    return { head, skirt, wrap };
-  }, []);
-  useGeometryCleanup(geo.head);
-  useGeometryCleanup(geo.skirt);
-  useGeometryCleanup(geo.wrap);
-  const maps = useMemo(() => ({ threads: threadTexture(10), twist: twistTexture(6) }), []);
-  useTextureCleanup(maps.threads);
-  useTextureCleanup(maps.twist);
-  return (
-    <group>
-      <mesh geometry={geo.head}>
-        <meshPhysicalMaterial color={color} map={maps.twist} roughness={0.6} sheen={1} sheenRoughness={0.5} sheenColor="#ffffff" />
-      </mesh>
-      <mesh geometry={geo.wrap}>
-        <meshPhysicalMaterial color={color} map={maps.twist} roughness={0.55} sheen={1} sheenRoughness={0.5} sheenColor="#ffffff" />
-      </mesh>
-      <mesh geometry={geo.skirt}>
-        <meshPhysicalMaterial color={color} map={maps.threads} roughness={0.6} sheen={1} sheenRoughness={0.45} sheenColor="#ffffff" />
-      </mesh>
-    </group>
-  );
-}
-
 const BOOK_CM = 0.1;
 
 /**
- * Marcador de livro (com ou sem verniz localizado — o PrintMaterial cuida do brilho) encostado na
- * capa de um livro neutro em pé: cartão com furo, cordão em nó de cotovia e pingente de franja
- * apoiado na capa. Na versão deitada (18×5), o pingente descansa no chão.
+ * Marcador de livro (com ou sem verniz localizado — o PrintMaterial cuida do brilho) encostado na capa de um
+ * livro neutro em pé: cartão liso no corte reto do gabarito, sem furo nem cordão, como na foto do produto.
+ * Na versão deitada (18×5), ele se apoia mais inclinado.
  */
 export function BookmarkModel({ spec, art, label, showDims }: ModelProps) {
   const w = Math.max(1, spec.widthCm);
@@ -1356,12 +1115,7 @@ export function BookmarkModel({ spec, art, label, showDims }: ModelProps) {
   const book = useCaseGeometry(bookW, bookH, bookGap, board, 0.3);
   const frontZ = bookGap / 2 + board;
 
-  const cardShape = useMemo(() => {
-    const shape = makeShape("rect", w, h, 0.35);
-    if (portrait) addHole(shape, 0, h / 2 - 0.9, 0.25);
-    else addHole(shape, -w / 2 + 0.9, 0, 0.25);
-    return shape;
-  }, [w, h, portrait]);
+  const cardShape = useMemo(() => makeShape("rect", w, h, 0.08), [w, h]);
   const front = useArtTexture(w / h, "front", art, label);
   const backKind = backKindOf(spec, art);
   const backTex = useBackTexture(w / h, spec, art, label);
@@ -1373,32 +1127,8 @@ export function BookmarkModel({ spec, art, label, showDims }: ModelProps) {
   const cos = Math.cos(lean);
   const xc = portrait ? bookW * 0.5 - 1.2 : bookW * 0.5;
   const yc = -bookH / 2 + (h / 2) * cos + (d / 2) * sin;
-  // Folga no topo = espessura do cordão que passa entre o marcador e a capa.
-  const zc = frontZ + (h / 2) * sin + d / 2 + 0.09;
-  const toBook = (p: Vec3): Vec3 => [p[0] + xc, p[1] * cos + p[2] * sin + yc, -p[1] * sin + p[2] * cos + zc];
-
-  // Cordão: nó de cotovia pelo furo, nó à frente do topo e fio até o pingente.
-  const hole: [number, number] = portrait ? [0, h / 2 - 0.9] : [-w / 2 + 0.9, 0];
-  const dir: [number, number] = portrait ? [0, 1] : [-1, 0];
-  const pt = (a: number, b: number, z: number): Vec3 => [hole[0] + dir[0] * a + dir[1] * b, hole[1] + dir[1] * a - dir[0] * b, z];
-  const knotLocal = pt(1.9, 0.35, 0.35);
-  const strands: Vec3[][] = [
-    [pt(0.05, 0.05, d / 2 + 0.06), pt(0.9, 0.15, d / 2 + 0.07), pt(1.6, 0.3, 0.25), knotLocal],
-    [pt(0.05, -0.05, -d / 2 - 0.035), pt(0.9, -0.1, -d / 2 - 0.035), pt(1.6, 0.25, 0.2), knotLocal],
-  ];
-  const knot = toBook(knotLocal);
-  const tasselTop: Vec3 = portrait ? [xc + w / 2 + 1.7, knot[1] - 4.2, frontZ + 0.5] : [knot[0] - 1.2, -bookH / 2 + 0.47, zc + 2.2];
-  const hang: Vec3[] = portrait
-    ? // Passa por cima da borda do marcador e depois deita encostado na capa até o pingente.
-      [knot, [knot[0] + 0.7, knot[1] + 0.4, knot[2] + 0.05], [xc + w / 2 + 0.5, (knot[1] + tasselTop[1]) / 2 + 1.2, frontZ + 0.2], [tasselTop[0] - 0.4, (knot[1] + tasselTop[1]) / 2 + 0.2, frontZ + 0.07], [tasselTop[0], tasselTop[1] + 0.5, frontZ + 0.3], tasselTop]
-    : [knot, [knot[0] - 0.5, knot[1] - 0.8, knot[2] + 0.4], [tasselTop[0] + 0.4, tasselTop[1] + 0.5, tasselTop[2] - 0.6], tasselTop];
+  const zc = frontZ + (h / 2) * sin + d / 2;
   const card = useCardGeometry(cardShape, w, h, d);
-  const strandA = useCord(strands[0], 0.05);
-  const strandB = useCord(strands[1], 0.05);
-  const hangCord = useCord(hang, 0.05);
-  const knotGeometry = useMemo(() => new THREE.SphereGeometry(0.15, 14, 10), []);
-  useGeometryCleanup(knotGeometry);
-  const tasselColor = spec.accentColor ?? "#b8923f";
   const [lw, lh] = sizeLabels(spec);
   const cloth = "#3b4852";
 
@@ -1428,15 +1158,6 @@ export function BookmarkModel({ spec, art, label, showDims }: ModelProps) {
         {/* Marcador */}
         <group position={[xc, yc, zc]} rotation-x={-lean}>
           <CutCard geometry={card} spec={spec} front={front} back={back} edgeColor="#f4f3ef" />
-          <Cord cord={strandA} color={tasselColor} />
-          <Cord cord={strandB} color={tasselColor} />
-          <mesh geometry={knotGeometry} position={knotLocal}>
-            <meshStandardMaterial color={tasselColor} roughness={0.8} />
-          </mesh>
-        </group>
-        <Cord cord={hangCord} color={tasselColor} />
-        <group position={tasselTop} rotation-z={portrait ? 0 : -Math.PI / 2}>
-          <Tassel color={tasselColor} />
         </group>
       </group>
       {showDims && KIND_INFO[spec.kind].dims && (

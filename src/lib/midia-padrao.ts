@@ -36,6 +36,8 @@ const PRODUTOS: Record<string, MidiaProduto> = {
   "329": foto("329"), // Banner 60x90cm
   "74": foto("74"), // Photobook 15x15cm
   "248": foto("248"), // Cartão de Visita
+  // Folhetos: a pilha com um folheto em pé, em perspectiva (pedido da Padrão em 25/10/2026), renderizada com a arte
+  // das fotos do Figma no mesmo cinza de estúdio.
   "349": foto("349"), // Folheto 10x14cm
   "351": foto("351"), // Folheto 10x15cm
   "33": foto("33"), // Lona c/ Bainha e Ilhós

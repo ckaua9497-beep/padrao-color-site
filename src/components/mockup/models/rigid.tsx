@@ -10,6 +10,7 @@ import { fontFamily } from "../art";
 import { useSceneMode } from "../viewer-hooks";
 import { AcrylicMaterials, Dimensions, PrintMaterial, fitFlat, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
 import { DoorHook } from "./door-hook";
+import { cutShape } from "./cut-path";
 
 type V3 = [number, number, number];
 type Plate = { body: THREE.BufferGeometry; face: THREE.BufferGeometry };
@@ -472,6 +473,139 @@ function StandoffSet({ points, front, back, size }: { points: [number, number][]
   );
 }
 
+/* ------------------------------------------------------------------ montagem (opções da variação) */
+
+/** Montagem que a variação pede, lida nas opções escolhidas (spec.details). Nada aparece sem a opção pedir. */
+type Mount = {
+  /** Espaçadores de inox nos cantos. */
+  standoffs: boolean;
+  /** Moldura: profundidade do perfil em cm ("Moldura 2cm/3cm"), ou null sem moldura. */
+  frame: number | null;
+  /** Gancho serrilhado atrás ("c/ suporte de parede", "Moldura … c/ suporte"). */
+  hanger: boolean;
+  /** Fita dupla face VHB atrás. */
+  vhb: boolean;
+};
+
+function mountOf(spec: MockupSpec): Mount {
+  const details = spec.details ?? "";
+  const depth = /\bmoldura (\d+(?:[.,]\d+)?) ?cm\b/.exec(details);
+  const framed = /\bcom moldura\b/.test(details) || Boolean(depth);
+  return {
+    standoffs: /\bespacador|\bafastador|\bdistanciador/.test(details),
+    frame: framed ? Number((depth?.[1] ?? "2").replace(",", ".")) : null,
+    hanger: /\bsuporte\b/.test(details),
+    vhb: /\b(com|c\/) fita vhb\b/.test(details),
+  };
+}
+
+/** Perfil da moldura (cm): face à vista, quanto cobre da borda da chapa e quanto fica à frente dela. */
+const FRAME = { face: 1.5, lip: 0.4, rise: 0.25, backing: 0.3 };
+
+/** Medidas da moldura em cena: contorno externo, frente e fundo. */
+function frameBox(w: number, h: number, front: number, depthCm: number, scale: number) {
+  const face = FRAME.face * scale;
+  const lip = FRAME.lip * scale;
+  const top = front + FRAME.rise * scale;
+  return { W: w + 2 * (face - lip), H: h + 2 * (face - lip), face, lip, top, back: top - depthCm * scale };
+}
+
+/**
+ * Moldura de alumínio preto (perfil reto, como na foto do quadro) em volta da chapa, cobrindo `lip` da borda, com o
+ * fundo de eucatex atrás. `front` = face da frente da chapa.
+ */
+function FrameMount({ w, h, front, depthCm, scale }: { w: number; h: number; front: number; depthCm: number; scale: number }) {
+  const box = frameBox(w, h, front, depthCm, scale);
+  const D = box.top - box.back;
+  const geometry = useMemo(() => {
+    const b = Math.min(0.12 * scale, D * 0.2, box.face * 0.2);
+    const outline = roundedRect(box.W - 2 * b, box.H - 2 * b, Math.max(0.12 * scale, b + 0.0005) - b);
+    outline.holes.push(roundedRect(w - 2 * box.lip + 2 * b, h - 2 * box.lip + 2 * b, b + 0.0005));
+    return extrudeBody(outline, D, b, 4);
+  }, [w, h, D, box.W, box.H, box.face, box.lip, scale]);
+  useGeometryCleanup(geometry);
+  const backing = FRAME.backing * scale;
+  return (
+    <group>
+      <mesh geometry={geometry} position-z={box.top - D / 2}>
+        <meshPhysicalMaterial color="#131416" metalness={0.25} roughness={0.36} clearcoat={0.5} clearcoatRoughness={0.2} />
+      </mesh>
+      <SoftBox size={[box.W - box.face * 0.7, box.H - box.face * 0.7, backing]} radius={0.05 * scale} bevel={0.02 * scale} position={[0, 0, box.back + backing / 2 + 0.0008]}>
+        <meshStandardMaterial color="#6e5b47" roughness={0.92} />
+      </SoftBox>
+    </group>
+  );
+}
+
+/** Gancho serrilhado de parede, colado no alto das costas (`z` = face de trás onde ele cola). */
+function SawHanger({ y, z, scale }: { y: number; z: number; scale: number }) {
+  const size: V3 = [4.4 * scale, 0.9 * scale, Math.max(0.12 * scale, 0.002)];
+  const teeth = 9;
+  return (
+    <group position={[0, y, z - size[2] / 2]}>
+      <SoftBox size={size} radius={size[1] * 0.12} bevel={size[2] * 0.2}>
+        <meshStandardMaterial color="#c9ccd0" metalness={1} roughness={0.3} />
+      </SoftBox>
+      {Array.from({ length: teeth }, (_, i) => (
+        <mesh key={i} position={[(i - (teeth - 1) / 2) * (size[0] / (teeth + 1)), -size[1] * 0.42, 0]} rotation-z={Math.PI / 4}>
+          <boxGeometry args={[size[1] * 0.28, size[1] * 0.28, size[2] * 1.02]} />
+          <meshStandardMaterial color="#c9ccd0" metalness={1} roughness={0.3} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** Fita dupla face VHB nas costas: espuma cinza com o liner vermelho, um pedaço perto de cada canto. */
+function VhbTape({ w, h, z, scale }: { w: number; h: number; z: number; scale: number }) {
+  const pw = Math.min(5 * scale, w * 0.28);
+  const ph = Math.min(1.9 * scale, h * 0.14);
+  const t = Math.max(0.11 * scale, 0.0015);
+  const inset = 2.2 * scale;
+  return (
+    <>
+      {corners(w, h, 0).map(([x, y]) => {
+        const px = x - Math.sign(x) * (pw / 2 + inset);
+        const py = y - Math.sign(y) * (ph / 2 + inset);
+        return (
+          <group key={`${x.toFixed(3)}:${y.toFixed(3)}`} position={[px, py, z - t / 2]}>
+            <mesh>
+              <boxGeometry args={[pw, ph, t]} />
+              <meshStandardMaterial color="#45484d" roughness={0.8} />
+            </mesh>
+            <mesh position-z={-t / 2 - 0.0004} rotation-y={Math.PI}>
+              <planeGeometry args={[pw, ph]} />
+              <meshStandardMaterial color="#c8102e" roughness={0.35} />
+            </mesh>
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+/** Ferragens e acabamentos atrás/em volta da chapa conforme a variação (moldura, espaçadores, VHB, gancho). */
+function PlateMount({ mount, w, h, d, scale, size }: { mount: Mount; w: number; h: number; d: number; scale: number; size: StandoffSize }) {
+  const framed = mount.frame !== null;
+  const box = frameBox(w, h, d / 2, mount.frame ?? 2, scale);
+  const backZ = framed ? box.back + 0.0008 : -d / 2;
+  return (
+    <>
+      {framed && <FrameMount w={w} h={h} front={d / 2} depthCm={mount.frame ?? 2} scale={scale} />}
+      {mount.standoffs && !framed && <StandoffSet points={corners(w, h, size.inset)} front={d / 2 + 0.0012} back={-d / 2} size={size} />}
+      {mount.vhb && <VhbTape w={framed ? box.W : w} h={framed ? box.H : h} z={backZ} scale={scale} />}
+      {mount.hanger && <SawHanger y={(framed ? box.H : h) / 2 - 3 * scale} z={backZ} scale={scale} />}
+    </>
+  );
+}
+
+/** Quanto a cota precisa sair da frente da chapa para não ficar atrás da montagem. */
+function mountFront(mount: Mount, d: number, size: StandoffSize, scale: number) {
+  if (mount.frame !== null) return d / 2 + FRAME.rise * scale + 0.004;
+  if (mount.standoffs) return d / 2 + size.capH;
+  return d / 2 + 0.01;
+}
+
 /** Argola de chaveiro: duas voltas de arame em hélice, pontas arredondadas. */
 function SplitRing({ radius, wire, color, position, rotation }: { radius: number; wire: number; color: string; position?: V3; rotation?: V3 }) {
   const rise = wire * 2.1 * RING_TURNS;
@@ -520,11 +654,11 @@ function usePanelPlate(spec: MockupSpec, w: number, h: number, scale: number) {
 }
 
 /** Chapa com borda do material e a arte na face da frente (a impressão cobre a face, a borda fica crua). */
-function PanelPlate({ plate, look, d, map, spec, eps = 0.0012 }: { plate: Plate; look: PanelLook; d: number; map: THREE.Texture; spec: MockupSpec; eps?: number }) {
+function PanelPlate({ plate, look, d, map, spec, eps = 0.0012, backMap }: { plate: Plate; look: PanelLook; d: number; map: THREE.Texture; spec: MockupSpec; eps?: number; backMap?: THREE.Texture }) {
   return (
     <group>
       <mesh geometry={plate.body}>
-        <meshStandardMaterial attach="material-0" color={look.back} roughness={0.86} />
+        <meshStandardMaterial attach="material-0" color={look.back} map={backMap ?? null} roughness={0.86} />
         <meshStandardMaterial attach="material-1" color={look.edge} roughness={look.edgeRoughness} />
       </mesh>
       <mesh geometry={plate.face} position-z={d / 2 + eps}>
@@ -535,10 +669,10 @@ function PanelPlate({ plate, look, d, map, spec, eps = 0.0012 }: { plate: Plate;
 }
 
 /**
- * Placa rígida impressa (PVC expandido, PS, polionda, XPS). A espessura escolhe o material e a montagem:
- * chapas finas e PVC em espaçadores de inox; XPS grosso flutuando na parede com sarrafo oculto.
- * Variantes: mosaico (arte dividida em placas sobre a parede), porteiro (aviso de maçaneta em couchê),
- * placa pet (osso em PVC com argola) e de mesa (cavalete de PS ou base de madeira com rasgo).
+ * Placa rígida impressa (PVC expandido, PS, polionda, XPS). A montagem sai das opções da variação (moldura,
+ * fita VHB, gancho de parede, espaçadores só quando a opção pede); XPS grosso flutua na parede com sarrafo oculto.
+ * Variantes: mosaico (arte dividida em placas sobre a parede), porteiro (aviso de maçaneta em couchê), placa pet
+ * (osso em PVC) e de mesa (PS dobrado em L ou placa de PVC em pés de acrílico).
  */
 export function PanelModel(props: ModelProps) {
   switch (props.spec.variant) {
@@ -552,10 +686,68 @@ export function PanelModel(props: ModelProps) {
     case "pet-tag":
       return <PetTag {...props} />;
     case "desk":
-      return props.spec.depthCm < 0.4 ? <EaselPanel {...props} /> : <BlockPanel {...props} />;
+      return props.spec.depthCm < 0.4 ? <BentDisplay {...props} /> : <DeskPlaque {...props} />;
     default:
       return <WallPanel {...props} />;
   }
+}
+
+/** Passo das canaletas da polionda de 3 mm (cm). */
+const FLUTE_PITCH = 0.42;
+
+/**
+ * Polionda vista pela borda: as bocas das canaletas (paredes finas entre furos escuros), e as nervuras de dentro
+ * aparecendo de leve nas costas sem impressão. u corre ao longo da borda, v na espessura.
+ */
+function fluteTextures(repeat: number, backRepeat: number) {
+  const edge = document.createElement("canvas");
+  edge.width = 32;
+  edge.height = 16;
+  const ctx = edge.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#eef0f1";
+    ctx.fillRect(0, 0, 32, 16);
+    ctx.fillStyle = "#3b3f44";
+    ctx.beginPath();
+    ctx.roundRect(3, 3, 26, 10, 2);
+    ctx.fill();
+    ctx.fillStyle = "#6c7177";
+    ctx.fillRect(3, 3, 26, 2);
+  }
+  const ribs = document.createElement("canvas");
+  ribs.width = 32;
+  ribs.height = 4;
+  const rctx = ribs.getContext("2d");
+  if (rctx) {
+    rctx.fillStyle = "#ffffff";
+    rctx.fillRect(0, 0, 32, 4);
+    rctx.fillStyle = "#dfe2e5";
+    rctx.fillRect(0, 0, 4, 4);
+  }
+  const make = (canvas: HTMLCanvasElement, u: number) => {
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(u, 1);
+    texture.anisotropy = 4;
+    return texture;
+  };
+  return { edge: make(edge, repeat), back: make(ribs, backRepeat) };
+}
+
+/** Bordas de cima e de baixo da polionda com as canaletas à mostra. */
+function FluteEdges({ w, h, d, map }: { w: number; h: number; d: number; map: THREE.Texture }) {
+  return (
+    <>
+      {[1, -1].map((side) => (
+        <mesh key={side} position-y={side * (h / 2 + 0.0004)} rotation-x={-side * (Math.PI / 2)}>
+          <planeGeometry args={[w * 0.985, d * 0.9]} />
+          <meshStandardMaterial map={map} roughness={0.6} />
+        </mesh>
+      ))}
+    </>
+  );
 }
 
 function WallPanel({ spec, art, label, showDims }: ModelProps) {
@@ -563,23 +755,33 @@ function WallPanel({ spec, art, label, showDims }: ModelProps) {
   const front = useArtTexture(artAspect(spec), "front", art, label);
   const { plate, look, d } = usePanelPlate(spec, w, h, scale);
   const thick = spec.depthCm >= 1.5;
+  const mount = mountOf(spec);
   const size = standoffSize(scale, w, h);
+  const polionda = /\bpolionda\b/.test(spec.details ?? "");
+  const flutes = useMemo(() => (polionda ? fluteTextures(w / (FLUTE_PITCH * scale), 1 / (FLUTE_PITCH * scale)) : null), [polionda, w, scale]);
+  useEffect(
+    () => () => {
+      flutes?.edge.dispose();
+      flutes?.back.dispose();
+    },
+    [flutes],
+  );
   const [lw, lh] = sizeLabels(spec);
   const cleatH = Math.max(3 * scale, 0.05);
   const cleatD = Math.max(1.2 * scale, 0.02);
   const pose = usePose([-0.05, 0.32, 0]);
   return (
     <group rotation={pose} userData={{ unitsPerCm: scale }}>
-      <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
-      {thick ? (
+      <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} backMap={flutes?.back} />
+      {flutes && <FluteEdges w={w} h={h} d={d} map={flutes.edge} />}
+      {thick && mount.frame === null && (
         // XPS: sarrafo de alumínio escondido atrás, a placa "flutua" na parede.
         <SoftBox size={[w * 0.55, cleatH, cleatD]} radius={cleatH * 0.15} bevel={cleatD * 0.15} position={[0, h / 2 - cleatH * 2, -d / 2 - cleatD / 2]}>
           <meshStandardMaterial color="#b8bcc1" metalness={0.85} roughness={0.4} />
         </SoftBox>
-      ) : (
-        <StandoffSet points={corners(w, h, size.inset)} front={d / 2 + 0.0012} back={-d / 2} size={size} />
       )}
-      {showDims && <Dimensions w={w} h={h} z={d / 2 + (thick ? 0.01 : size.capH)} labelW={lw} labelH={lh} />}
+      <PlateMount mount={mount} w={w} h={h} d={d} scale={scale} size={size} />
+      {showDims && <Dimensions w={w} h={h} z={mountFront(mount, d, size, scale)} labelW={lw} labelH={lh} />}
     </group>
   );
 }
@@ -628,118 +830,159 @@ function MosaicPanel({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Display de mesa em PS fino: placa inclinada sustentada por um pé (cavalete) do mesmo PS atrás. */
-function EaselPanel({ spec, art, label, showDims }: ModelProps) {
+/** Retângulo com os cantos de cima arredondados e a base reta (continua na dobra do display), centrado. */
+function topRoundedRect(w: number, h: number, r: number) {
+  const rr = THREE.MathUtils.clamp(r, 0.0005, Math.min(w, h) * 0.45);
+  const s = new THREE.Shape();
+  s.moveTo(-w / 2, -h / 2);
+  s.lineTo(w / 2, -h / 2);
+  s.absarc(w / 2 - rr, h / 2 - rr, rr, 0, Math.PI / 2, false);
+  s.absarc(-w / 2 + rr, h / 2 - rr, rr, Math.PI / 2, Math.PI, false);
+  s.closePath();
+  return s;
+}
+
+/**
+ * Display de mesa em PS 2 mm dobrado a quente em L, como na foto do produto: a placa impressa inclinada para trás,
+ * uma dobra de raio curto e o pé liso apoiado na mesa, indo para trás. Seção da dobra e do pé no plano (z, y) da
+ * base da placa, extrudada na largura.
+ */
+function BentDisplay({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale } = fitFlat(spec, 2.3);
   const front = useArtTexture(artAspect(spec), "front", art, label);
-  const { plate, look, d } = usePanelPlate(spec, w, h, scale);
-  const lean = 0.22;
-  const attach = h * 0.62;
-  const p: [number, number] = [attach * Math.cos(lean) - (d / 2) * Math.sin(lean), -attach * Math.sin(lean) - (d / 2) * Math.cos(lean)];
-  const foot: [number, number] = [0, p[1] - attach * 0.5];
-  const strutL = Math.hypot(p[0] - foot[0], p[1] - foot[1]);
-  const strutAngle = Math.atan2(p[1] - foot[1], p[0] - foot[0]);
-  const strut = useMemo(() => {
-    const top = w * 0.15;
-    const bottom = w * 0.19;
-    const s = new THREE.Shape();
-    s.moveTo(-bottom, 0);
-    s.lineTo(bottom, 0);
-    s.lineTo(top, strutL);
-    s.lineTo(-top, strutL);
-    s.closePath();
-    return extrudeBody(s, d, Math.min(d * 0.25, 0.003));
-  }, [w, strutL, d]);
-  useGeometryCleanup(strut);
+  const look = panelLook(spec.depthCm);
+  const d = Math.max(spec.depthCm * scale, 0.006);
+  const lean = 0.2;
+  const parts = useMemo(() => {
+    const shape = topRoundedRect(w, h, Math.max(look.radiusCm * scale, 0.004));
+    const plate: Plate = { body: extrudeBody(shape, d, 0), face: printFace(shape, w, h) };
+    // Dobra: centro atrás da placa; o raio de fora é o da frente. Vira 90° + inclinação, e o pé sai na horizontal.
+    const r = 0.9 * scale;
+    const turn = Math.PI / 2 + lean;
+    const foot = Math.max(h * 0.34, 5 * scale);
+    const cz = -d / 2 - r;
+    const at = (radius: number, t: number) => new THREE.Vector2(cz + radius * Math.cos(t), -radius * Math.sin(t));
+    const tangent = new THREE.Vector2(-Math.sin(turn), -Math.cos(turn));
+    const steps = 18;
+    const outer: THREE.Vector2[] = [];
+    const inner: THREE.Vector2[] = [];
+    for (let k = 0; k <= steps; k += 1) {
+      const t = (k / steps) * turn;
+      outer.push(at(r + d, t));
+      inner.push(at(r, t));
+    }
+    const outerEnd = outer[steps].clone().addScaledVector(tangent, foot);
+    const innerEnd = inner[steps].clone().addScaledVector(tangent, foot);
+    const section = new THREE.Shape([...outer, outerEnd, innerEnd, ...inner.reverse()]);
+    const bend = extrudeBody(section, w, 0);
+    bend.rotateY(-Math.PI / 2);
+    return { plate, bend };
+  }, [w, h, d, scale, look.radiusCm]);
+  usePlateCleanup(parts.plate);
+  useGeometryCleanup(parts.bend);
   const [lw, lh] = sizeLabels(spec);
-  const pose = usePose([0, 0.42, 0]);
+  const pose = usePose([0, 0.5, 0]);
   return (
     <group rotation={pose} userData={{ unitsPerCm: scale }}>
       <group rotation-x={-lean}>
         <group position-y={h / 2}>
-          <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
+          <PanelPlate plate={parts.plate} look={look} d={d} map={front} spec={spec} />
           {showDims && <Dimensions w={w} h={h} z={d / 2 + 0.01} labelW={lw} labelH={lh} />}
         </group>
-      </group>
-      {/* Pé articulado: sobe do apoio na mesa até as costas da placa. */}
-      <group position={[0, foot[0], foot[1]]} rotation-x={strutAngle}>
-        <mesh geometry={strut} position-z={-d / 2}>
-          <meshStandardMaterial color={look.edge} roughness={0.55} />
+        <mesh geometry={parts.bend}>
+          <meshStandardMaterial color={look.edge} roughness={look.edgeRoughness} />
         </mesh>
       </group>
     </group>
   );
 }
 
-/** Quadro de mesa em PVC: encaixado no rasgo de uma base de carvalho. */
-function BlockPanel({ spec, art, label, showDims }: ModelProps) {
+/** Margem branca do quadro de mesa: a arte vai até 5 mm do corte (gabarito oficial). */
+const PLAQUE_MARGIN = 0.5;
+
+/**
+ * Quadro de mesa em PVC 5 mm, como na foto do produto: a placa com a foto (margem branca de 5 mm do gabarito) em pé
+ * em dois pés de acrílico com rasgo. Cada pé é a seção (z, y) com o rasgo no meio, extrudada na espessura.
+ */
+function DeskPlaque({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale } = fitFlat(spec, 2.3);
-  const front = useArtTexture(artAspect(spec), "front", art, label);
-  const { plate, look, d } = usePanelPlate(spec, w, h, scale);
-  const baseW = w * 1.06 + 0.06;
-  const baseH = Math.max(2.2 * scale, 0.14);
-  const baseD = Math.max(5 * scale, d * 8, 0.32);
-  const sink = Math.min(0.8 * scale, baseH * 0.45);
-  const base = useMemo(() => barGeometry(baseW, baseH, baseD, baseH * 0.18, baseH * 0.1), [baseW, baseH, baseD]);
-  useGeometryCleanup(base);
-  // Repetição em cm (a cena muda de escala com o tamanho): ~11 veios por cm, ondas a cada ~12 cm.
-  const wood = useMemo(() => createWoodTexture(OAK, 11, 0.12 / scale, 0.08 / scale), [scale]);
-  useDisposable(wood);
+  const m = PLAQUE_MARGIN * scale;
+  const front = useArtTexture((w - 2 * m) / (h - 2 * m), "front", art, label);
+  const { plate: body, look, d } = usePanelPlate(spec, w, h, scale);
+  const plate = useMemo<Plate>(() => ({ body: body.body, face: printFace(roundedRect(w - 2 * m, h - 2 * m, 0.0006), w - 2 * m, h - 2 * m) }), [body.body, w, h, m]);
+  useGeometryCleanup(plate.face);
+  const foot = { thick: 1.1 * scale, height: 2.4 * scale, depth: Math.max(4.6 * scale, d * 6), slot: 1.2 * scale };
+  const geometry = useMemo(() => {
+    // Contorno recuado pelo chanfro (extrudeBody o devolve na medida): base em y = 0, rasgo com folga para a placa.
+    const b = foot.thick * 0.12;
+    const x1 = foot.depth / 2 - b;
+    const y1 = foot.height - b;
+    const gap = d / 2 + 0.02 * scale + b;
+    const floor = foot.height - foot.slot + b;
+    const r = foot.height * 0.3;
+    const s = new THREE.Shape();
+    s.moveTo(-x1, b);
+    s.lineTo(x1, b);
+    s.lineTo(x1, y1 - r);
+    s.quadraticCurveTo(x1, y1, x1 - r, y1);
+    s.lineTo(gap, y1);
+    s.lineTo(gap, floor);
+    s.lineTo(-gap, floor);
+    s.lineTo(-gap, y1);
+    s.lineTo(-x1 + r, y1);
+    s.quadraticCurveTo(-x1, y1, -x1, y1 - r);
+    s.closePath();
+    const g = extrudeBody(s, foot.thick, b, 8);
+    g.rotateY(-Math.PI / 2);
+    return g;
+  }, [foot.depth, foot.height, foot.slot, foot.thick, d, scale]);
+  useGeometryCleanup(geometry);
+  const plateY = foot.height - foot.slot + h / 2;
+  const footX = w / 2 - Math.max(w * 0.17, foot.thick);
   const [lw, lh] = sizeLabels(spec);
-  const pose = usePose([0, 0.38, 0]);
+  const pose = usePose([0, 0.42, 0]);
   return (
     <group rotation={pose} userData={{ unitsPerCm: scale }}>
-      <mesh geometry={base} position-y={baseH / 2}>
-        <meshStandardMaterial map={wood} roughness={0.62} />
-      </mesh>
-      {/* Rasgo da base, escuro, em volta da placa. */}
-      <SoftBox size={[w + 0.012, d * 1.3 + 0.006, 0.004]} radius={0.002} bevel={0} position={[0, baseH + 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <meshStandardMaterial color="#2a1c10" roughness={0.9} />
-      </SoftBox>
-      <group position-y={baseH - sink} rotation-x={-0.06}>
-        <group position-y={h / 2}>
-          <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
-          {showDims && <Dimensions w={w} h={h} z={d / 2 + 0.01} labelW={lw} labelH={lh} />}
-        </group>
+      {[-1, 1].map((side) => (
+        <mesh key={side} geometry={geometry} position-x={side * footX} renderOrder={1}>
+          <AcrylicMaterials />
+        </mesh>
+      ))}
+      <group position-y={plateY}>
+        <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
+        {/* Margem branca do PVC em volta da arte. */}
+        <mesh geometry={body.face} position-z={d / 2 + 0.0006}>
+          <meshStandardMaterial color="#fbfbf9" roughness={0.5} />
+        </mesh>
+        {showDims && <Dimensions w={w} h={h} z={d / 2 + 0.01} labelW={lw} labelH={lh} />}
       </group>
     </group>
   );
 }
 
 /**
- * Contorno do aviso de porta: retângulo com furo para a maçaneta e a fenda diagonal que leva até a borda.
- * O furo faz parte do contorno (a fenda o abre), por isso é percorrido no sentido horário.
+ * Corte do porteiro 8,2 × 22 cm do gabarito oficial (mm, y para baixo): topo em meia-lua com o furo da maçaneta
+ * (Ø 54 mm) aberto à esquerda por uma fenda, que forma o gancho; cantos de baixo levemente arredondados.
  */
-function doorHangerShape(w: number, h: number, holeR: number, holeY: number, corner: number) {
-  const theta = -0.62;
-  const half = Math.asin(Math.min(0.9, 0.06 / holeR));
-  const dx = Math.cos(theta);
-  const dy = Math.sin(theta);
-  const a = new THREE.Vector2(holeR * Math.cos(theta - half), holeY + holeR * Math.sin(theta - half));
-  const b = new THREE.Vector2(holeR * Math.cos(theta + half), holeY + holeR * Math.sin(theta + half));
-  const ae = new THREE.Vector2(w / 2, a.y + ((w / 2 - a.x) / dx) * dy);
-  const be = new THREE.Vector2(w / 2, b.y + ((w / 2 - b.x) / dx) * dy);
-  const r = corner;
-  const s = new THREE.Shape();
-  s.moveTo(-w / 2 + r, -h / 2);
-  s.absarc(w / 2 - r, -h / 2 + r, r, -Math.PI / 2, 0, false);
-  s.lineTo(ae.x, ae.y);
-  s.lineTo(a.x, a.y);
-  s.absarc(0, holeY, holeR, theta - half, theta + half, true);
-  s.lineTo(be.x, be.y);
-  s.absarc(w / 2 - r, h / 2 - r, r, 0, Math.PI / 2, false);
-  s.absarc(-w / 2 + r, h / 2 - r, r, Math.PI / 2, Math.PI, false);
-  s.absarc(-w / 2 + r, -h / 2 + r, r, Math.PI, Math.PI * 1.5, false);
-  return s;
-}
+const PORTEIRO_CUT = {
+  box: { x: 3.2, y: 3.2, w: 82, h: 221 },
+  d: "M44.2 3.2C66.7 3.2 85.2 21.9 85.2 45L85.2 213.3C85.2 215.3 85.1 217.5 84.6 219.4C84.3 220.8 83.7 222.1 82.5 222.9C81.3 223.9 79.7 224.1 78.2 224.1C76.4 224.2 74.4 224.1 72.6 224.1L15.4 224.1C13.5 224.1 11.6 224.3 9.7 224.2C8.2 224.2 6.7 224.1 5.5 223.2C4.4 222.4 3.9 221.2 3.6 220C3.2 218.3 3.2 216.4 3.2 214.7L3.2 72C3.2 67.8 5.2 63.8 9.8 63.8L19.1 63.8C22.9 63.8 25.7 64.7 28.9 66.7C30.9 68 32.7 69.4 34.9 70.4C37.9 71.7 41 72.1 44.2 72.1C58.8 72.1 70.7 60.1 70.7 45C70.7 30 58.8 18 44.2 18C32.5 18 21.1 25.9 18.6 37.9C18 40.6 16.6 43.4 14.2 44.8C12.3 46 10 46.2 8 45.3C4.8 43.9 3.3 40.5 3.9 37.1C7.5 17.3 24.7 3.2 44.2 3.2Z",
+  /** Centro do furo (cm, a partir do centro do corte) e raio. */
+  hole: { y: 6.87, r: 2.7 },
+};
 
-/** Porteiro: aviso de maçaneta em couchê 300 g pendurado numa porta de madeira com maçaneta de alavanca. */
+/**
+ * Porteiro: cartão de couchê 300 g no corte do gabarito (furo e fenda da maçaneta), pendurado na maçaneta de
+ * alavanca de uma porta de madeira.
+ */
 function DoorHanger({ spec, art, label, showDims }: ModelProps) {
   // Medidas em cm; o grupo escala para a cena. O porteiro é sempre em pé (8,2 × 22).
   const W = Math.max(Math.min(spec.widthCm, spec.heightCm), 1);
   const H = Math.max(spec.widthCm, spec.heightCm, W * 1.6);
-  const holeR = W * 0.22;
-  const holeY = H / 2 - W * 0.36;
+  const sx = W / (PORTEIRO_CUT.box.w / 10);
+  const sy = H / (PORTEIRO_CUT.box.h / 10);
+  const holeR = PORTEIRO_CUT.hole.r * Math.min(sx, sy);
+  const holeY = PORTEIRO_CUT.hole.y * sy;
   const { neckR, neckL, roseT, leverL } = HANDLE;
   const hangZ = roseT + neckL * 0.42;
   const reach = holeY + holeR + H / 2;
@@ -751,9 +994,9 @@ function DoorHanger({ spec, art, label, showDims }: ModelProps) {
   const eps = 0.0012 / U;
   const front = useArtTexture(W / H, "front", art, label);
   const plate = useMemo<Plate>(() => {
-    const shape = doorHangerShape(W, H, holeR, holeY, Math.min(0.5, W * 0.06));
+    const shape = cutShape(PORTEIRO_CUT.d, PORTEIRO_CUT.box, [sx, sy]);
     return { body: extrudeBody(shape, PAPER_CM, 0, 12), face: printFace(shape, W, H, 12) };
-  }, [W, H, holeR, holeY]);
+  }, [W, H, sx, sy]);
   usePlateCleanup(plate);
   const rose = useMemo(() => latheZ(capProfile(HANDLE.roseR, HANDLE.roseT)), []);
   const neck = useMemo(() => latheZ(barrelProfile(HANDLE.neckR, HANDLE.neckL + 0.2)), []);
@@ -797,56 +1040,31 @@ function DoorHanger({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Contorno de osso: barra central e quatro lóbulos que se cruzam nas pontas. */
-function boneShape(w: number, h: number) {
-  const rl = h * 0.3;
-  const cy = h / 2 - rl;
-  const cx = w / 2 - rl;
-  const hb = h * 0.22;
-  const notch = Math.asin(cy / rl);
-  const join = Math.asin((hb - cy) / rl);
-  const s = new THREE.Shape();
-  s.moveTo(cx + rl * Math.cos(notch), 0);
-  s.absarc(cx, cy, rl, -notch, Math.PI - join, false);
-  s.absarc(-cx, cy, rl, join, Math.PI + notch, false);
-  s.absarc(-cx, -cy, rl, Math.PI - notch, Math.PI * 2 - join, false);
-  s.absarc(cx, -cy, rl, Math.PI + join, Math.PI * 2 + notch, false);
-  return { shape: s, holeX: -cx };
-}
+/**
+ * Corte da placa pet 5,5 × 3 cm do gabarito oficial (mm, y para baixo): osso de quatro lóbulos com a orelha no meio
+ * do topo e o furo de Ø 3 mm da argola.
+ */
+const PET_CUT = {
+  box: { x: 2, y: 2, w: 55, h: 30 },
+  d: "M20.7 6.8L17.7 6.8C16.7 6.8 15.8 6.3 15.3 5.6L15.3 5.6C14 3.4 11.8 2 9.2 2C5.2 2 2 5.6 2 10C2 12.9 3.6 14.2 3.6 17C3.6 19.8 2 21.1 2 24C2 28.4 5.2 32 9.2 32C11.7 32 13.8 30.7 15.1 28.7C15.8 27.8 16.9 27.2 18.2 27.2L29.5 27.2L40.8 27.2C42.1 27.2 43.2 27.8 43.9 28.7C45.2 30.7 47.3 32 49.8 32C53.8 32 57 28.4 57 24C57 21.1 55.4 19.8 55.4 17C55.4 14.2 57 12.9 57 10C57 5.6 53.8 2 49.8 2C47.2 2 45 3.4 43.7 5.6L43.7 5.6C43.2 6.3 42.3 6.8 41.3 6.8L38.3 6.8L36 6.8C34.8 6.8 33.8 6.1 33.3 5.1C33.3 5.1 32.4 2.1 29.5 2.1C26.6 2.1 25.7 5.1 25.7 5.1C25.2 6.1 24.2 6.8 23 6.8ZM29.5 4.4C30.3 4.4 31 5 31 5.9C31 6.7 30.3 7.4 29.5 7.4C28.7 7.4 28 6.7 28 5.9C28 5 28.7 4.4 29.5 4.4Z",
+};
 
-/** Placa de identificação pet: osso de PVC 5 mm deitado, com argola de aço passando pelo furo. */
+/** Placa de identificação pet: osso de PVC 5 mm no corte do gabarito, deitado e em 3/4, como na foto do produto. */
 function PetTag({ spec, art, label, showDims }: ModelProps) {
   const W = Math.max(spec.widthCm, spec.heightCm, 1);
   const H = Math.max(Math.min(spec.widthCm, spec.heightCm), 0.5);
   const d = Math.max(spec.depthCm, 0.2);
-  const b = Math.min(0.07, d * 0.3);
+  // Borda boleada de leve (fresa): o contorno entra recuado e o chanfro devolve a medida do corte.
+  const b = Math.min(0.03, d * 0.2);
   const U = 2.3 / W;
-  const holeR = H * 0.085;
   const front = useArtTexture(W / H, "front", art, label);
-  const { plate, holeX } = useMemo(() => {
-    const bone = boneShape(W - 2 * b, H - 2 * b);
-    const hole = new THREE.Path();
-    hole.absarc(bone.holeX, 0, holeR, 0, Math.PI * 2, true);
-    bone.shape.holes.push(hole);
-    const result: Plate = { body: extrudeBody(bone.shape, d, b, 10), face: printFace(bone.shape, W, H, 10) };
-    return { plate: result, holeX: bone.holeX };
-  }, [W, H, d, b, holeR]);
+  const plate = useMemo<Plate>(() => {
+    const sx = (W - 2 * b) / (PET_CUT.box.w / 10);
+    const sy = (H - 2 * b) / (PET_CUT.box.h / 10);
+    const shape = cutShape(PET_CUT.d, PET_CUT.box, [sx, sy]);
+    return { body: extrudeBody(shape, d, b, 10), face: printFace(shape, W, H, 10) };
+  }, [W, H, d, b]);
   usePlateCleanup(plate);
-  // Argolinha em pé: entra pelo furo, abraça a ponta do osso e passa por baixo dela (a peça apoia no arame).
-  const jumpR = Math.max(H * 0.2, d * 0.75);
-  const jumpWire = H * 0.017;
-  const jumpZ = -d / 2 - jumpWire + jumpR;
-  const crossTop = Math.sqrt(Math.max(jumpR ** 2 - (d / 2 - jumpZ) ** 2, 0));
-  const crossBottom = Math.sqrt(Math.max(jumpR ** 2 - (-d / 2 - jumpZ) ** 2, 0));
-  const jumpX = holeX - (crossTop + crossBottom) / 2;
-  // Argola dupla deitada na mesa, enfiada na argolinha do lado de fora do osso.
-  const splitR = H * 0.36;
-  const splitWire = H * 0.022;
-  const splitRise = splitWire * 2.1 * RING_TURNS;
-  const floor = -d / 2 - 2 * jumpWire;
-  const jump = useMemo(() => loopGeometry(jumpR, jumpR, jumpWire), [jumpR, jumpWire]);
-  useGeometryCleanup(jump);
-  const metal = metalColor(spec.metal);
   const look: PanelLook = { edge: "#fbfbf9", edgeRoughness: 0.8, back: "#f3f3f1", bevelCm: b, radiusCm: 0 };
   const [lw, lh] = sizeLabels(spec);
   const labels: [string, string] = spec.widthCm < spec.heightCm ? [lh, lw] : [lw, lh];
@@ -854,10 +1072,6 @@ function PetTag({ spec, art, label, showDims }: ModelProps) {
     <group rotation-y={0.3} userData={{ view: { elevation: 0.85 } }}>
       <group rotation-x={-Math.PI / 2} scale={U}>
         <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} eps={0.0012 / U} />
-        <mesh geometry={jump} position={[jumpX, 0, jumpZ]} rotation-x={Math.PI / 2}>
-          <meshStandardMaterial color={metal} metalness={1} roughness={0.2} />
-        </mesh>
-        <SplitRing radius={splitR} wire={splitWire} color={metal} position={[jumpX - jumpR * 0.85 - splitR, 0, floor + splitRise / 2 + splitWire]} />
       </group>
       {showDims && (
         <group rotation-x={-Math.PI / 2}>
@@ -899,7 +1113,7 @@ function AcrylicSheet({ plate, d, map, spec, eps = 0.0012 }: { plate: Plate; d: 
 
 /**
  * Acrílico com impressão UV no verso: chapa de borda polida (faces quase invisíveis, bordas esverdeadas)
- * e a arte por trás. Padrão: quadro na parede com espaçadores de inox. Variantes: display de mesa em L
+ * e a arte por trás. Padrão: quadro na parede, com a montagem da variação (moldura, VHB, espaçadores). Variantes: display de mesa em L
  * (chapa grossa colada num pé) e calendário (bloco de acrílico com chapa e folhas em wire-o).
  */
 export function AcrylicModel(props: ModelProps) {
@@ -914,13 +1128,14 @@ function AcrylicWall({ spec, art, label, showDims }: ModelProps) {
   const plate = useAcrylicPlate(w, h, d, Math.max(0.35 * scale, 0.02));
   const front = useArtTexture(artAspect(spec), "front", art, label);
   const size = standoffSize(scale, w, h);
+  const mount = mountOf(spec);
   const [lw, lh] = sizeLabels(spec);
   const pose = usePose([-0.05, 0.34, 0]);
   return (
     <group rotation={pose} userData={{ unitsPerCm: scale }}>
       <AcrylicSheet plate={plate} d={d} map={front} spec={spec} />
-      <StandoffSet points={corners(w, h, size.inset)} front={d / 2} back={-d / 2} size={size} />
-      {showDims && <Dimensions w={w} h={h} z={d / 2 + size.capH} labelW={lw} labelH={lh} />}
+      <PlateMount mount={mount} w={w} h={h} d={d} scale={scale} size={size} />
+      {showDims && <Dimensions w={w} h={h} z={mountFront(mount, d, size, scale)} labelW={lw} labelH={lh} />}
     </group>
   );
 }

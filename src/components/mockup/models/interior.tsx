@@ -485,9 +485,8 @@ export function WallpaperModel({ spec, art, label, showDims }: ModelProps) {
 /** Manta magnética flexível de 0,8 mm. */
 const MAGNET_CM = 0.08;
 const MAGNET_BROWN = "#4a3426";
-/** Bloquinho de 12 folhas de offset 70 g (~1,4 mm), proporção 5 × 6,5 cm. */
+/** Bloquinho de 12 folhas de offset 70 g (~1,4 mm). */
 const PAD_CM = 0.14;
-const PAD_ASPECT = 5 / 6.5;
 /** Fração da altura do bloquinho colada atrás do ímã (fica escondida). */
 const PAD_TUCK = 0.16;
 /** Folha do bilhete (~0,1 mm) entre a porta e o ímã. */
@@ -561,8 +560,14 @@ function magnetLayout(spec: ModelProps["spec"]): MagnetLayout {
   let mh = sh;
   let pad: MagnetLayout["pad"] = null;
   if (calendar) {
-    const padW = ownSize ? sw : sw * 0.92;
-    const padH = ownSize ? sh : padW / PAD_ASPECT;
+    // Imã c/ Calendário: o gabarito do ímã é paisagem (5 × 4,5 cm, mesmo com o formato "4,5x5,0 cm") e o
+    // bloquinho, da largura do ímã e um pouco mais baixo que ele, fica preso embaixo (foto do produto).
+    if (!ownSize) {
+      mw = Math.max(sw, sh);
+      mh = Math.min(sw, sh);
+    }
+    const padW = ownSize ? sw : mw * 0.96;
+    const padH = ownSize ? sh : padW * 0.92;
     if (ownSize) {
       mw = padW / 0.92;
       mh = mw * 1.11;
