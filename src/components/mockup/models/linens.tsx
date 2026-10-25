@@ -497,6 +497,8 @@ type TowelLayout = {
   artW: number;
   artH: number;
   fitness: boolean;
+  /** Toalha de rosto: a arte é a faixa sublimada costurada perto da ponta da frente, entre linhas da barra. */
+  strip: boolean;
   half: number;
   hem: number;
   band: number;
@@ -509,11 +511,28 @@ type TowelLayout = {
   total: number;
 };
 
+/** Faixa sublimada da toalha de rosto (gabarito "Faixa 47 × 10 cm"): 2,5 cm de cada lado dobram para trás. */
+const FACE_STRIP = { w: 47, h: 10 };
+
 /**
- * Medidas da toalha dobrada no varão (cm). Rosto e mão: a aba da frente mostra a arte inteira com a
- * barra maquinetada embaixo. Fitness: a arte é a faixa sublimada (28 × 8 cm) costurada no atoalhado.
+ * Medidas da toalha dobrada no varão (cm). Mão: a aba da frente mostra a arte inteira com a barra maquinetada
+ * embaixo. Fitness: a arte é a faixa sublimada (28 × 8 cm) costurada no atoalhado. Rosto (revisão da Padrão de
+ * 25/10/2026, foto do produto: "impressão só num ponto"): toalha branca de 42 × 72,5 cm, a faixa do gabarito
+ * costurada perto da ponta da frente, entre duas linhas da barra maquinetada; a faixa passa da largura da toalha
+ * e a arte some nas bordas, onde ela dobra.
  */
-function towelLayout(widthCm: number, heightCm: number, fitness: boolean): TowelLayout {
+function towelLayout(widthCm: number, heightCm: number, fitness: boolean, strip = false): TowelLayout {
+  if (strip) {
+    const width = Math.max(10, widthCm);
+    const length = Math.max(30, heightCm);
+    const half = 0.3;
+    const hem = 1.2;
+    const radius = BAR_R + half + 0.08;
+    const arc = Math.PI * radius;
+    const front = length * 0.56;
+    const back = Math.max(10, length - front - arc);
+    return { artW: FACE_STRIP.w, artH: FACE_STRIP.h, fitness: false, strip, half, hem, band: 3.5, width, artB0: hem + 7.5, front, back, radius, arc, total: front + arc + back };
+  }
   const artW = Math.max(5, widthCm);
   const artH = Math.max(3, heightCm);
   const half = fitness ? 0.24 : 0.3;
@@ -525,12 +544,13 @@ function towelLayout(widthCm: number, heightCm: number, fitness: boolean): Towel
   const back = Math.max(band + hem + 8, front * (fitness ? 0.72 : 0.58));
   const radius = BAR_R + half + 0.08;
   const arc = Math.PI * radius;
-  return { artW, artH, fitness, half, hem, band, width, artB0, front, back, radius, arc, total: front + arc + back };
+  return { artW, artH, fitness, strip: false, half, hem, band, width, artB0, front, back, radius, arc, total: front + arc + back };
 }
 
 function HangingTowel({ spec, art, label }: ModelProps) {
   const fitness = spec.variant === "fitness";
-  const layout = useMemo(() => towelLayout(spec.widthCm, spec.heightCm, fitness), [spec.widthCm, spec.heightCm, fitness]);
+  const strip = spec.variant === "face";
+  const layout = useMemo(() => towelLayout(spec.widthCm, spec.heightCm, fitness, strip), [spec.widthCm, spec.heightCm, fitness, strip]);
   const texture = useArtTexture(layout.artW / layout.artH, "front", art, label);
   const terry = usePattern("terry", layout.artW / 6, layout.artH / 6);
   const ribs = usePattern("ribs", layout.artW / 4, layout.artH / 4);
@@ -541,11 +561,11 @@ function HangingTowel({ spec, art, label }: ModelProps) {
     const artTop = L.artB0 + L.artH;
     const bandBack = L.total - L.hem - L.band;
     const as = L.fitness ? track(-L.width / 2, [[-artA, 0.75], [artA, 0.75], [L.width / 2, 0.75]]) : track(-L.width / 2, [[L.width / 2, 0.8]]);
+    // Rosto: linhas da barra (1,1 cm) logo abaixo e logo acima da faixa.
+    const line = 1.1;
     const bs = track(0, [
       [L.hem, 0.6],
-      [L.hem + L.band, 0.8],
-      [L.artB0, 1],
-      [artTop, 1.1],
+      ...(L.strip ? ([[L.artB0 - line, 1], [L.artB0, 0.4], [artTop, 0.5], [artTop + line, 0.4]] as [number, number][]) : ([[L.hem + L.band, 0.8], [L.artB0, 1], [artTop, 1.1]] as [number, number][])),
       [L.front, 1],
       [L.front + L.arc, 0.35],
       [bandBack, 1.2],
@@ -559,7 +579,8 @@ function HangingTowel({ spec, art, label }: ModelProps) {
       art: { a0: -artA, b0: L.artB0, w: L.artW, h: L.artH },
       outer: (a, b) => {
         if (b > L.artB0 && b < artTop && Math.abs(a) < artA) return 2;
-        if (L.band > 0 && ((b > L.hem && b < L.hem + L.band) || (b > bandBack && b < L.total - L.hem))) return 1;
+        if (L.strip && ((b > L.artB0 - line && b <= L.artB0) || (b >= artTop && b < artTop + line))) return 1;
+        if (L.band > 0 && ((!L.strip && b > L.hem && b < L.hem + L.band) || (b > bandBack && b < L.total - L.hem))) return 1;
         return 0;
       },
     };
@@ -581,9 +602,9 @@ function HangingTowel({ spec, art, label }: ModelProps) {
       if (b <= L.front) {
         const depth = L.front - b;
         let z = R + hang(a, depth, 0.6);
-        // Bainha dobrada (mais grossa) e, na fitness, a faixa costurada por cima do atoalhado.
+        // Bainha dobrada (mais grossa) e, na fitness e na de rosto, a faixa costurada por cima do atoalhado.
         z += 0.14 * (1 - smooth(L.hem - 0.3, L.hem + 0.3, b));
-        if (L.fitness) {
+        if (L.fitness || L.strip) {
           const across = 1 - smooth(L.artW / 2 - 0.3, L.artW / 2 + 0.3, Math.abs(a));
           z += 0.12 * smooth(L.artB0 - 0.5, L.artB0 + 0.2, b) * (1 - smooth(artTop - 0.2, artTop + 0.5, b)) * across;
         }
@@ -631,7 +652,7 @@ function HangingTowel({ spec, art, label }: ModelProps) {
             <>
               <meshPhysicalMaterial attach="material-0" color={base} roughness={0.96} sheen={0.7} sheenRoughness={0.85} sheenColor={base} bumpMap={terry} bumpScale={1.4} />
               <meshPhysicalMaterial attach="material-1" color={shade(base, 0.95)} roughness={0.6} sheen={1} sheenRoughness={0.45} sheenColor="#ffffff" bumpMap={ribs} bumpScale={1.1} />
-              {layout.fitness ? (
+              {layout.fitness || layout.strip ? (
                 <meshPhysicalMaterial attach="material-2" map={texture} roughness={0.55} sheen={0.4} sheenRoughness={0.5} sheenColor="#ffffff" />
               ) : (
                 <meshPhysicalMaterial attach="material-2" map={texture} roughness={0.9} sheen={0.35} sheenRoughness={0.8} sheenColor="#ffffff" bumpMap={terry} bumpScale={0.7} />

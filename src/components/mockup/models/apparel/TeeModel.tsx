@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { dressFor } from "@/components/product/art-editor/mannequin";
 import { DEFAULT_ART, hasArtContent, type ArtRender } from "../../art";
 import { useApparelArt, useGeometriesCleanup } from "../fabric";
-import { useArtTexture, type ModelProps } from "../shared";
+import { backArtOf, faceArtOf, useArtTexture, type ModelProps } from "../shared";
 import { armGeometry, bodyModel, standGeometry, torsoGeometry, type BodyModel } from "./body";
 import { dressShape, garmentCut, torsoPiece, type GarmentShape, type NeckKind, type SleeveKind } from "./garment";
 import {
@@ -24,7 +24,9 @@ import {
   ribProfile,
   seamGeometry,
   sleeveHemFrames,
+  sleeveArtGeometry,
   sleevePiece,
+  sublimationSkins,
   surfaceFrames,
   sweepPiece,
   type PrintRect,
@@ -63,7 +65,9 @@ function teeStyle(spec: ModelProps["spec"], label: string): TeeStyle {
         ? { sleeve: "none", neck: "scoop", knit: "jersey", edge: "binding", accentTrim: true, accentSleeves: false }
         : { sleeve: "short", neck: "crew", knit: "jersey", edge: "rib", accentTrim: true, accentSleeves: false };
     case "jersey":
-      return { sleeve: "short", neck: "v", knit: "dryfit", edge: "rib", accentTrim: true, accentSleeves: true };
+      // Camisa de futebol "Sem Manga" (opção Modelo) vira regata com viés; sublimada inteira, a manga é estampada.
+      if (spec.sleeveless) return { sleeve: "none", neck: "v", knit: "dryfit", edge: "binding", accentTrim: true, accentSleeves: false };
+      return { sleeve: "short", neck: "v", knit: "dryfit", edge: "rib", accentTrim: true, accentSleeves: !spec.fullPrint };
     case "vest":
       return { sleeve: "none", neck: "v", knit: "mesh", edge: "binding", accentTrim: true, accentSleeves: false };
     case "basketball":
@@ -154,21 +158,112 @@ function buildMannequin(body: BodyModel, armEnd: number): MannequinParts {
   return { torso, arm, pole, base, list: [torso, arm, pole, base] };
 }
 
-/** Estampa: formato do DTF limitado ao que cabe na frente; logo pequeno vai para o peito esquerdo. */
-function printRects(shape: GarmentShape, rawW: number, rawH: number) {
+/**
+ * Estampa: formato do DTF limitado ao que cabe na frente; logo pequeno vai para o peito esquerdo. As costas usam a área
+ * do verso quando a opção traz outra (Polo: 8 × 8 cm na frente, 30 × 20 cm nas costas, como no gabarito).
+ */
+function printRects(shape: GarmentShape, rawW: number, rawH: number, backCm: [number, number] | null | undefined) {
   const { cut } = shape;
-  const aspect = Math.min(5, Math.max(0.2, rawW / rawH));
-  const maxW = cut.W * 0.78;
-  const maxH = Math.max(8, cut.L - cut.dropFront - 18);
-  const fit = Math.min(1, maxW / rawW, maxH / (rawW / aspect));
-  const w = rawW * fit;
-  const h = w / aspect;
+  const fitted = (w0: number, h0: number) => {
+    const aspect = Math.min(5, Math.max(0.2, w0 / h0));
+    const maxW = cut.W * 0.78;
+    const maxH = Math.max(8, cut.L - cut.dropFront - 18);
+    const fit = Math.min(1, maxW / w0, maxH / (w0 / aspect));
+    const w = w0 * fit;
+    return { w, h: w / aspect, aspect };
+  };
+  const { w, h, aspect } = fitted(rawW, rawH);
   const k = Math.sqrt(cut.W / 54);
   const chestLogo = rawW <= 12 && rawH <= 12;
   const gap = (cut.neck === "polo" ? 9 : cut.neck === "v" ? 3.5 : cut.neck === "scoop" ? 4 : 6.5) * k;
   const front: PrintRect = chestLogo ? { s: 9.5 * k, y: -cut.dropFront - 7.5 * k - h / 2, w, h } : { s: 0, y: -cut.dropFront - gap - h / 2, w, h };
-  const back: PrintRect = { s: 0, y: -cut.dropBack - 8.5 * k - h / 2, w, h };
-  return { front, back, aspect };
+  const b = backCm ? fitted(backCm[0], backCm[1]) : { w, h, aspect };
+  const back: PrintRect = { s: 0, y: -cut.dropBack - 8.5 * k - b.h / 2, w: b.w, h: b.h };
+  return { front, back, aspect, backAspect: b.aspect };
+}
+
+type Cloth = (color: string, map: THREE.Texture, scale: number, extra?: Partial<THREE.MeshPhysicalMaterialParameters>) => ReactNode;
+
+/** Estampa localizada (DTF, silk): pele da arte sobre o tecido, na frente e, com arte no verso, nas costas. */
+function PatchPrints({ shape, spec, art, label, sleeves, knitMap }: { shape: GarmentShape; spec: ModelProps["spec"]; art: ModelProps["art"]; label: string; sleeves: boolean; knitMap: THREE.Texture }) {
+  const printArt = useApparelArt(art);
+  const rawW = spec.widthCm && spec.widthCm > 0 ? spec.widthCm : 21;
+  const rawH = spec.heightCm && spec.heightCm > 0 ? spec.heightCm : 28;
+  const rects = useMemo(() => printRects(shape, rawW, rawH, spec.backPrintCm), [shape, rawW, rawH, spec.backPrintCm]);
+  const texture = useArtTexture(rects.aspect, "front", printArt, label);
+  const backArt = art.back ?? null;
+  const hasBack = hasArtContent(backArt);
+  const backRender = useMemo<ArtRender>(
+    () => ({ ...(backArt ?? DEFAULT_ART), back: null, ledColors: undefined, kind: art.kind, surface: art.surface, opaque: art.opaque, sample: false }),
+    [backArt, art.kind, art.surface, art.opaque],
+  );
+  const backPrint = useApparelArt(backRender);
+  const backTexture = useArtTexture(rects.backAspect, "front", backPrint, label);
+  const prints = useMemo(() => {
+    const front = printPatch(shape, rects.front, false);
+    bakeTorsoAO(shape, front, sleeves);
+    const back = hasBack ? printPatch(shape, rects.back, true) : null;
+    if (back) bakeTorsoAO(shape, back, sleeves);
+    return { front, back, list: back ? [front, back] : [front] };
+  }, [shape, rects, hasBack, sleeves]);
+  useGeometriesCleanup(prints.list);
+  return (
+    <>
+      <mesh geometry={prints.front} renderOrder={1}>
+        <meshPhysicalMaterial map={texture} transparent alphaTest={0.02} depthWrite={false} vertexColors roughness={0.55} normalMap={knitMap} normalScale={[0.2, 0.2]} polygonOffset polygonOffsetFactor={-4} />
+      </mesh>
+      {prints.back && (
+        <mesh geometry={prints.back} renderOrder={1}>
+          <meshPhysicalMaterial map={backTexture} transparent alphaTest={0.02} depthWrite={false} vertexColors roughness={0.55} normalMap={knitMap} normalScale={[0.2, 0.2]} polygonOffset polygonOffsetFactor={-4} />
+        </mesh>
+      )}
+    </>
+  );
+}
+
+/** Barra em dois tons (cor por vértice): a metade da frente (z ≥ 0) numa cor e a das costas em outra. */
+function twoToneHem(hem: THREE.BufferGeometry, front: string, back: string) {
+  const g = hem.clone();
+  const pos = g.getAttribute("position") as THREE.BufferAttribute;
+  const f = new THREE.Color(front);
+  const b = new THREE.Color(back);
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i += 1) (pos.getZ(i) >= 0 ? f : b).toArray(colors, i * 3);
+  g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return g;
+}
+
+/** Tecido sublimado com a arte de uma superfície (a textura fica neste componente: só existe quando há arte). */
+function PrintedSkin({ geometry, aspect, art, label, cloth, knitMap, alphaMap }: { geometry: THREE.BufferGeometry; aspect: number; art: ArtRender; label: string; cloth: Cloth; knitMap: THREE.Texture; alphaMap?: THREE.Texture }) {
+  const map = useArtTexture(aspect, "front", art, label);
+  return <mesh geometry={geometry}>{cloth("#ffffff", knitMap, 0.5, { map, ...(alphaMap ? { alphaMap, alphaTest: 0.5 } : {}) })}</mesh>;
+}
+
+/**
+ * Corpo sublimado inteiro: a frente com a arte principal e as costas com a do verso (sem ela, o tecido na cor de fundo
+ * da arte), as duas de ponta a ponta (sublimationSkins). As cavas continuam recortadas pela máscara (uv2).
+ */
+function SublimatedTorso({ torso, mask, art, label, fill, cloth, knitMap }: { torso: THREE.BufferGeometry; mask: THREE.Texture; art: ModelProps["art"]; label: string; fill: string; cloth: Cloth; knitMap: THREE.Texture }) {
+  const skins = useMemo(() => sublimationSkins(torso), [torso]);
+  const list = useMemo(() => [skins.front, skins.back], [skins]);
+  useGeometriesCleanup(list);
+  const skinMask = useMemo(() => {
+    const t = mask.clone();
+    t.channel = 2;
+    return t;
+  }, [mask]);
+  useEffect(() => () => skinMask.dispose(), [skinMask]);
+  const backArt = useMemo(() => backArtOf(art), [art]);
+  return (
+    <>
+      <PrintedSkin geometry={skins.front} aspect={skins.frontAspect} art={art} label={label} cloth={cloth} knitMap={knitMap} alphaMap={skinMask} />
+      {backArt ? (
+        <PrintedSkin geometry={skins.back} aspect={skins.backAspect} art={backArt} label={label} cloth={cloth} knitMap={knitMap} alphaMap={skinMask} />
+      ) : (
+        <mesh geometry={skins.back}>{cloth(fill, knitMap, 0.55, { alphaMap: skinMask, alphaTest: 0.5 })}</mesh>
+      )}
+    </>
+  );
 }
 
 /** Pespontos: um cilindro curto instanciado ao longo das linhas (fora do enquadramento da câmera). */
@@ -220,28 +315,15 @@ export function TeeModel({ spec, art, label, pajama = false, extra }: TeeProps) 
   const figure = useMemo(() => (dressed ? buildMannequin(body, armEnd) : null), [dressed, body, armEnd]);
   useGeometriesCleanup(figure?.list ?? EMPTY);
 
-  // Estampa (frente e, se houver arte, costas).
-  const printArt = useApparelArt(art);
-  const rawW = spec.widthCm && spec.widthCm > 0 ? spec.widthCm : 21;
-  const rawH = spec.heightCm && spec.heightCm > 0 ? spec.heightCm : 28;
-  const rects = useMemo(() => printRects(shape, rawW, rawH), [shape, rawW, rawH]);
-  const texture = useArtTexture(rects.aspect, "front", printArt, label);
-  const backArt = art.back ?? null;
-  const hasBack = hasArtContent(backArt);
-  const backRender = useMemo<ArtRender>(
-    () => ({ ...(backArt ?? DEFAULT_ART), back: null, ledColors: undefined, kind: art.kind, surface: art.surface, opaque: art.opaque, sample: false }),
-    [backArt, art.kind, art.surface, art.opaque],
-  );
-  const backPrint = useApparelArt(backRender);
-  const backTexture = useArtTexture(rects.aspect, "front", backPrint, label);
-  const prints = useMemo(() => {
-    const front = printPatch(shape, rects.front, false);
-    bakeTorsoAO(shape, front, style.sleeve !== "none");
-    const back = hasBack ? printPatch(shape, rects.back, true) : null;
-    if (back) bakeTorsoAO(shape, back, style.sleeve !== "none");
-    return { front, back, list: back ? [front, back] : [front] };
-  }, [shape, rects, hasBack, style.sleeve]);
-  useGeometriesCleanup(prints.list);
+  // Sublimação total: o tecido sai na cor de fundo da arte e a estampa cobre o corpo e as mangas.
+  const full = Boolean(spec.fullPrint);
+  // Manga sublimada: a arte de cada manga no molde dela; a do lado −x é desenhada espelhada (u invertido).
+  const sleeveArt = useMemo(() => {
+    if (!full || !parts.sleeve) return null;
+    return { plus: sleeveArtGeometry(parts.sleeve, false), minus: sleeveArtGeometry(parts.sleeve, true) };
+  }, [full, parts.sleeve]);
+  const sleeveArtList = useMemo(() => (sleeveArt ? [sleeveArt.plus.geometry, sleeveArt.minus.geometry] : EMPTY), [sleeveArt]);
+  useGeometriesCleanup(sleeveArtList);
 
   // Texturas: malha do tecido e canelado (em cache, compartilhadas) e a máscara das cavas (por peça).
   const knitMap = useMemo(() => knitNormalMap(style.knit), [style.knit]);
@@ -249,11 +331,17 @@ export function TeeModel({ spec, art, label, pajama = false, extra }: TeeProps) 
   const mask = useMemo(() => armholeMask(shape), [shape]);
   useEffect(() => () => mask.dispose(), [mask]);
 
-  const base = spec.baseColor;
+  const base = full && /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
   const accent = spec.accentColor ?? (luminance(base) > 0.5 ? "#1d1d22" : "#f2f2f2");
-  const trimColor = style.accentTrim ? accent : base;
+  // Sublimada com viés/ribana escolhido no acabamento: gola e cavas na cor dele.
+  const trimColor = style.accentTrim || (full && spec.accentColor) ? accent : base;
   const sleeveColor = style.accentSleeves && style.sleeve !== "none" ? accent : base;
   const lining = shade(base, 0.82);
+  // Sublimada: a barra dobrada continua a estampa de cada lado (frente na cor de fundo da frente, costas na do verso).
+  const backFill = full && art.back && hasArtContent(art.back) && /^#[0-9a-f]{3,8}$/i.test(art.back.background) ? art.back.background : base;
+  const hemTones = useMemo(() => (full && backFill !== base ? twoToneHem(parts.hem, base, backFill) : null), [full, parts.hem, base, backFill]);
+  const hemList = useMemo(() => (hemTones ? [hemTones] : EMPTY), [hemTones]);
+  useGeometriesCleanup(hemList);
   const dark = luminance(base) < 0.35;
   const sporty = style.knit === "dryfit" || style.knit === "mesh";
   const fabric = { roughness: sporty ? 0.62 : 0.88, sheen: sporty ? 0.35 : 0.75, sheenRoughness: sporty ? 0.35 : 0.62 };
@@ -291,20 +379,31 @@ export function TeeModel({ spec, art, label, pajama = false, extra }: TeeProps) 
     />
   );
 
-  const sleeveMeshes = parts.sleeve ? (
+  // Lado +x (esquerdo de quem veste) e −x (direito, desenhado pelo grupo espelhado): na sublimada, cada manga com a
+  // arte da superfície dela ("Manga esquerda"/"Manga direita" do gabarito) ou na cor do fundo.
+  const sleeveMeshes = (side: 1 | -1) => {
+    if (!parts.sleeve) return null;
+    const skin = side === 1 ? sleeveArt?.plus : sleeveArt?.minus;
+    const own = full ? faceArtOf(art, side === 1 ? "manga-esquerda" : "manga-direita") : null;
+    // Avesso e barra da manga estampada: na cor de fundo da arte dela.
+    const fill = own && /^#[0-9a-f]{3,8}$/i.test(own.background) ? own.background : sleeveColor;
+    return (
+      <>
+        {own && skin ? (
+          <PrintedSkin geometry={skin.geometry} aspect={skin.aspect} art={own} label={label} cloth={cloth} knitMap={knitMap} />
+        ) : (
+          <mesh geometry={parts.sleeve.geometry}>{cloth(sleeveColor, knitMap, 0.55)}</mesh>
+        )}
+        <mesh geometry={parts.sleeve.geometry}>
+          <meshStandardMaterial color={shade(fill, 0.8)} roughness={1} side={THREE.BackSide} />
+        </mesh>
+        {parts.sleeveTrim && <mesh geometry={parts.sleeveTrim}>{cloth(ribbedCuff ? trimColor : fill, ribbedCuff ? ribMap : knitMap, ribbedCuff ? 0.9 : 0.5)}</mesh>}
+      </>
+    );
+  };
+  const sideMeshes = (side: 1 | -1) => (
     <>
-      <mesh geometry={parts.sleeve.geometry}>{cloth(sleeveColor, knitMap, 0.55)}</mesh>
-      <mesh geometry={parts.sleeve.geometry}>
-        <meshStandardMaterial color={shade(sleeveColor, 0.8)} roughness={1} side={THREE.BackSide} />
-      </mesh>
-      {parts.sleeveTrim && (
-        <mesh geometry={parts.sleeveTrim}>{cloth(ribbedCuff ? trimColor : sleeveColor, ribbedCuff ? ribMap : knitMap, ribbedCuff ? 0.9 : 0.5)}</mesh>
-      )}
-    </>
-  ) : null;
-  const sideMeshes = (
-    <>
-      {sleeveMeshes}
+      {sleeveMeshes(side)}
       {parts.armholeTrim && <mesh geometry={parts.armholeTrim}>{cloth(trimColor, knitMap, 0.4)}</mesh>}
       <Stitches geometry={stitch} matrices={stitchLines.sleeve} color={thread} />
       {parts.seams.map((g, i) => (
@@ -351,11 +450,15 @@ export function TeeModel({ spec, art, label, pajama = false, extra }: TeeProps) 
       )}
 
       {/* Corpo da peça (frente, costas e o avesso pelas aberturas). */}
-      <mesh geometry={parts.torso}>{cloth(base, knitMap, 0.55, { alphaMap: mask, alphaTest: 0.5 })}</mesh>
+      {full ? (
+        <SublimatedTorso torso={parts.torso} mask={mask} art={art} label={label} fill={base} cloth={cloth} knitMap={knitMap} />
+      ) : (
+        <mesh geometry={parts.torso}>{cloth(base, knitMap, 0.55, { alphaMap: mask, alphaTest: 0.5 })}</mesh>
+      )}
       <mesh geometry={parts.torso}>
         <meshStandardMaterial color={lining} roughness={1} side={THREE.BackSide} alphaMap={mask} alphaTest={0.5} />
       </mesh>
-      {parts.neck && <mesh geometry={parts.neck}>{cloth(style.edge === "rib" ? (style.accentTrim ? trimColor : shade(base, 0.985)) : trimColor, style.edge === "rib" ? ribMap : knitMap, style.edge === "rib" ? 1 : 0.45)}</mesh>}
+      {parts.neck && <mesh geometry={parts.neck}>{cloth(style.edge === "rib" ? (trimColor !== base ? trimColor : shade(base, 0.985)) : trimColor, style.edge === "rib" ? ribMap : knitMap, style.edge === "rib" ? 1 : 0.45)}</mesh>}
       {parts.polo && (
         <group>
           <mesh geometry={parts.polo.stand}>{cloth(base, ribMap, 0.8)}</mesh>
@@ -370,20 +473,13 @@ export function TeeModel({ spec, art, label, pajama = false, extra }: TeeProps) 
           ))}
         </group>
       )}
-      <mesh geometry={parts.hem}>{cloth(base, knitMap, 0.5)}</mesh>
+      {hemTones ? <mesh geometry={hemTones}>{cloth("#ffffff", knitMap, 0.5)}</mesh> : <mesh geometry={parts.hem}>{cloth(base, knitMap, 0.5)}</mesh>}
       <Stitches geometry={stitch} matrices={stitchLines.torso} color={thread} />
 
-      {sideMeshes}
-      <group scale={[-1, 1, 1]}>{sideMeshes}</group>
+      {sideMeshes(1)}
+      <group scale={[-1, 1, 1]}>{sideMeshes(-1)}</group>
 
-      <mesh geometry={prints.front} renderOrder={1}>
-        <meshPhysicalMaterial map={texture} transparent alphaTest={0.02} depthWrite={false} vertexColors roughness={0.55} normalMap={knitMap} normalScale={[0.2, 0.2]} polygonOffset polygonOffsetFactor={-4} />
-      </mesh>
-      {prints.back && (
-        <mesh geometry={prints.back} renderOrder={1}>
-          <meshPhysicalMaterial map={backTexture} transparent alphaTest={0.02} depthWrite={false} vertexColors roughness={0.55} normalMap={knitMap} normalScale={[0.2, 0.2]} polygonOffset polygonOffsetFactor={-4} />
-        </mesh>
-      )}
+      {!full && <PatchPrints shape={shape} spec={spec} art={art} label={label} sleeves={style.sleeve !== "none"} knitMap={knitMap} />}
     </TurnGroup>
   );
 }

@@ -42,6 +42,14 @@ export type MockupSpec = {
   sleeveless: boolean;
   longSleeve: boolean;
   collar: "crew" | "polo";
+  /**
+   * Vestuário sublimado inteiro (revisão da Padrão de 25/10/2026): camisas, abadás, coletes, regatas, pijamas e o
+   * short levam a arte em toda a superfície (frente, costas, mangas, as 4 partes do short), no tecido da cor de fundo
+   * dela. Polo e camisa de algodão (DTF localizado) ficam de fora.
+   */
+  fullPrint?: boolean;
+  /** Área de arte das costas quando difere da frente (Polo: "8x8cm (Frente) / 30x20cm (Verso)"), em cm. */
+  backPrintCm?: [number, number] | null;
   grommets: boolean;
   flagStyle: FlagStyle;
   folds: 0 | 1 | 2;
@@ -630,6 +638,20 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   const blank = override?.blank ?? (BLANK_KINDS.includes(kind) || BLANK_NAME.test(name) || BLANK_VALUE.test(allValues));
   const variant = override?.variant ?? variantOf(kind, name);
 
+  // Vestuário sublimado inteiro: serviço de sublimação ou tecido de sublimação, menos polo, algodão, DTF e o body.
+  const garment = kind === "tshirt" || kind === "shorts";
+  const fullPrint =
+    garment &&
+    variant !== "body" &&
+    !/\bpolo\b|\balgodao\b/.test(name) &&
+    !/\bdtf\b/.test(allValues) &&
+    (/\bsublimacao\b/.test(allValues) || /\b(dry ?fit|helanca|polifil|poliester)\b/.test(`${name} | ${allValues}`));
+  // Viés ou ribana do acabamento ("Viés Preto", "Ribana Azul", "Viés Branco c/ Azul"): cor da gola e das cavas.
+  const trimText = garment ? /\b(?:vies|ribana) ([a-z ]+)/.exec(allValues)?.[1] : undefined;
+  const trimColor = trimText ? colorsIn(trimText)[0] : undefined;
+  const backPrint = /(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*cm\s*\(verso\)/.exec(allValues);
+  const backPrintCm: [number, number] | null = backPrint ? [Number(backPrint[1].replace(",", ".")), Number(backPrint[2].replace(",", "."))] : null;
+
   return {
     kind,
     source,
@@ -644,14 +666,16 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     back,
     baseColor: override?.baseColor ?? baseColor,
     innerColor,
-    accentColor: override?.accentColor ?? accentColor,
+    accentColor: override?.accentColor ?? trimColor ?? accentColor,
     metal,
     glass,
     glitter,
     ledColors,
-    sleeveless: /\bregata\b|\babada\b|\bcolete\b/.test(name),
+    sleeveless: /\bregata\b|\babada\b|\bcolete\b/.test(name) || /\bsem manga\b/.test(allValues),
     longSleeve: /\bmanga (comprida|longa)\b|\bpijama\b/.test(name),
     collar: /\bpolo\b/.test(name) ? "polo" : "crew",
+    fullPrint,
+    backPrintCm,
     grommets: /\bilhos\b|\bfaixa\b/.test(name) || /\bilhos\b/.test(allValues),
     flagStyle,
     folds,

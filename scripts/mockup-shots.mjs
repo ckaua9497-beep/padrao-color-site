@@ -7,6 +7,8 @@
 //   npm run shots -- --p=55,45 --giros=0,35,-35,90,180
 //   npm run shots -- --p=245 --op="Cor:4/4 (colorido frente e verso)"
 //   npm run shots -- --p=41 --modo=mark                arte sem fundo (marca numa cor só)
+//   npm run shots -- --p=459 --faces=back,manga-direita  verso e superfícies extras com a estampa em outras cores
+//   npm run shots -- --p=168 --face=fundo-base           a superfície "em edição" (o modelo mostra ela)
 //   npm run shots -- --p=55 --saida=C:/caminho/das/fotos --tam=700 --base=http://localhost:3100
 //
 // Grava <saida>/<slug>/<giro>.webp e <saida>/<slug>/folha.webp (padrão de <saida>: <tmp>/padrao-shots).
@@ -27,6 +29,9 @@ const OP = flag("op");
 const COR = flag("cor") ?? "coral";
 // "mark": a marca numa cor só, sem fundo (testa recorte e contorno: lona com corte especial, LED do quadro).
 const MODO = flag("modo") === "mark" ? "mark" : "pattern";
+// Superfícies (src/lib/superficies.ts): "back" e as extras com estampa própria; `face` é a que está "em edição".
+const FACES = flag("faces");
+const FACE = flag("face");
 
 const read = (path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
 // Os produtos novos (API própria) entram também: as páginas de QA seguem mostrando os modelos deles.
@@ -84,7 +89,7 @@ let failed = 0;
 for (const product of targets) {
   const shots = [];
   for (const giro of GIROS) {
-    const query = new URLSearchParams({ p: product.slug, cor: COR, modo: MODO, seed: "7", giro: String(giro), tam: String(TAM), ...(OP ? { op: OP } : {}) });
+    const query = new URLSearchParams({ p: product.slug, cor: COR, modo: MODO, seed: "7", giro: String(giro), tam: String(TAM), ...(OP ? { op: OP } : {}), ...(FACES ? { faces: FACES } : {}), ...(FACE ? { face: FACE } : {}) });
     const photo = await catalogPhoto(browser, `${BASE}/design-system/fotos?${query}`);
     if (!photo.ok) {
       failed += 1;

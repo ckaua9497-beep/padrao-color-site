@@ -12,6 +12,8 @@ function first(value: string | string[] | undefined): string | undefined {
 /**
  * Foto de catálogo de um produto (mockup 3D + estampa da marca, fundo transparente, 600×600), usada pelo
  * scripts/fotos-produtos.mjs. ?p=<slug>&cor=<token>&modo=pattern|mark&seed=7&giro=0&op=Chave:Valor;Chave:Valor
+ * Conferência das superfícies (npm run shots): &faces=back,manga-direita (estampa em outras cores) e &face=<id> (a
+ * superfície em edição).
  */
 export default async function PhotoPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const raw = await searchParams;
@@ -34,6 +36,8 @@ export default async function PhotoPage({ searchParams }: { searchParams: Promis
           turn={Number(first(raw.giro) ?? 0) || 0}
           size={Number(first(raw.tam) ?? 600) || 600}
           margin={Number(first(raw.margem) ?? 0.06) || 0.06}
+          faces={(first(raw.faces) ?? "").split(",").map((id) => id.trim()).filter(Boolean)}
+          face={first(raw.face) ?? null}
         />
       </div>
     </div>

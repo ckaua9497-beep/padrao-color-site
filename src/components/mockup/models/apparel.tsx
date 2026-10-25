@@ -9,7 +9,9 @@ import { Decal } from "@react-three/drei";
 import * as THREE from "three";
 import { useApparelArt, useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
-import { backArtOf, useArtTexture, useBackTexture, type ModelProps } from "./shared";
+import { backArtOf, faceArtOf, useArtTexture, useBackTexture, type ModelProps } from "./shared";
+import { TurnGroup } from "./apparel/TurnGroup";
+import { useSceneMode } from "../viewer-hooks";
 
 // ---------------------------------------------------------------------------- utilitários
 
@@ -682,7 +684,8 @@ function shortsHemPath(): Pt[] {
   });
 }
 
-function shortsPolygon() {
+/** Metade +x do contorno (perna esquerda de quem veste), do meio do cós até o gancho: começa e termina em x = 0. */
+function shortsHalf() {
   const right: THREE.Vector2[] = [];
   const waist = shortsOuter(SH.top);
   for (let k = 0; k <= 8; k += 1) pushPoint(right, (waist * k) / 8, SH.top);
@@ -693,7 +696,59 @@ function shortsPolygon() {
     const y = SH.crotch - (SH.crotch - SH.hemIn) * s;
     pushPoint(right, shortsInner(y), y);
   }
-  return mirrorHalf(right);
+  return right;
+}
+
+function shortsPolygon() {
+  return mirrorHalf(shortsHalf());
+}
+
+/** As 4 partes do short (gabarito: frente e verso de cada lado), em superfícies e na ordem em que o modelo desenha. */
+const SHORTS_PARTS = [
+  { key: "frontR", face: "front", side: 1, sx: -1 },
+  { key: "frontL", face: "frente-do-short-lado-esquerdo", side: 1, sx: 1 },
+  { key: "backR", face: "back", side: -1, sx: -1 },
+  { key: "backL", face: "verso-do-short-lado-esquerdo", side: -1, sx: 1 },
+] as const;
+
+/**
+ * Short sublimado: frente e costas divididas no meio (costura do gancho) em 4 painéis, um por parte do gabarito. Cada
+ * parte recebe a arte inteira dela, com a costura lateral na borda vizinha à outra metade do mesmo lado no gabarito:
+ * à esquerda de quem olha a frente da perna direita (−x), à direita na esquerda (+x), e o contrário nas costas.
+ */
+function shortsHalves() {
+  const half = shortsHalf();
+  const mirrored = half.map((p) => new THREE.Vector2(-p.x, p.y)).reverse();
+  const box = new THREE.Box2().setFromPoints(half);
+  const X = box.max.x;
+  const y0 = box.min.y;
+  const H = box.max.y - y0;
+  const panels = SHORTS_PARTS.map(({ side, sx }) => {
+    const uvOf = (x: number, y: number): Pt => {
+      const u = side === 1 ? (sx < 0 ? x + X : x) / X : (sx > 0 ? X - x : -x) / X;
+      return [u, (y - y0) / H];
+    };
+    return bodyPanel(sx > 0 ? half : mirrored, side, 170, shortsDepth, uvOf);
+  });
+  // Costura do meio (frente e costas), do cós até o gancho, e as laterais (onde a frente encontra as costas), do cós
+  // até a fenda: cobrem a emenda dos painéis.
+  const seams = ([1, -1] as const).map((side) => {
+    const pts: THREE.Vector3[] = [];
+    for (let k = 0; k <= 24; k += 1) {
+      const y = lerp(SH.crotch + 0.4, SH.top - SH.band, k / 24);
+      pts.push(new THREE.Vector3(0, y, side * (shortsDepth(0, y) + 0.08)));
+    }
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 48, 0.16, 6, false);
+  });
+  for (const sx of [1, -1]) {
+    const pts: THREE.Vector3[] = [];
+    for (let k = 0; k <= 40; k += 1) {
+      const y = lerp(SH.top - SH.band, SH.split + 0.6, k / 40);
+      pts.push(new THREE.Vector3(sx * shortsOuter(y), y, 0));
+    }
+    seams.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 80, 0.3, 8, false));
+  }
+  return { panels, seams, aspect: X / H };
 }
 
 /** Tecido do short: cor base, faixas laterais duplas acompanhando a costura e a fenda, pesponto da barra. */
@@ -866,7 +921,100 @@ function DryFit({ map, color }: { map?: THREE.Texture; color?: string }) {
  * nas barras com fenda lateral. Tecido em canvas com faixas laterais e pesponto, cós elástico franzido
  * com ilhoses e cordão, e a estampa 30 × 25 cm em Decal centrada abaixo do cós.
  */
-export function ShortsModel({ spec, art, label }: ModelProps) {
+export function ShortsModel(props: ModelProps) {
+  return props.spec.fullPrint ? <SublimatedShorts {...props} /> : <PrintedShorts {...props} />;
+}
+
+/** Uma parte do short sublimado com a arte dela de ponta a ponta (a textura só existe quando há arte). */
+function ShortsPart({ geometry, aspect, art, label }: { geometry: THREE.BufferGeometry; aspect: number; art: ModelProps["art"]; label: string }) {
+  const map = useArtTexture(aspect, "front", art, label);
+  return (
+    <>
+      <mesh geometry={geometry}>
+        <DryFit map={map} />
+      </mesh>
+      <ShortsInside geometry={geometry} map={map} color="#d2d2d2" />
+    </>
+  );
+}
+
+/**
+ * Avesso de uma parte: a mesma estampa mais escura (o tecido sublimado mostra a arte do lado de dentro). Também cobre
+ * os triângulos da borda do painel que viram de costas na costura lateral, sem deixar marcas de outra cor ali.
+ */
+function ShortsInside({ geometry, map, color }: { geometry: THREE.BufferGeometry; map?: THREE.Texture; color: string }) {
+  return (
+    <mesh geometry={geometry}>
+      <meshStandardMaterial map={map ?? null} color={color} roughness={1} side={THREE.BackSide} />
+    </mesh>
+  );
+}
+
+/**
+ * Short de futebol sublimado inteiro (revisão da Padrão de 25/10/2026: "4 partes, 2 na frente e 2 no verso, conforme o
+ * gabarito"; foto do produto): cada perna, na frente e atrás, com a arte da parte dela; parte sem arte sai no tecido da
+ * cor de fundo da frente. Cós, barras e costuras no mesmo tecido; editando o verso esquerdo, o short vira de costas.
+ */
+function SublimatedShorts({ spec, art, label }: ModelProps) {
+  const parts = useMemo(() => buildShorts(), []);
+  useGeometriesCleanup(parts.list);
+  const halves = useMemo(() => shortsHalves(), []);
+  const halfList = useMemo(() => [...halves.panels, ...halves.seams], [halves]);
+  useGeometriesCleanup(halfList);
+  const { face } = useSceneMode();
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  const light = luminance(fill) > 0.45;
+  const cord = light ? "#22252b" : "#f4f4f4";
+  return (
+    <TurnGroup base={0.18} scale={SHORTS_UNIT} turned={face === "verso-do-short-lado-esquerdo"}>
+      {SHORTS_PARTS.map((part, i) => {
+        const own = part.face === "front" ? art : part.face === "back" ? backArtOf(art) : faceArtOf(art, part.face);
+        return own ? (
+          <ShortsPart key={part.key} geometry={halves.panels[i]} aspect={halves.aspect} art={own} label={label} />
+        ) : (
+          <group key={part.key}>
+            <mesh geometry={halves.panels[i]}>
+              <DryFit color={fill} />
+            </mesh>
+            <ShortsInside geometry={halves.panels[i]} color={shade(fill, 0.82)} />
+          </group>
+        );
+      })}
+      {halves.seams.map((g, i) => (
+        <mesh key={i} geometry={g}>
+          <DryFit color={shade(fill, 0.9)} />
+        </mesh>
+      ))}
+      {parts.hems.map((g, i) => (
+        <mesh key={i} geometry={g}>
+          <DryFit color={shade(fill, 0.94)} />
+        </mesh>
+      ))}
+      <mesh geometry={parts.band}>
+        <meshPhysicalMaterial color={fill} roughness={0.85} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
+      </mesh>
+      {parts.eyelets.map((p) => (
+        <mesh key={p[0]} position={p}>
+          <torusGeometry args={[0.42, 0.13, 8, 24]} />
+          <meshStandardMaterial color="#d9dadc" metalness={1} roughness={0.28} />
+        </mesh>
+      ))}
+      {parts.cords.map((c, i) => (
+        <group key={i}>
+          <mesh geometry={c.tube}>
+            <meshStandardMaterial color={cord} roughness={0.8} />
+          </mesh>
+          <mesh position={c.tip} quaternion={c.quaternion}>
+            <capsuleGeometry args={[0.3, 1.1, 4, 10]} />
+            <meshPhysicalMaterial color={cord} roughness={0.3} clearcoat={0.6} />
+          </mesh>
+        </group>
+      ))}
+    </TurnGroup>
+  );
+}
+
+function PrintedShorts({ spec, art, label }: ModelProps) {
   const printArt = useApparelArt(art);
   const printW = clamp(measure(spec.widthCm, 30), 4, 44);
   const printH = clamp(measure(spec.heightCm, 25), 4, 26);

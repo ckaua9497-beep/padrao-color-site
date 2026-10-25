@@ -8,7 +8,7 @@
  * - As extras saem do gabarito oficial: cada peça "other" com nome (que antes só recebia a cor de fundo) vira uma
  *   superfície, menos a lombada. Peças repetidas da mesma folha (o short tem "Frente do short" no lado direito e no
  *   esquerdo) viram superfícies próprias, com o nome do painel.
- * - O verso vale nas peças de duas faces (camisa, almofada, cama pet, wind banner, estojo), quando o gabarito tem verso
+ * - O verso vale nas peças de duas faces (camisa, almofada, wind banner, estojo), quando o gabarito tem verso
  *   e a cor imprime atrás, e em todo 4/1 e 4/4 (ou quando a variação aceita "Impressão Verso"), mesmo sem gabarito.
  *
  * Puro e testado (superficies.test.ts): imports com extensão .ts, tipos com `import type`, sem JSX.
@@ -25,8 +25,11 @@ export type Superficie = {
   pagina?: boolean;
 };
 
-/** Peças de duas faces com arte própria no verso, qualquer que seja a opção de cor. */
-const SEMPRE_VERSO = new Set(["tshirt", "cushion", "petbed"]);
+/**
+ * Peças de duas faces com arte própria no verso, qualquer que seja a opção de cor. A cama pet não entra: o gabarito
+ * dela já traz o assento, o fundo e as laterais (revisão da Padrão de 25/10/2026: "fundo e tecido ao redor").
+ */
+const SEMPRE_VERSO = new Set(["tshirt", "cushion"]);
 
 /** Peças "other" do gabarito que não viram superfície: a lombada sai na cor do fundo da capa. */
 const SEM_ARTE = /lombada/i;
@@ -61,7 +64,7 @@ export type VersoInput = {
 };
 
 /**
- * A seleção tem verso para personalizar? Peças de duas faces sempre (camisa, almofada, cama pet, wind banner e estojo,
+ * A seleção tem verso para personalizar? Peças de duas faces sempre (camisa, almofada, wind banner e estojo,
  * que a Padrão disse serem personalizados dos dois lados). Nas outras, a cor decide: "4/0", "só frente" = não; "4/1",
  * "4/4", "1/1", "frente e verso" = sim. Sem opção de cor, vale a variação aceitar "Impressão Verso".
  */
@@ -110,13 +113,15 @@ export type SuperficiesInput = {
   /** Rótulos da frente e do verso ("Capa"/"Contracapa" nos livros; "Frente"/"Costas" na camisa). */
   frontLabel?: string;
   backLabel?: string;
+  /** Peça sem manga na seleção (camisa de futebol "Sem Manga"): as mangas do gabarito não viram superfície. */
+  semManga?: boolean;
 };
 
 /**
  * Superfícies do produto na seleção: a frente, o verso (quando há) e as extras do gabarito, na ordem das folhas. Peças
  * "other" de folhas de miolo (photobook, calendário) viram páginas de uma tira.
  */
-export function superficiesDe({ pages, verso, frontLabel = "Frente", backLabel = "Verso" }: SuperficiesInput): Superficie[] {
+export function superficiesDe({ pages, verso, frontLabel = "Frente", backLabel = "Verso", semManga = false }: SuperficiesInput): Superficie[] {
   const list: Superficie[] = [{ id: "front", label: frontLabel }];
   if (verso) list.push({ id: "back", label: backLabel });
   const seen = new Set(list.map((s) => s.id));
@@ -128,6 +133,7 @@ export function superficiesDe({ pages, verso, frontLabel = "Frente", backLabel =
       const id = superficieDaPeca(page, piece);
       // A frente e o verso já estão (ou não, conforme `verso`): a peça do verso sem verso na cor não vira extra.
       if (!id || id === "front" || id === "back" || seen.has(id)) continue;
+      if (semManga && /^manga\b/.test(id)) continue;
       seen.add(id);
       const repeated = pieces.filter((p) => p.side === piece.side && (p.name ?? "") === (piece.name ?? "")).length > 1;
       list.push({ id, label: pieceLabel(page, piece, repeated), ...(/miolo/i.test(page.part ?? "") ? { pagina: true } : {}) });

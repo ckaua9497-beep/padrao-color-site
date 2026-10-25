@@ -359,7 +359,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const frontFacts = gabarito?.front ? describePanel(gabarito.front.ref.panel) : null;
   const verso = versoPelaCor || Boolean(gabarito?.back);
   // Superfícies com arte própria: frente, verso (4/1, 4/4, peças de duas faces) e as extras do gabarito.
-  const surfaces = semArte ? [] : superficiesDe({ pages: gabarito?.pages ?? [], verso, ...rotulosDosLados(spec.kind, spec.variant) });
+  const surfaces = semArte ? [] : superficiesDe({ pages: gabarito?.pages ?? [], verso, semManga: spec.kind === "tshirt" && spec.sleeveless, ...rotulosDosLados(spec.kind, spec.variant) });
   const surfaceLabels = Object.fromEntries(surfaces.map((s) => [s.id, s.label]));
   // A superfície escolhida sumiu (outra variação): o 3D volta para a frente.
   const shownSide = surfaces.some((s) => s.id === artSide) ? artSide : "front";

@@ -1302,8 +1302,8 @@ export function TshirtModel(props: ModelProps) {
 function PajamaSet(props: ModelProps) {
   const { spec, art } = props;
   const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
-  // Área impressa 3× maior na mesma proporção: o printRects a limita à frente da peça (sublimação quase de ponta a ponta).
-  const printed = useMemo(() => ({ ...spec, baseColor: fill, widthCm: (spec.widthCm || 21) * 3, heightCm: (spec.heightCm || 28) * 3 }), [spec, fill]);
+  // A blusa é sublimada inteira pelo TeeModel (spec.fullPrint): frente com a arte, costas e mangas na cor do fundo.
+  const printed = useMemo(() => ({ ...spec, fullPrint: true }), [spec]);
   const accent = spec.accentColor ?? contrast(fill);
   return (
     <TeeModel

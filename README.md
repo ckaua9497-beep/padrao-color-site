@@ -384,6 +384,15 @@ Base de arte da revisão da Padrão de 25/10/2026 ("Observações Site Novo"). T
   - **Verso:** aparece pela cor (x/1, x/4) ou pelo anexo "Impressão Verso" (`temVerso`), com ou sem gabarito.
   - **No ArtStep:** abas, ou a lista "Onde vai a arte" quando são muitas partes.
   - **No PDF:** `printSheets` põe a arte de cada superfície na peça dela.
+  - **Sem manga:** a camisa de futebol "Sem Manga" não lista as mangas do gabarito (`superficiesDe({ semManga })`).
+  - **Cama pet:** sem um verso à parte; as superfícies são as do gabarito (assento, fundo e laterais por dentro e por fora).
+- **Vestuário sublimado inteiro** (`spec.fullPrint`, em `mockupSpec`). Vale para camisas, abadás, coletes, regatas, pijamas
+  e o short, quando o serviço ou o tecido é de sublimação; polo, algodão, DTF e o body ficam de fora.
+  - **Tecido:** sai na cor de fundo da arte.
+  - **Camiseta (`TeeModel`):** a frente e as costas viram duas peles de ponta a ponta (`sublimationSkins`), e cada manga leva
+    a arte dela (`sleeveArtGeometry`). A gola e as cavas ficam na cor do viés ou da ribana do acabamento (`accentColor`).
+  - **Short:** são 4 partes, frente e costas de cada perna (`SHORTS_PARTS`).
+  - **Polo:** a arte das costas usa a área do verso da opção (`backPrintCm`, 30 × 20 cm).
 - **Processos** (`src/lib/processo.ts`):
   - **P&B (1/0 e 1/1):** tons de cinza.
   - **Laser (copo térmico):** um tom só.
@@ -410,7 +419,10 @@ Base de arte da revisão da Padrão de 25/10/2026 ("Observações Site Novo"). T
 - **Arquivo do cliente primeiro.** A faca, a posição do LED e a máscara de verniz só são geradas quando o cliente não mandou a
   dele nem o arquivo único. Em "Arquivos para a produção", esses anexos aparecem como "feito automaticamente a partir da sua
   arte". Variação que não lista o tipo recebe o arquivo como "Arquivo Único" (`attachmentType`).
-- **Conferência:** `npm run shots -- --p=41,337 --modo=mark` fotografa com a arte da marca sem fundo.
+- **Conferência:**
+  - `npm run shots -- --p=41,337 --modo=mark` fotografa com a arte da marca sem fundo.
+  - `--faces=back,manga-direita` dá estampa própria (em outras cores) ao verso e às superfícies extras.
+  - `--face=fundo-base` põe uma superfície "em edição".
 
 ### Preço por m², prazo e grade de tamanhos
 
