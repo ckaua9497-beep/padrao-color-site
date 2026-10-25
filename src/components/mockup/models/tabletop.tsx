@@ -2,8 +2,8 @@
 
 // Peças de mesa e chão, deitadas como na vida real (a câmera sobe via userData.view em vez de inclinar a peça):
 // mouse pad com borda overlock, mouse pad gamer com mouse, jogo americano com prato e talheres, tapete de pelúcia,
-// capacho de vinil com borda de borracha, tábua de madeira (painel sublimado ou gravação a laser), porta-copos
-// com base de cortiça, porta-jarra com jarra de vidro e sousplat com prato.
+// capacho de vinil com borda de borracha, tábua de madeira (painel sublimado, gravação a laser ou talhada na fresa),
+// porta-copos com base de cortiça, porta-jarra com jarra de vidro, sousplat com prato e capa de sousplat com elástico.
 //
 // Convenção: a peça é montada no plano XY (arte em +z, topo da arte em +y) e o grupo gira -90° em x; assim o
 // topo da arte fica no fundo da mesa e a leitura é direta para a câmera. Medidas em cm viram unidades de cena
@@ -1379,7 +1379,7 @@ export function MatModel(props: ModelProps) {
 
 /**
  * Porta-copos: jogo de 4 com base de cortiça (um em destaque e três empilhados), porta-jarra emborrachado
- * com jarra de vidro ({pitcher}) e sousplat redondo com prato ({placemat}).
+ * com jarra de vidro ({pitcher}), sousplat redondo com prato ({placemat}) e capa de tecido com elástico ({cover}).
  */
 export function CoasterModel(props: ModelProps) {
   const { spec } = props;

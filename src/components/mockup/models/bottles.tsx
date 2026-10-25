@@ -642,7 +642,7 @@ function EngravedSteel({ geometry, map, y, env, direct }: { geometry: THREE.Buff
 /**
  * Copo térmico 500 ml (186): fundo e aro de inox polido, corpo pintado (preto, rosa, branco, azul) e tampa preta
  * embutida no aro, com abertura de beber na frente e trava deslizante atrás. Com "laser" nas opções a arte é
- * gravada (o inox aparece onde a arte é escura); sem laser, faixa impressa.
+ * gravada (o inox aparece onde a arte marca, ENGRAVE_MASK_GLSL); sem laser, faixa impressa.
  */
 function ThermalCup({ spec, art, label }: ModelProps) {
   const c = THERMAL_CUP_CM;
