@@ -6,11 +6,11 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { formatSize, type FlagStyle } from "@/lib/mockup";
-import { dropPath, featherPath, knifePath, sailPath, type ArtRender } from "../art";
+import type { ArtRender } from "../art";
 import { useAnimate } from "../viewer-hooks";
 import { useGeometriesCleanup } from "./fabric";
 import { inflatedSurface } from "./inflate";
-import { backArtOf, makeShape, metalColor, useArtTexture, type ModelProps } from "./shared";
+import { backArtOf, makeShape, useArtTexture, type ModelProps } from "./shared";
 import { lathe, smoothProfile, type Pt } from "./vessel";
 
 /*
@@ -34,82 +34,60 @@ function clamp(value: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, Number.isFinite(value) ? value : lo));
 }
 
-/** Contorno do tecido de cada modelo de wind banner (máscaras 2D equivalentes às curvas abaixo). */
-export const FLAG_SHAPES = { pena: featherPath, faca: knifePath, gota: dropPath, vela: sailPath };
-
 // ---------------------------------------------------------------------------- contornos
 
-type Segment = THREE.Curve<THREE.Vector2>;
-
-const v2 = (p: Pt) => new THREE.Vector2(p[0], p[1]);
-const line = (a: Pt, b: Pt): Segment => new THREE.LineCurve(v2(a), v2(b));
-const quad = (a: Pt, c: Pt, b: Pt): Segment => new THREE.QuadraticBezierCurve(v2(a), v2(c), v2(b));
-const cubic = (a: Pt, c1: Pt, c2: Pt, b: Pt): Segment => new THREE.CubicBezierCurve(v2(a), v2(c1), v2(c2), v2(b));
-
-type Outline = {
-  /** Contorno normalizado (x da haste para a ponta, y de baixo para cima), em sentido horário. */
-  segments: Segment[];
-  /** Bainha da haste: segmentos inteiros cobertos e fração do seguinte. */
-  sleeve: [number, number];
-  /** Canto de baixo preso à haste pelo elástico. */
-  tie: Pt;
+/**
+ * Contornos dos wind banners tirados dos gabaritos oficiais da Padrão (src/data/templates.json, "wind-banner"):
+ * a faixa da bainha mais o corpo, em fração da caixa (u da haste para a ponta, v de baixo para cima), no sentido
+ * horário a partir do pé da haste. Os `pole` primeiros pontos são a linha da haste (bainha). `w`/`h` = tecido em cm.
+ * "g" = grande (2,2 m de bandeira, 3 m montado), "p" = pequeno (1,5 m, 1,8 m montado). A gota só tem o grande; o
+ * gabarito dela vem inclinado e foi girado para a haste ficar em pé.
+ */
+const WIND_OUTLINES: Record<string, { w: number; h: number; pole: number; pts: number[] }> = {
+  "faca-g": { w: 73.5, h: 230, pole: 23, pts: [0.001, 0, 0.003, 0.331, 0.009, 0.487, 0.016, 0.569, 0.025, 0.616, 0.046, 0.673, 0.067, 0.711, 0.096, 0.748, 0.124, 0.775, 0.157, 0.801, 0.172, 0.812, 0.222, 0.842, 0.298, 0.878, 0.34, 0.894, 0.408, 0.916, 0.48, 0.935, 0.564, 0.953, 0.684, 0.973, 0.747, 0.981, 0.845, 0.991, 0.947, 0.998, 0.982, 1, 1, 1, 1, 0] },
+  "faca-p": { w: 73.2, h: 145.3, pole: 19, pts: [0, 0, 0.01, 0.302, 0.021, 0.392, 0.037, 0.468, 0.063, 0.542, 0.092, 0.601, 0.141, 0.671, 0.184, 0.718, 0.237, 0.765, 0.275, 0.793, 0.337, 0.832, 0.429, 0.877, 0.506, 0.907, 0.621, 0.942, 0.714, 0.963, 0.778, 0.975, 0.844, 0.985, 0.947, 0.997, 1, 1, 1, 0] },
+  "gota-g": { w: 95.3, h: 201.1, pole: 24, pts: [0.016, 0, 0, 0, 0, 0.745, 0.007, 0.771, 0.018, 0.797, 0.035, 0.821, 0.056, 0.845, 0.097, 0.878, 0.131, 0.898, 0.169, 0.918, 0.211, 0.935, 0.276, 0.956, 0.323, 0.968, 0.371, 0.978, 0.447, 0.99, 0.473, 0.993, 0.578, 1, 0.63, 1, 0.684, 0.998, 0.739, 0.994, 0.794, 0.988, 0.875, 0.976, 0.927, 0.965, 1, 0.946, 0.093, 0] },
+  "pena-g": { w: 73.5, h: 230, pole: 21, pts: [0.001, 0, 0.003, 0.331, 0.009, 0.487, 0.016, 0.569, 0.025, 0.616, 0.046, 0.673, 0.067, 0.711, 0.096, 0.748, 0.124, 0.775, 0.157, 0.801, 0.172, 0.812, 0.222, 0.842, 0.298, 0.878, 0.34, 0.894, 0.408, 0.916, 0.48, 0.935, 0.564, 0.953, 0.684, 0.973, 0.747, 0.981, 0.845, 0.991, 0.982, 1, 1, 0.761, 0.995, 0.55, 0.988, 0.417, 0.982, 0.371, 0.968, 0.317, 0.948, 0.273, 0.925, 0.239, 0.903, 0.214, 0.877, 0.19, 0.815, 0.147, 0.751, 0.115, 0.716, 0.101, 0.659, 0.081, 0.597, 0.063, 0.527, 0.047, 0.475, 0.037, 0.338, 0.017, 0.279, 0.011, 0.158, 0.002] },
+  "pena-p": { w: 73.2, h: 144.9, pole: 18, pts: [0, 0, 0.01, 0.3, 0.021, 0.391, 0.033, 0.451, 0.057, 0.526, 0.084, 0.585, 0.13, 0.656, 0.184, 0.718, 0.237, 0.764, 0.316, 0.819, 0.405, 0.866, 0.453, 0.887, 0.506, 0.907, 0.621, 0.942, 0.714, 0.963, 0.778, 0.975, 0.844, 0.985, 0.982, 1, 1, 0.621, 0.998, 0.424, 0.991, 0.308, 0.98, 0.274, 0.964, 0.241, 0.941, 0.21, 0.912, 0.18, 0.878, 0.151, 0.839, 0.125, 0.795, 0.101, 0.747, 0.079, 0.694, 0.059, 0.638, 0.042, 0.579, 0.027, 0.517, 0.015, 0.452, 0.007, 0.384, 0.002, 0.315, 0] },
+  "vela-g": { w: 73.5, h: 230, pole: 23, pts: [0.001, 0, 0.003, 0.331, 0.009, 0.487, 0.016, 0.569, 0.025, 0.616, 0.046, 0.673, 0.067, 0.711, 0.096, 0.748, 0.124, 0.775, 0.157, 0.801, 0.172, 0.812, 0.222, 0.842, 0.298, 0.878, 0.34, 0.894, 0.408, 0.916, 0.48, 0.935, 0.564, 0.953, 0.684, 0.973, 0.747, 0.981, 0.845, 0.991, 0.947, 0.998, 0.982, 1, 1, 1, 1, 0.251, 0.917, 0.246, 0.837, 0.239, 0.761, 0.231, 0.688, 0.221, 0.554, 0.198, 0.493, 0.184, 0.436, 0.169, 0.383, 0.152, 0.334, 0.134, 0.29, 0.115, 0.25, 0.095, 0.215, 0.073, 0.184, 0.05, 0.158, 0.026, 0.137, 0] },
+  "vela-p": { w: 74.2, h: 140.3, pole: 22, pts: [0, 0, 0.004, 0.114, 0.019, 0.279, 0.031, 0.357, 0.05, 0.448, 0.082, 0.541, 0.113, 0.601, 0.164, 0.674, 0.195, 0.708, 0.229, 0.741, 0.266, 0.771, 0.346, 0.826, 0.413, 0.861, 0.461, 0.883, 0.512, 0.903, 0.568, 0.923, 0.627, 0.94, 0.718, 0.962, 0.781, 0.974, 0.88, 0.989, 0.947, 0.997, 1, 1, 1, 0.162, 0.916, 0.159, 0.684, 0.143, 0.614, 0.136, 0.486, 0.119, 0.374, 0.098, 0.324, 0.087, 0.279, 0.074, 0.203, 0.047, 0.146, 0.017] },
+  // Retangular (gabarito "wind-banner-retangular"): haste em L, subindo pela esquerda e seguindo pelo topo, com o canto chanfrado.
+  "rect-g": { w: 70, h: 258, pole: 4, pts: [0, 0, 0, 0.952, 0.207, 1, 1, 1, 1, 0] },
 };
 
-/** Mesmas silhuetas dos paths do canvas (art.ts), com os cantos por onde a haste dobra arredondados. */
-function outlineOf(style: FlagStyle): Outline {
-  switch (style) {
-    case "faca":
-      return {
-        segments: [line([0, 0], [0, 0.78]), quad([0, 0.78], [0, 0.861], [0.14, 0.888]), line([0.14, 0.888], [0.72, 1]), quad([0.72, 1], [1, 1], [1, 0.9]), line([1, 0.9], [0.86, 0]), line([0.86, 0], [0, 0])],
-        sleeve: [3, 0],
-        tie: [0.86, 0],
-      };
-    case "gota":
-      return {
-        segments: [line([0, 0], [0, 0.7]), cubic([0, 0.7], [0, 1.05], [1.05, 1.02], [0.92, 0.64]), quad([0.92, 0.64], [0.8, 0.25], [0.32, 0]), line([0.32, 0], [0, 0])],
-        sleeve: [1, 0.82],
-        tie: [0.32, 0],
-      };
-    case "vela":
-      return {
-        segments: [line([0, 0], [0, 0.88]), quad([0, 0.88], [0, 1], [0.2, 0.97]), quad([0.2, 0.97], [0.92, 0.86], [1, 0]), line([1, 0], [0, 0])],
-        sleeve: [2, 0.42],
-        tie: [1, 0],
-      };
-    case "rect":
-      return {
-        segments: [line([0, 0], [0, 0.94]), quad([0, 0.94], [0, 1], [0.12, 1]), line([0.12, 1], [1, 1]), line([1, 1], [1, 0]), line([1, 0], [0, 0])],
-        sleeve: [2, 0.96],
-        tie: [1, 0],
-      };
-    default:
-      return {
-        segments: [line([0, 0], [0, 0.92]), quad([0, 0.92], [0.05, 1], [0.45, 1]), cubic([0.45, 1], [1.05, 0.98], [1.02, 0.55], [0.82, 0.22]), quad([0.82, 0.22], [0.7, 0.04], [0.42, 0]), line([0.42, 0], [0, 0])],
-        sleeve: [2, 0.35],
-        tie: [0.42, 0],
-      };
-  }
+type Outline = {
+  /** Contorno normalizado (u da haste para a ponta, v de baixo para cima), em sentido horário. */
+  points: Pt[];
+  /** Quantos pontos do começo formam a linha da haste (bainha). */
+  pole: number;
+  /** Canto livre preso à haste pelo elástico. */
+  tie: Pt | null;
+  /** Tecido em cm. */
+  widthCm: number;
+  heightCm: number;
+};
+
+/** Contorno do modelo no tamanho mais próximo (grande a partir de 1,6 m de bandeira). */
+function outlineOf(style: FlagStyle, heightCm: number): Outline {
+  const size = heightCm >= 160 ? "g" : "p";
+  const data = WIND_OUTLINES[`${style}-${size}`] ?? WIND_OUTLINES[`${style}-g`] ?? WIND_OUTLINES["pena-g"];
+  const points: Pt[] = [];
+  for (let i = 0; i + 1 < data.pts.length; i += 2) points.push([data.pts[i], data.pts[i + 1]]);
+  // Tamanho sem gabarito próprio (gota pequena): o desenho do grande na altura do pequeno.
+  const own = Boolean(WIND_OUTLINES[`${style}-${size}`]);
+  const heightOf = own ? data.h : size === "p" ? 145 : data.h;
+  const widthOf = own ? data.w : (data.w * heightOf) / data.h;
+  // Faca, vela e retangular têm um canto livre embaixo, preso pelo elástico; gota e pena terminam na haste.
+  let tie: Pt | null = null;
+  if (style === "faca" || style === "rect") tie = [1, 0];
+  if (style === "vela") tie = points.filter(([u]) => u > 0.99).reduce((low, p) => (p[1] < low[1] ? p : low), [1, 1] as Pt);
+  return { points, pole: data.pole, tie, widthCm: widthOf, heightCm: heightOf };
 }
 
-/** Pontos do contorno em metros; com `upTo`, só o trecho da bainha. */
-function sampleOutline(segments: Segment[], W: number, H: number, upTo?: [number, number]): THREE.Vector2[] {
-  const points: THREE.Vector2[] = [];
-  const count = upTo ? Math.min(segments.length, upTo[0] + (upTo[1] > 0 ? 1 : 0)) : segments.length;
-  for (let i = 0; i < count; i += 1) {
-    const segment = segments[i];
-    const end = upTo && i === upTo[0] ? upTo[1] : 1;
-    const steps = segment instanceof THREE.LineCurve ? 1 : 48;
-    for (let s = points.length ? 1 : 0; s <= steps; s += 1) {
-      const p = segment.getPoint((s / steps) * end);
-      points.push(new THREE.Vector2(p.x * W, p.y * H));
-    }
-  }
-  return points;
-}
-
-function closePolygon(points: THREE.Vector2[]) {
-  if (points.length > 2 && points[0].distanceTo(points[points.length - 1]) < 1e-6) points.pop();
-  return points;
+/** Pontos do contorno em metros; com `poleOnly`, só a linha da haste. */
+function outlinePoints(outline: Outline, W: number, H: number, poleOnly = false): THREE.Vector2[] {
+  const list = poleOnly ? outline.points.slice(0, outline.pole) : outline.points;
+  return list.map(([u, v]) => new THREE.Vector2(u * W, v * H));
 }
 
 /** Reamostra uma polilinha em passos iguais de comprimento. */
@@ -448,6 +426,11 @@ function useStitchTexture() {
   return texture;
 }
 
+/** Cor sólida válida (o fundo da arte) ou branco. */
+function solidColor(color: string | undefined) {
+  return color && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color) ? color : "#f1f1f1";
+}
+
 /** Arte do passo "Verso" (art.back) e o aspecto do canvas dela. */
 type FlagBack = { art: ArtRender; aspect: number; label: string };
 
@@ -465,11 +448,11 @@ function FlagBackFace({ geometry, back }: { geometry: THREE.BufferGeometry; back
  * Tecido sublimado (frente nítida, verso com a arte vazada), bainhas, pesponto e elástico. Com `back` (o cliente
  * montou um verso), o lado de trás mostra essa arte em vez da frente vazada.
  */
-function FlagCloth({ parts, texture, sleeveColor, threadColor, hemColor, back }: { parts: FlagParts; texture: THREE.Texture; sleeveColor: string; threadColor: string; hemColor?: string; back?: FlagBack | null }) {
+function FlagCloth({ parts, texture, sleeveColor, threadColor, hemColor, back, printedBack = false }: { parts: FlagParts; texture: THREE.Texture; sleeveColor: string; threadColor: string; hemColor?: string; back?: FlagBack | null; printedBack?: boolean }) {
   useWind(parts.items, parts.wind);
   const stitch = useStitchTexture();
   // Bainha dobrada na cor do fundo da arte (a estampa vira junto com o tecido); cor inválida cai no branco.
-  const hem = hemColor && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hemColor) ? hemColor : "#f1f1f1";
+  const hem = solidColor(hemColor);
   return (
     <group>
       <mesh geometry={parts.cloth}>
@@ -477,6 +460,11 @@ function FlagCloth({ parts, texture, sleeveColor, threadColor, hemColor, back }:
       </mesh>
       {back ? (
         <FlagBackFace geometry={parts.clothBack} back={back} />
+      ) : printedBack ? (
+        // Dupla face sem verso próprio: a mesma arte impressa atrás, legível (a UV do verso já lê de trás).
+        <mesh geometry={parts.clothBack}>
+          <meshPhysicalMaterial map={texture} roughness={0.72} sheen={0.45} sheenRoughness={0.55} sheenColor="#ffffff" side={THREE.BackSide} />
+        </mesh>
       ) : (
         <mesh geometry={parts.cloth}>
           <meshStandardMaterial map={texture} roughness={0.86} emissive="#ffffff" emissiveIntensity={0.09} side={THREE.BackSide} />
@@ -789,30 +777,35 @@ function PoleSet({ lengthCm, diameterCm, position, rotationY = 0 }: { lengthCm: 
 
 type BannerProps = {
   style: FlagStyle;
-  widthCm: number;
+  /** Altura do tecido em cm: escolhe o gabarito grande ou o pequeno. */
   heightCm: number;
   art: ArtRender;
   label: string;
-  base: "cross" | "round";
+  /** Base da montagem; null = só a bandeira ("Somente Bandeira"): o tecido com a bainha, sem haste nem base. */
+  base: "cross" | "round" | null;
   sleeveColor: string;
   position?: Vec3;
   rotationY?: number;
 };
 
-/** Wind banner montado: base, haste de alumínio e o tecido com a bainha acompanhando a curva da fibra. */
-function WindBanner({ style, widthCm, heightCm, art, label, base, sleeveColor, position, rotationY = 0 }: BannerProps) {
-  const W = clamp(widthCm, 20, 300) * CM;
-  const H = clamp(heightCm, 60, 600) * CM;
+/**
+ * Wind banner: o tecido no contorno do gabarito, impresso dos dois lados (o verso lê de trás, com a arte do passo
+ * "Verso" quando houver), a bainha acompanhando a curva da fibra e, montado, a haste de alumínio na base.
+ */
+function WindBanner({ style, heightCm, art, label, base, sleeveColor, position, rotationY = 0 }: BannerProps) {
+  const outline = useMemo(() => outlineOf(style, heightCm), [style, heightCm]);
+  const W = outline.widthCm * CM;
+  const H = outline.heightCm * CM;
   const vertical = !art.src && H / W > 1.8;
   const texture = useArtTexture(vertical ? H / W : W / H, "front", art, label);
   const backArt = useMemo(() => backArtOf(art), [art]);
   // Sem verso próprio vale o mesmo da frente (a malha não é refeita à toa).
   const backVertical = !(backArt ?? art).src && H / W > 1.8;
   const back = backArt ? { art: backArt, aspect: backVertical ? H / W : W / H, label } : null;
+  const mounted = base !== null;
   const parts = useMemo(() => {
-    const outline = outlineOf(style);
-    const polygon = closePolygon(sampleOutline(outline.segments, W, H));
-    const path = resample(sampleOutline(outline.segments, W, H, outline.sleeve), 0.012);
+    const polygon = outlinePoints(outline, W, H);
+    const path = resample(outlinePoints(outline, W, H, true), 0.012);
     return buildFlag({
       W,
       H,
@@ -823,42 +816,55 @@ function WindBanner({ style, widthCm, heightCm, art, label, base, sleeveColor, p
       resolution: 110,
       sleeve: { radius: 0.014, flap: 0.045, taper: [0.012, 0.03] },
       hem: 0.0028,
-      tie: { corner: new THREE.Vector2(outline.tie[0] * W, outline.tie[1] * H), anchor: new THREE.Vector3(POLE_R + 0.002, -0.1, 0) },
-      wind: { amp: 0.07 * W, wavelength: Math.max(0.45, W * 0.95), speed: 2.1, billow: 0.07 * W, droop: 0 },
+      tie: outline.tie && mounted ? { corner: new THREE.Vector2(outline.tie[0] * W, outline.tie[1] * H), anchor: new THREE.Vector3(POLE_R + 0.002, -0.1, 0) } : null,
+      // Sem a haste o tecido fica quase parado, só com o caimento.
+      wind: { amp: (mounted ? 0.07 : 0.025) * W, wavelength: Math.max(0.45, W * 0.95), speed: 2.1, billow: (mounted ? 0.07 : 0.02) * W, droop: 0 },
     });
-  }, [style, W, H, vertical, backVertical]);
+  }, [outline, W, H, vertical, backVertical, mounted]);
   useGeometriesCleanup(parts.all);
   const baseTop = base === "round" ? ROUND_TOP : CROSS_TOP;
-  const clothY = baseTop + 0.32;
+  const clothY = mounted ? baseTop + 0.32 : 0;
   const low = baseTop - 0.04;
   const high = clothY + 0.08;
   return (
     <group position={position} rotation-y={rotationY}>
-      {base === "round" ? <RoundBase /> : <CrossBase />}
-      <mesh position-y={(low + high) / 2}>
-        <cylinderGeometry args={[POLE_R, POLE_R, high - low, 20]} />
-        <Aluminium />
-      </mesh>
-      <mesh position-y={baseTop + 0.13}>
-        <cylinderGeometry args={[POLE_R * 1.2, POLE_R * 1.2, 0.03, 20]} />
-        <Aluminium />
-      </mesh>
+      {base === "round" && <RoundBase />}
+      {base === "cross" && <CrossBase />}
+      {mounted && (
+        <>
+          <mesh position-y={(low + high) / 2}>
+            <cylinderGeometry args={[POLE_R, POLE_R, high - low, 20]} />
+            <Aluminium />
+          </mesh>
+          <mesh position-y={baseTop + 0.13}>
+            <cylinderGeometry args={[POLE_R * 1.2, POLE_R * 1.2, 0.03, 20]} />
+            <Aluminium />
+          </mesh>
+        </>
+      )}
       <group position-y={clothY}>
-        <FlagCloth parts={parts} texture={texture} sleeveColor={sleeveColor} threadColor="#d9d9d9" hemColor={art.background} back={back} />
+        <FlagCloth parts={parts} texture={texture} sleeveColor={sleeveColor} threadColor="#d9d9d9" hemColor={art.background} back={back} printedBack />
       </group>
     </group>
   );
 }
 
+/** A variação vende só o tecido ("Somente Bandeira"): sem haste nem base no 3D. */
+function onlyFabric(spec: ModelProps["spec"]) {
+  return /\bsomente bandeira\b/.test(spec.details ?? "");
+}
+
 function WindBannerModel({ spec, art, label }: ModelProps) {
+  // Kit completo: base em cruz com bolsa d'água; o retangular "Completo para Piso" vai na base redonda, como na foto.
+  const base = onlyFabric(spec) ? null : spec.flagStyle === "rect" ? "round" : "cross";
   return (
     <group rotation-y={-0.3}>
-      <WindBanner style={spec.flagStyle} widthCm={spec.widthCm} heightCm={spec.heightCm} art={art} label={label} base="cross" sleeveColor={spec.accentColor ?? SLEEVE_COLOR} />
+      <WindBanner style={spec.flagStyle} heightCm={spec.heightCm} art={art} label={label} base={base} sleeveColor={spec.accentColor ?? SLEEVE_COLOR} />
     </group>
   );
 }
 
-// ---------------------------------------------------------------------------- bandeira de mastro
+// ---------------------------------------------------------------------------- bandeira de mão
 
 function hoistPlan(W: number, H: number, options: Pick<FlagPlan, "resolution" | "sleeve" | "hem" | "wind">): FlagPlan {
   return {
@@ -873,29 +879,14 @@ function hoistPlan(W: number, H: number, options: Pick<FlagPlan, "resolution" | 
   };
 }
 
-function ropeGeometry(a: Vec3, b: Vec3) {
-  return new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(...a), new THREE.Vector3(...b)), 2, 0.0028, 6, false);
-}
+/** Mastro de mão: tubo de alumínio Ø 22 mm que passa pela luva e sobra embaixo para segurar. */
+const HAND_POLE = { r: 0.011, grip: 0.55, top: 0.05 };
 
-const STAND_PROFILE: Pt[] = [
-  [0, 0],
-  [0.25, 0],
-  [0.256, 0.006],
-  [0.252, 0.018],
-  [0.22, 0.03],
-  [0.12, 0.045],
-  [0.05, 0.06],
-  [0.042, 0.075],
-  [0.04, 0.2],
-  [0.034, 0.21],
-  [0.027, 0.21],
-  [0.027, 0.15],
-  [0, 0.15],
-];
-const POLE_FOOT = 0.16;
-
-/** Bandeira 150×100 num mastro de piso: pedestal, mastro afinando, pomo dourado, roldana, adriça e cunho. */
-function ClassicFlagModel({ spec, art, label }: ModelProps) {
+/**
+ * Bandeira de mão, como na foto do produto: tafetá sublimado com a luva (na cor do fundo da arte) vestindo um mastro
+ * de alumínio levemente inclinado, com o pomo cromado em cima e a ponteira de borracha embaixo, sem pedestal.
+ */
+function HandFlagModel({ spec, art, label }: ModelProps) {
   const W = clamp(spec.widthCm, 20, 400) * CM;
   const H = clamp(spec.heightCm, 15, 300) * CM;
   const texture = useArtTexture(W / H, "front", art, label);
@@ -906,7 +897,7 @@ function ClassicFlagModel({ spec, art, label }: ModelProps) {
       buildFlag(
         hoistPlan(W, H, {
           resolution: 84,
-          sleeve: { radius: 0.0045, flap: 0.04, taper: [0.006, 0.006] },
+          sleeve: { radius: HAND_POLE.r + 0.0025, flap: 0.045, taper: [0.006, 0.006] },
           hem: 0.0028,
           wind: { amp: 0.07 * Math.min(1, H), wavelength: Math.max(0.4, W * 0.55), speed: 2.6, billow: 0.012 * W, droop: 0.045 * H },
         }),
@@ -914,100 +905,30 @@ function ClassicFlagModel({ spec, art, label }: ModelProps) {
     [W, H],
   );
   useGeometriesCleanup(parts.all);
-
-  const poleH = Math.max(2, H + 1.45);
-  const poleTop = POLE_FOOT + poleH;
-  const hoistX = 0.06;
-  const flagTop = poleTop - 0.1;
-  const flagBottom = flagTop - H;
-  const cleatY = Math.min(1.15, flagBottom - 0.25);
-  // Mosquetões: argola no plano xz, atravessando o ilhó e saindo do lado do mastro.
-  const hook = 0.012;
-  const grommetX = 0.018;
-  const hookOut = hoistX + grommetX - hook * 2;
-
-  const rig = useMemo(() => {
-    const pole = lathe(
-      [
-        [0, 0],
-        [0.024, 0],
-        [0.024, 0.05],
-        [0.021, 0.08],
-        [0.019, poleH * 0.6],
-        [0.016, poleH - 0.012],
-        [0.013, poleH],
-        [0, poleH],
-      ],
-      32,
-    );
-    const stand = lathe(STAND_PROFILE, 64);
-    const ropes = [
-      ropeGeometry([0.028, poleTop + 0.022, 0.003], [hookOut, flagTop - 0.022, 0]),
-      ropeGeometry([hookOut, flagBottom + 0.022, 0], [0.032, cleatY + 0.03, 0.006]),
-      ropeGeometry([0.024, poleTop + 0.022, -0.006], [0.028, cleatY + 0.035, -0.004]),
-    ];
-    return { pole, stand, ropes, list: [pole, stand, ...ropes] };
-  }, [poleH, poleTop, hookOut, flagTop, flagBottom, cleatY]);
-  useGeometriesCleanup(rig.list);
-  const poleColor = metalColor(spec.metal === "none" ? "silver" : spec.metal);
-
+  const poleH = HAND_POLE.grip + H + HAND_POLE.top;
+  const sleeve = solidColor(art.background);
   return (
     <group rotation-y={-0.25}>
-      <mesh geometry={rig.stand}>
-        <meshStandardMaterial color="#2b2b2e" metalness={0.85} roughness={0.3} />
-      </mesh>
-      <mesh geometry={rig.pole} position-y={POLE_FOOT}>
-        <meshStandardMaterial color={poleColor} metalness={1} roughness={0.26} />
-      </mesh>
-      {/* Roldana (caminhão) e pomo. */}
-      <mesh position-y={poleTop + 0.02}>
-        <cylinderGeometry args={[0.026, 0.024, 0.04, 28]} />
-        <meshStandardMaterial color={poleColor} metalness={1} roughness={0.3} />
-      </mesh>
-      <mesh position={[0.02, poleTop + 0.022, 0]}>
-        <torusGeometry args={[0.012, 0.0035, 8, 24]} />
-        <Plastic color="#e9e9e9" roughness={0.4} />
-      </mesh>
-      <mesh position-y={poleTop + 0.055}>
-        <cylinderGeometry args={[0.008, 0.012, 0.03, 16]} />
-        <meshStandardMaterial color="#d8b45a" metalness={1} roughness={0.22} />
-      </mesh>
-      <mesh position-y={poleTop + 0.11}>
-        <sphereGeometry args={[0.042, 32, 24]} />
-        <meshStandardMaterial color="#d8b45a" metalness={1} roughness={0.18} />
-      </mesh>
-      {/* Adriça (dois ramos) e cunho com a sobra enrolada. */}
-      {rig.ropes.map((geometry, i) => (
-        <mesh key={i} geometry={geometry}>
-          <meshStandardMaterial color="#efece4" roughness={0.85} />
+      <group rotation-z={0.1}>
+        <mesh position-y={poleH / 2}>
+          <cylinderGeometry args={[HAND_POLE.r, HAND_POLE.r, poleH, 24]} />
+          <meshStandardMaterial color="#d9dce0" metalness={1} roughness={0.26} />
         </mesh>
-      ))}
-      <mesh position={[0.036, cleatY + 0.02, 0]}>
-        <capsuleGeometry args={[0.0065, 0.075, 4, 10]} />
-        <meshStandardMaterial color={poleColor} metalness={1} roughness={0.3} />
-      </mesh>
-      <mesh position={[0.026, cleatY + 0.02, 0]}>
-        <boxGeometry args={[0.012, 0.03, 0.01]} />
-        <meshStandardMaterial color={poleColor} metalness={1} roughness={0.3} />
-      </mesh>
-      <mesh position={[0.042, cleatY - 0.05, 0.008]} rotation-y={0.3}>
-        <torusGeometry args={[0.024, 0.0032, 8, 28]} />
-        <meshStandardMaterial color="#efece4" roughness={0.85} />
-      </mesh>
-      <group position={[hoistX, flagBottom, 0]}>
-        <FlagCloth parts={parts} texture={texture} sleeveColor="#f3f0e6" threadColor="#cfcabd" hemColor={art.background} back={back} />
-        {[H - 0.022, 0.022].map((y) => (
-          <group key={y}>
-            <mesh position={[grommetX, y, 0]} scale={[1, 1, 1.7]}>
-              <torusGeometry args={[0.0075, 0.0028, 8, 20]} />
-              <meshStandardMaterial color="#c9a24e" metalness={1} roughness={0.3} />
-            </mesh>
-            <mesh position={[grommetX - hook, y, 0]} rotation-x={Math.PI / 2}>
-              <torusGeometry args={[hook, 0.0017, 6, 24]} />
-              <Steel />
-            </mesh>
-          </group>
-        ))}
+        <mesh position-y={0.018}>
+          <cylinderGeometry args={[HAND_POLE.r * 1.25, HAND_POLE.r * 1.15, 0.036, 20]} />
+          <Plastic color="#141416" roughness={0.85} />
+        </mesh>
+        <mesh position-y={poleH + 0.008}>
+          <cylinderGeometry args={[0.006, HAND_POLE.r, 0.016, 20]} />
+          <meshStandardMaterial color="#e6e8eb" metalness={1} roughness={0.18} />
+        </mesh>
+        <mesh position-y={poleH + 0.034}>
+          <sphereGeometry args={[0.024, 28, 20]} />
+          <meshStandardMaterial color="#e6e8eb" metalness={1} roughness={0.14} />
+        </mesh>
+        <group position-y={HAND_POLE.grip}>
+          <FlagCloth parts={parts} texture={texture} sleeveColor={sleeve} threadColor="#cfcabd" hemColor={art.background} back={back} />
+        </group>
       </group>
     </group>
   );
@@ -1015,7 +936,10 @@ function ClassicFlagModel({ spec, art, label }: ModelProps) {
 
 // ---------------------------------------------------------------------------- bandeira de carro
 
-/** Bandeira de carro com haste plástica e presilha encaixada no vidro de um recorte de porta. */
+/**
+ * Bandeira de carro como na foto do produto: o tafetá com a bolsa do mastro (na cor do fundo da arte) numa haste de
+ * plástico preto, que encaixa na presilha preta do vidro (U invertido que abraça a borda do vidro).
+ */
 function CarFlagModel({ spec, art, label }: ModelProps) {
   const W = clamp(spec.widthCm, 15, 80) * CM;
   const H = clamp(spec.heightCm, 10, 60) * CM;
@@ -1036,82 +960,52 @@ function CarFlagModel({ spec, art, label }: ModelProps) {
   );
   useGeometriesCleanup(parts.all);
 
-  const door = useMemo(() => {
-    const panel = new THREE.ExtrudeGeometry(makeShape("rect", 0.66, 0.2, 0.025), { depth: 0.05, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 3, curveSegments: 8 });
-    panel.translate(0, 0.108, -0.025);
-    const glassShape = new THREE.Shape();
-    glassShape.moveTo(-0.31, 0);
-    glassShape.lineTo(0.31, 0);
-    glassShape.lineTo(0.31, 0.19);
-    glassShape.quadraticCurveTo(0.31, 0.24, 0.25, 0.24);
-    glassShape.lineTo(-0.1, 0.24);
-    glassShape.quadraticCurveTo(-0.14, 0.24, -0.17, 0.21);
-    glassShape.lineTo(-0.31, 0.07);
-    glassShape.closePath();
-    const glass = new THREE.ExtrudeGeometry(glassShape, { depth: 0.005, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0015, bevelSegments: 2, curveSegments: 12 });
-    glass.translate(0, 0.2, -0.0025);
-    const seal = new THREE.ExtrudeGeometry(makeShape("rect", 0.64, 0.05, 0.006), { depth: 0.012, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 2, curveSegments: 6 });
-    seal.rotateX(-Math.PI / 2);
-    seal.translate(0, 0.217, 0);
-    const trim = new THREE.ExtrudeGeometry(makeShape("rect", 0.64, 0.008, 0.003), { depth: 0.004, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0015, bevelSegments: 2, curveSegments: 4 });
-    trim.translate(0, 0.205, 0.033);
-    // Presilha em U invertido abraçando a borda do vidro.
-    const clipShape = new THREE.Shape();
-    clipShape.moveTo(-0.011, -0.04);
-    clipShape.lineTo(-0.0035, -0.04);
-    clipShape.lineTo(-0.0035, 0);
-    clipShape.lineTo(0.0035, 0);
-    clipShape.lineTo(0.0035, -0.04);
-    clipShape.lineTo(0.011, -0.04);
-    clipShape.lineTo(0.011, 0.01);
-    clipShape.quadraticCurveTo(0.011, 0.014, 0.007, 0.014);
-    clipShape.lineTo(-0.007, 0.014);
-    clipShape.quadraticCurveTo(-0.011, 0.014, -0.011, 0.01);
-    clipShape.closePath();
-    const clip = new THREE.ExtrudeGeometry(clipShape, { depth: 0.035, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0012, bevelSegments: 2, curveSegments: 6 });
-    clip.translate(0, 0, -0.0175);
-    clip.rotateY(Math.PI / 2);
-    return { panel, glass, seal, trim, clip, list: [panel, glass, seal, trim, clip] };
+  const clip = useMemo(() => {
+    // Presilha em U invertido: as pernas descem dos dois lados do vidro.
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.011, -0.04);
+    shape.lineTo(-0.0035, -0.04);
+    shape.lineTo(-0.0035, 0);
+    shape.lineTo(0.0035, 0);
+    shape.lineTo(0.0035, -0.04);
+    shape.lineTo(0.011, -0.04);
+    shape.lineTo(0.011, 0.01);
+    shape.quadraticCurveTo(0.011, 0.014, 0.007, 0.014);
+    shape.lineTo(-0.007, 0.014);
+    shape.quadraticCurveTo(-0.011, 0.014, -0.011, 0.01);
+    shape.closePath();
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.035, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0012, bevelSegments: 2, curveSegments: 6 });
+    geometry.translate(0, 0, -0.0175);
+    geometry.rotateY(Math.PI / 2);
+    return geometry;
   }, []);
-  useGeometriesCleanup(door.list);
+  const clips = useMemo(() => [clip], [clip]);
+  useGeometriesCleanup(clips);
 
-  const glassTop = 0.2 + 0.24 + 0.0015;
-  const clipX = -0.04;
   const tilt = 0.1;
   const poleLength = H + 0.2;
+  const sleeve = solidColor(art.background);
   return (
-    <group rotation-y={-0.2} userData={{ view: { elevation: 0.16 } }}>
-      <mesh geometry={door.panel}>
-        <meshPhysicalMaterial color="#2a2e35" metalness={0.55} roughness={0.32} clearcoat={1} clearcoatRoughness={0.05} />
-      </mesh>
-      <mesh geometry={door.trim}>
-        <meshStandardMaterial color="#dfe2e6" metalness={1} roughness={0.15} />
-      </mesh>
-      <mesh geometry={door.seal}>
-        <Plastic color="#0e0e10" roughness={0.9} />
-      </mesh>
-      <mesh geometry={door.glass}>
-        <meshPhysicalMaterial color="#26343c" transparent opacity={0.5} roughness={0.04} metalness={0.1} clearcoat={1} clearcoatRoughness={0.02} depthWrite={false} />
-      </mesh>
-      <mesh geometry={door.clip} position={[clipX, glassTop, 0]}>
+    <group rotation-y={-0.25} userData={{ view: { elevation: 0.16 } }}>
+      <mesh geometry={clip}>
         <Plastic color="#151517" roughness={0.45} />
       </mesh>
       {/* Soquete encostado na perna externa da presilha (face externa em z = 0,011). */}
-      <group position={[clipX, glassTop - 0.035, 0.0195]} rotation-z={-tilt}>
+      <group position={[0, -0.035, 0.0195]} rotation-z={-tilt}>
         <mesh position-y={0.02}>
           <cylinderGeometry args={[0.0085, 0.0085, 0.05, 20]} />
           <Plastic color="#151517" roughness={0.45} />
         </mesh>
         <mesh position-y={0.01 + poleLength / 2}>
           <cylinderGeometry args={[0.0055, 0.0055, poleLength, 16]} />
-          <Plastic color="#f2f2f2" roughness={0.38} />
+          <Plastic color="#18191b" roughness={0.4} />
         </mesh>
         <mesh position-y={0.01 + poleLength}>
           <sphereGeometry args={[0.008, 16, 12]} />
-          <Plastic color="#f2f2f2" roughness={0.38} />
+          <Plastic color="#18191b" roughness={0.4} />
         </mesh>
         <group position-y={0.12}>
-          <FlagCloth parts={parts} texture={texture} sleeveColor="#f4f4f4" threadColor="#d0d0d0" hemColor={art.background} back={back} />
+          <FlagCloth parts={parts} texture={texture} sleeveColor={sleeve} threadColor="#d0d0d0" hemColor={art.background} back={back} />
         </group>
       </group>
     </group>
@@ -1120,8 +1014,80 @@ function CarFlagModel({ spec, art, label }: ModelProps) {
 
 // ---------------------------------------------------------------------------- wind ball
 
-/** Hemisfério de trás da wind ball com a arte do passo "Verso" (a UV dele já lê de trás). */
-function BallBack({ geometry, art, label }: { geometry: THREE.BufferGeometry; art: ArtRender; label: string }) {
+/** Gomos da wind ball (gabarito "windball": 4 gomos iguais, todos com a mesma arte). */
+const BALL_GORES = 4;
+/** Expoente da seção: faces mais retas que uma esfera, cantos arredondados nas costuras. */
+const BALL_SQUARE = 3.6;
+/** Espessura (frente–verso) em fração da largura: o disco achatado da foto do produto. */
+const BALL_DEPTH = 0.5;
+
+/**
+ * Um gomo: a seção horizontal é um quadrado de cantos arredondados (superelipse) com uma face por gomo, achatada
+ * de frente para trás (disco), e o perfil vertical é redondo. A UV corta a arte como o recorte em lente do gabarito: largura cheia no meio, afinando nos polos.
+ */
+function goreGeometry(R: number, index: number) {
+  const across = 28;
+  const down = 40;
+  const span = (Math.PI * 2) / BALL_GORES;
+  const center = index * span;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  for (let j = 0; j <= down; j += 1) {
+    const theta = 0.03 + (j / down) * (Math.PI - 0.06);
+    const ring = Math.sin(theta);
+    for (let i = 0; i <= across; i += 1) {
+      const local = (i / across - 0.5) * span;
+      const phi = center + local;
+      const c = Math.cos(local);
+      const s = Math.sin(local);
+      const r = R / Math.pow(Math.pow(Math.abs(c), BALL_SQUARE) + Math.pow(Math.abs(s), BALL_SQUARE), 1 / BALL_SQUARE);
+      positions.push(r * ring * Math.sin(phi), R * Math.cos(theta), r * ring * Math.cos(phi) * BALL_DEPTH);
+      uvs.push(0.5 + (local / span) * ring, 1 - theta / Math.PI);
+    }
+  }
+  const indices: number[] = [];
+  for (let j = 0; j < down; j += 1) {
+    for (let i = 0; i < across; i += 1) {
+      const a = j * (across + 1) + i;
+      const b = a + across + 1;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Costura entre dois gomos: tubo fino ao longo do meridiano do canto. */
+function seamGeometry(R: number, phi: number) {
+  const points: THREE.Vector3[] = [];
+  const corner = R / Math.pow(2 * Math.pow(Math.SQRT1_2, BALL_SQUARE), 1 / BALL_SQUARE);
+  for (let j = 0; j <= 48; j += 1) {
+    const theta = 0.03 + (j / 48) * (Math.PI - 0.06);
+    points.push(new THREE.Vector3(corner * Math.sin(theta) * Math.sin(phi), R * Math.cos(theta), corner * Math.sin(theta) * Math.cos(phi) * BALL_DEPTH));
+  }
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 64, 0.004, 6, false);
+}
+
+/** Base cônica cromada da foto do produto. */
+const BALL_BASE: Pt[] = [
+  [0, 0],
+  [0.23, 0],
+  [0.236, 0.006],
+  [0.232, 0.016],
+  [0.17, 0.045],
+  [0.09, 0.075],
+  [0.05, 0.09],
+  [0.032, 0.1],
+  [0.028, 0.13],
+  [0, 0.13],
+];
+
+/** Gomo de trás com a arte do passo "Verso" (a UV dele já lê de trás). */
+function GoreBack({ geometry, art, label }: { geometry: THREE.BufferGeometry; art: ArtRender; label: string }) {
   const texture = useArtTexture(1, "front", art, label);
   return (
     <mesh geometry={geometry}>
@@ -1130,62 +1096,59 @@ function BallBack({ geometry, art, label }: { geometry: THREE.BufferGeometry; ar
   );
 }
 
-/** Wind ball: esfera de helanca em dois hemisférios costurados (arte nos dois lados) num mastro com base em cruz. */
+/**
+ * Wind ball como na foto do produto: disco achatado de quatro gomos de helanca costurados (a mesma arte em todos;
+ * o de trás leva o verso quando há), com os cubos pretos nos polos, num mastro de alumínio sobre a base cônica
+ * cromada. "Somente Bandeira" mostra só a bola.
+ */
 function WindBallModel({ spec, art, label }: ModelProps) {
-  // Formato "1,0 × 3,0 m": diâmetro da bola × altura montada.
+  // Formato "1,0 × 3,0 m": largura da bola × altura montada.
   const D = clamp(spec.widthCm, 30, 150) * CM;
-  const r = D / 2;
+  const R = D / 2;
+  const mounted = !onlyFabric(spec);
   const total = Math.max(clamp(spec.heightCm, 60, 400) * CM, D * 1.8);
-  const center = total - r - 0.08;
+  const center = mounted ? total - R - 0.08 : R + 0.03;
   const texture = useArtTexture(1, "front", art, label);
   const backArt = useMemo(() => backArtOf(art), [art]);
   const ball = useMemo(() => {
-    // Projeção frontal: de frente a arte aparece inteira e sem distorção; o verso lê espelhado de volta.
-    const half = (phiStart: number, flip: boolean) => {
-      const geometry = new THREE.SphereGeometry(r, 72, 48, phiStart, Math.PI);
-      const position = geometry.getAttribute("position");
-      const uv = geometry.getAttribute("uv");
-      for (let i = 0; i < position.count; i += 1) {
-        const u = position.getX(i) / D + 0.5;
-        uv.setXY(i, flip ? 1 - u : u, position.getY(i) / D + 0.5);
-      }
-      return geometry;
-    };
-    const front = half(0, false);
-    const back = half(Math.PI, true);
-    const seam = new THREE.TorusGeometry(r, 0.0045, 8, 160);
-    return { front, back, seam, list: [front, back, seam] };
-  }, [r, D]);
+    const gores = Array.from({ length: BALL_GORES }, (_, i) => goreGeometry(R, i));
+    const seams = Array.from({ length: BALL_GORES }, (_, i) => seamGeometry(R, (i + 0.5) * ((Math.PI * 2) / BALL_GORES)));
+    const base = lathe(smoothProfile(BALL_BASE, 64), 64);
+    return { gores, seams, base, list: [...gores, ...seams, base] };
+  }, [R]);
   useGeometriesCleanup(ball.list);
-  const low = CROSS_TOP - 0.04;
+  const low = 0.1;
   return (
     <group rotation-y={-0.2}>
-      <CrossBase />
-      <mesh position-y={(low + total) / 2}>
-        <cylinderGeometry args={[POLE_R, POLE_R, total - low, 20]} />
-        <Aluminium />
-      </mesh>
-      <mesh position-y={total + 0.012}>
-        <sphereGeometry args={[0.018, 20, 14]} />
-        <Plastic color="#111113" roughness={0.4} />
-      </mesh>
-      <group position-y={center}>
-        <mesh geometry={ball.front}>
-          <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
-        </mesh>
-        {backArt ? (
-          <BallBack geometry={ball.back} art={backArt} label={label} />
-        ) : (
-          <mesh geometry={ball.back}>
-            <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
+      {mounted && (
+        <>
+          <mesh geometry={ball.base}>
+            <meshStandardMaterial color="#d7dadf" metalness={1} roughness={0.16} />
           </mesh>
+          <mesh position-y={(low + center) / 2}>
+            <cylinderGeometry args={[POLE_R, POLE_R, center - low, 20]} />
+            <Aluminium />
+          </mesh>
+        </>
+      )}
+      <group position-y={center}>
+        {ball.gores.map((geometry, i) =>
+          i === 2 && backArt ? (
+            <GoreBack key={i} geometry={geometry} art={backArt} label={label} />
+          ) : (
+            <mesh key={i} geometry={geometry}>
+              <meshPhysicalMaterial map={texture} roughness={0.6} sheen={0.6} sheenRoughness={0.5} sheenColor="#ffffff" />
+            </mesh>
+          ),
         )}
-        <mesh geometry={ball.seam}>
-          <meshStandardMaterial color="#1a1a1c" roughness={0.8} />
-        </mesh>
+        {ball.seams.map((geometry, i) => (
+          <mesh key={i} geometry={geometry}>
+            <meshStandardMaterial color={solidColor(art.background)} roughness={0.8} />
+          </mesh>
+        ))}
         {[1, -1].map((side) => (
-          <mesh key={side} position-y={side * (r - 0.004)}>
-            <cylinderGeometry args={[0.03, 0.034, 0.03, 24]} />
+          <mesh key={side} position-y={side * (R - 0.006)}>
+            <cylinderGeometry args={[0.028, 0.032, 0.03, 24]} />
             <Plastic color="#151517" roughness={0.45} />
           </mesh>
         ))}
@@ -1197,16 +1160,17 @@ function WindBallModel({ spec, art, label }: ModelProps) {
 // ---------------------------------------------------------------------------- exports
 
 /**
- * Bandeiras sublimadas. Wind banners (pena, faca, gota, vela, retangular): tecido recortado no contorno do
- * modelo, bainha preta seguindo a curva da haste de fibra, pesponto, elástico no canto e base em cruz com
- * bolsa d'água. "Bandeira" (paisagem) vai num mastro de piso com adriça; {car} na presilha de vidro;
- * {ball} é a esfera estampada no mastro. O tecido ondula ao vento quando a animação está liberada.
+ * Bandeiras sublimadas. Wind banners (pena, faca, gota, vela, retangular): tecido no contorno do gabarito, impresso
+ * dos dois lados, bainha preta seguindo a curva da haste de fibra, pesponto, elástico no canto e, no kit completo, a
+ * base; "Somente Bandeira" mostra só o tecido. "Bandeira" (paisagem) é a de mão, no mastro sem pedestal; {car} na
+ * haste preta com a presilha de vidro; {ball} é a wind ball de quatro gomos. O tecido ondula ao vento quando a
+ * animação está liberada.
  */
 export function FlagModel(props: ModelProps) {
   const { spec } = props;
   if (spec.variant === "ball") return <WindBallModel {...props} />;
   if (spec.variant === "car") return <CarFlagModel {...props} />;
-  if (spec.flagStyle === "rect" && spec.widthCm >= spec.heightCm) return <ClassicFlagModel {...props} />;
+  if (spec.flagStyle === "rect" && spec.widthCm >= spec.heightCm) return <HandFlagModel {...props} />;
   return <WindBannerModel {...props} />;
 }
 
@@ -1223,7 +1187,7 @@ export function HardwareModel({ spec, art }: ModelProps) {
   if (spec.variant === "round-base") {
     return (
       <group rotation-y={-0.25} userData={view}>
-        <WindBanner style={style} widthCm={55} heightCm={170} art={art} label={formatSize(55, 170)} base="round" sleeveColor={sleeve} position={[-0.3, 0, -0.42]} />
+        <WindBanner style={style} heightCm={145} art={art} label={formatSize(73, 145)} base="round" sleeveColor={sleeve} position={[-0.3, 0, -0.42]} />
         <RoundBase position={[0.34, 0, 0.3]} rotationY={-0.5} />
       </group>
     );
@@ -1231,14 +1195,14 @@ export function HardwareModel({ spec, art }: ModelProps) {
   if (spec.variant === "pole") {
     return (
       <group rotation-y={-0.2} userData={view}>
-        <WindBanner style={style} widthCm={70} heightCm={240} art={art} label={formatSize(70, 240)} base="cross" sleeveColor={sleeve} position={[-0.25, 0, -0.5]} />
+        <WindBanner style={style} heightCm={230} art={art} label={formatSize(73.5, 230)} base="cross" sleeveColor={sleeve} position={[-0.25, 0, -0.5]} />
         <PoleSet lengthCm={spec.heightCm} diameterCm={spec.widthCm} position={[0.05, 0, 0.42]} rotationY={0.06} />
       </group>
     );
   }
   return (
     <group rotation-y={-0.2} userData={view}>
-      <WindBanner style={style} widthCm={70} heightCm={240} art={art} label={formatSize(70, 240)} base="cross" sleeveColor={sleeve} position={[-0.45, 0, -0.6]} />
+      <WindBanner style={style} heightCm={230} art={art} label={formatSize(73.5, 230)} base="cross" sleeveColor={sleeve} position={[-0.45, 0, -0.6]} />
       <CrossBase position={[0.58, 0, 0.22]} rotationY={0.2} />
       <PoleSet lengthCm={110} diameterCm={2.1} position={[-0.2, 0, 0.92]} rotationY={0.06} />
     </group>

@@ -17,6 +17,7 @@ import {
   makeShape,
   sizeLabels,
   useArtTexture,
+  useFaceTexture,
   useGeometryCleanup,
   type MaskPath,
   type ModelProps,
@@ -485,9 +486,8 @@ export function WallpaperModel({ spec, art, label, showDims }: ModelProps) {
 /** Manta magnética flexível de 0,8 mm. */
 const MAGNET_CM = 0.08;
 const MAGNET_BROWN = "#4a3426";
-/** Bloquinho de 12 folhas de offset 70 g (~1,4 mm), proporção 5 × 6,5 cm. */
+/** Bloquinho de 12 folhas de offset 70 g (~1,4 mm). */
 const PAD_CM = 0.14;
-const PAD_ASPECT = 5 / 6.5;
 /** Fração da altura do bloquinho colada atrás do ímã (fica escondida). */
 const PAD_TUCK = 0.16;
 /** Folha do bilhete (~0,1 mm) entre a porta e o ímã. */
@@ -561,8 +561,14 @@ function magnetLayout(spec: ModelProps["spec"]): MagnetLayout {
   let mh = sh;
   let pad: MagnetLayout["pad"] = null;
   if (calendar) {
-    const padW = ownSize ? sw : sw * 0.92;
-    const padH = ownSize ? sh : padW / PAD_ASPECT;
+    // Imã c/ Calendário: o gabarito do ímã é paisagem (5 × 4,5 cm, mesmo com o formato "4,5x5,0 cm") e o
+    // bloquinho, da largura do ímã e um pouco mais baixo que ele, fica preso embaixo (foto do produto).
+    if (!ownSize) {
+      mw = Math.max(sw, sh);
+      mh = Math.min(sw, sh);
+    }
+    const padW = ownSize ? sw : mw * 0.96;
+    const padH = ownSize ? sh : padW * 0.92;
     if (ownSize) {
       mw = padW / 0.92;
       mh = mw * 1.11;
@@ -981,16 +987,32 @@ export function MagnetModel(props: ModelProps) {
 
 // ============================================================================ capa de cilindro
 
-/** Cores lisas das capas dos cilindros de trás (trio clássico P, M, G). */
-const TRIO_COLORS = ["#ecc9c1", "#c3d0be"];
 /** Trio clássico vendido (diâmetro × altura, cm): P, M e G. */
 const TRIO_CM: [number, number][] = [
   [35, 40],
   [45, 60],
   [53, 80],
 ];
+/**
+ * Gabarito "cilindro-de-festa" de cada tamanho (mm): o corpo (volta inteira, largura × altura) e a tampa (diâmetro
+ * com a aba que dobra). A arte do corpo dá a volta no cilindro; a tampa vai no topo.
+ */
+const TRIO_TEMPLATE: { body: [number, number]; lid: number }[] = [
+  { body: [1190, 520], lid: 420 },
+  { body: [1440, 880], lid: 510 },
+  { body: [1790, 1100], lid: 600 },
+];
 
-type TrioItem = { d: number; h: number; x: number; z: number };
+type TrioItem = { d: number; h: number; x: number; z: number; size: number };
+
+/** Tamanho do trio mais próximo da medida (pela altura). */
+function trioSize(hCm: number) {
+  let nearest = 0;
+  TRIO_CM.forEach(([, h], i) => {
+    if (Math.abs(h - hCm) < Math.abs(TRIO_CM[nearest][1] - hCm)) nearest = i;
+  });
+  return nearest;
+}
 
 /**
  * Monta o trio em torno do cilindro do pedido (na frente, x = z = 0): os outros dois tamanhos do jogo,
@@ -998,14 +1020,11 @@ type TrioItem = { d: number; h: number; x: number; z: number };
  * o da frente abre mais para o lado, para não sumir atrás dele.
  */
 function trioLayout(dCm: number, hCm: number) {
-  let nearest = 0;
-  TRIO_CM.forEach(([, h], i) => {
-    if (Math.abs(h - hCm) < Math.abs(TRIO_CM[nearest][1] - hCm)) nearest = i;
-  });
+  const nearest = trioSize(hCm);
   const kd = dCm / TRIO_CM[nearest][0];
   const kh = hCm / TRIO_CM[nearest][1];
-  const others = TRIO_CM.filter((_, i) => i !== nearest)
-    .map(([d, h]) => ({ d: d * kd, h: h * kh }))
+  const others = TRIO_CM.map(([d, h], size) => ({ d: d * kd, h: h * kh, size }))
+    .filter((o) => o.size !== nearest)
     .sort((a, b) => b.h - a.h);
   const r0 = dCm / 2;
   const back: TrioItem[] = others.map((o, i) => {
@@ -1016,7 +1035,7 @@ function trioLayout(dCm: number, hCm: number) {
   const minX = Math.min(-r0, ...back.map((b) => b.x - b.d / 2));
   const maxX = Math.max(r0, ...back.map((b) => b.x + b.d / 2));
   const maxH = Math.max(hCm, ...back.map((b) => b.h));
-  return { back, extent: Math.max(maxH, maxX - minX) };
+  return { back, size: nearest, extent: Math.max(maxH, maxX - minX) };
 }
 
 /**
@@ -1059,49 +1078,64 @@ function coverGeometry(rCm: number, hCm: number, s: number) {
   return { geometry, corner: c };
 }
 
-function CoverMaterial({ color, map }: { color: string; map?: THREE.Texture }) {
-  return <meshPhysicalMaterial color={map ? "#ffffff" : color} map={map ?? null} roughness={0.6} sheen={0.7} sheenRoughness={0.45} sheenColor="#ffffff" />;
+function CoverMaterial({ color }: { color: string }) {
+  return <meshPhysicalMaterial color={color} roughness={0.6} sheen={0.7} sheenRoughness={0.45} sheenColor="#ffffff" />;
 }
 
 function darken(color: string, amount: number) {
   return `#${new THREE.Color(color).multiplyScalar(amount).getHexString()}`;
 }
 
-/** Um cilindro vestido: capa, costuras (barra e topo) e, no da frente, a arte. */
-function CoveredCylinder({ dCm, hCm, s, color, map }: { dCm: number; hCm: number; s: number; color: string; map?: THREE.Texture }) {
+/**
+ * Um cilindro vestido com a capa sublimada: a arte do corpo dá a volta inteira (largura do gabarito = a volta, sem
+ * distorcer; a lateral mostra a faixa do meio da altura do gabarito), a da tampa no topo, e as costuras da barra e do topo.
+ */
+function CoveredCylinder({ dCm, hCm, s, size, art, label }: { dCm: number; hCm: number; s: number; size: number; art: ModelProps["art"]; label: string }) {
   const rCm = dCm / 2;
+  const template = TRIO_TEMPLATE[size] ?? TRIO_TEMPLATE[0];
+  const bodyAspect = template.body[0] / template.body[1];
+  const body = useArtTexture(bodyAspect, "front", art, label);
+  const lid = useFaceTexture(1, art, "tampa", label, "blank");
   const cover = useMemo(() => coverGeometry(rCm, hCm, s), [rCm, hCm, s]);
   useGeometryCleanup(cover.geometry);
-  const bandBottom = 3.2;
-  const bandH = Math.max(1, hCm - cover.corner - bandBottom - 0.6);
-  const band = useMemo(
-    () =>
-      map
-        ? bandGeometry({
-            radiusTop: rCm * s + 0.0025,
-            radiusBottom: rCm * s + 0.0025,
-            height: bandH * s,
-            width: bandH * (dCm / hCm) * s,
-            segments: 96,
-            rows: 4,
-          })
-        : null,
-    [map, rCm, dCm, hCm, bandH, s],
-  );
-  useGeometryCleanup(band);
-  const seam = darken(color, 0.82);
+  const bandBottom = 2.4;
+  const bandH = Math.max(1, hCm - cover.corner - bandBottom);
+  const parts = useMemo(() => {
+    const circumference = 2 * Math.PI * rCm;
+    const band = bandGeometry({ radiusTop: rCm * s + 0.0025, radiusBottom: rCm * s + 0.0025, height: bandH * s, width: circumference * s, segments: 160, rows: 4 });
+    // A volta inteira é a largura da arte; na altura, a lateral mostra o trecho do meio na mesma escala.
+    const span = Math.min(1, (bandH * bodyAspect) / circumference);
+    const uv = band.getAttribute("uv");
+    for (let i = 0; i < uv.count; i += 1) uv.setY(i, 0.5 + (uv.getY(i) - 0.5) * span);
+    uv.needsUpdate = true;
+    // Tampa: o disco plano do topo mostra o miolo do círculo do gabarito (a aba dobra pela borda).
+    const flat = (rCm - cover.corner) * s;
+    const disc = new THREE.CircleGeometry(flat, 64);
+    disc.rotateX(-Math.PI / 2);
+    const dpos = disc.getAttribute("position");
+    const duv = disc.getAttribute("uv");
+    const k = (rCm - cover.corner) / (template.lid / 20);
+    for (let i = 0; i < duv.count; i += 1) duv.setXY(i, 0.5 + (dpos.getX(i) / flat) * 0.5 * k, 0.5 - (dpos.getZ(i) / flat) * 0.5 * k);
+    duv.needsUpdate = true;
+    return { band, disc };
+  }, [rCm, s, bandH, bodyAspect, cover.corner, template.lid]);
+  useGeometryCleanup(parts.band);
+  useGeometryCleanup(parts.disc);
+  const background = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : "#ffffff";
+  const seam = darken(background, 0.82);
   return (
     <group>
       <mesh geometry={cover.geometry}>
-        <CoverMaterial color={color} />
+        <CoverMaterial color={background} />
       </mesh>
-      {band && map && (
-        <mesh geometry={band} position-y={(bandBottom + bandH / 2) * s}>
-          <meshPhysicalMaterial map={map} roughness={0.6} sheen={0.6} sheenRoughness={0.45} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-1} />
-        </mesh>
-      )}
+      <mesh geometry={parts.band} position-y={(bandBottom + bandH / 2) * s}>
+        <meshPhysicalMaterial map={body} roughness={0.6} sheen={0.6} sheenRoughness={0.45} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-1} />
+      </mesh>
+      <mesh geometry={parts.disc} position-y={(hCm + 0.13) * s}>
+        <meshPhysicalMaterial map={lid} roughness={0.6} sheen={0.6} sheenRoughness={0.45} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-1} />
+      </mesh>
       {/* Pesponto da barra e costura do topo. */}
-      <mesh position-y={2.6 * s} rotation-x={Math.PI / 2}>
+      <mesh position-y={2.2 * s} rotation-x={Math.PI / 2}>
         <torusGeometry args={[rCm * s + 0.0015, 0.09 * s, 6, 128]} />
         <meshStandardMaterial color={seam} roughness={0.7} />
       </mesh>
@@ -1114,27 +1148,23 @@ function CoveredCylinder({ dCm, hCm, s, color, map }: { dCm: number; hCm: number
 }
 
 /**
- * Capa para cilindro de festa: trio clássico P/M/G (35×40, 45×60, 53×80 cm). O cilindro da frente
- * (medida do pedido: diâmetro × altura) veste a capa sublimada com a arte de frente para a câmera, em
- * faixa com a largura física da arte (bandGeometry, sem distorção); o resto da capa usa a cor de fundo
- * da arte. Atrás, os outros dois tamanhos do jogo com capas lisas em tons suaves.
+ * Capa para cilindro de festa: trio clássico P/M/G (35×40, 45×60, 53×80 cm), como na foto do produto, os três com
+ * capa sublimada: a arte do corpo dá a volta no cilindro (gabarito do tamanho) e a da tampa fica no topo. O cilindro da
+ * frente é o da medida do pedido; atrás, os outros dois tamanhos do jogo na mesma escala.
  */
 export function CylinderModel({ spec, art, label }: ModelProps) {
   const dCm = Math.max(spec.widthCm, 5);
   const hCm = Math.max(spec.heightCm, 8);
   const trio = useMemo(() => trioLayout(dCm, hCm), [dCm, hCm]);
   const s = 2.6 / trio.extent;
-  const front = useArtTexture(dCm / hCm, "front", art, label);
-  const background = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : "#ffffff";
-  const colors = [spec.accentColor ?? TRIO_COLORS[0], TRIO_COLORS[1]];
   return (
     <group>
-      {trio.back.map((b, i) => (
-        <group key={i} position={[b.x * s, 0, b.z * s]}>
-          <CoveredCylinder dCm={b.d} hCm={b.h} s={s} color={colors[i]} />
+      {trio.back.map((b) => (
+        <group key={b.size} position={[b.x * s, 0, b.z * s]}>
+          <CoveredCylinder dCm={b.d} hCm={b.h} s={s} size={b.size} art={art} label={label} />
         </group>
       ))}
-      <CoveredCylinder dCm={dCm} hCm={hCm} s={s} color={background} map={front} />
+      <CoveredCylinder dCm={dCm} hCm={hCm} s={s} size={trio.size} art={art} label={label} />
     </group>
   );
 }

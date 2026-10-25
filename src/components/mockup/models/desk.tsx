@@ -7,21 +7,19 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO, artAspect } from "@/lib/mockup-kinds";
-import { fontFamily, heartPath, roundPath } from "../art";
+import { fontFamily } from "../art";
 import { useAnimate } from "../viewer-hooks";
 import {
   Dimensions,
   PrintMaterial,
-  Slab,
-  backVariant,
   faceGeometry,
   makeShape,
   sizeLabels,
   useArtTexture,
   useGeometryCleanup,
-  type MaskPath,
   type ModelProps,
 } from "./shared";
+import { cutShape } from "./cut-path";
 
 /** Escala dos objetos de mesa: unidades de cena por cm (a régua de 30 cm fica com ~2,55). */
 const UNIT = 0.085;
@@ -125,51 +123,6 @@ function useCanvasTexture(width: number, height: number, draw: (ctx: CanvasRende
   }, [width, height, draw]);
   useEffect(() => () => texture.dispose(), [texture]);
   return texture;
-}
-
-/** Caixa de cantos e arestas suavizados (bisel), centrada na origem; tamanho em x, y, z. */
-function SoftBox({
-  w,
-  h,
-  d,
-  radius,
-  color,
-  roughness = 0.6,
-  metalness = 0,
-  position,
-}: {
-  w: number;
-  h: number;
-  d: number;
-  radius: number;
-  color: string;
-  roughness?: number;
-  metalness?: number;
-  position?: [number, number, number];
-}) {
-  const geometry = useMemo(() => {
-    const bevel = Math.min(radius, w / 4, h / 4, d / 4);
-    const shape = makeShape("rect", w, d, Math.min(radius * 1.6, w / 2, d / 2));
-    const g = new THREE.ExtrudeGeometry(shape, {
-      depth: Math.max(h - bevel * 2, 0.0001),
-      bevelEnabled: true,
-      bevelThickness: bevel,
-      bevelSize: bevel,
-      bevelOffset: -bevel,
-      bevelSegments: 3,
-      curveSegments: 6,
-    });
-    g.translate(0, 0, bevel);
-    g.rotateX(-Math.PI / 2);
-    g.translate(0, -h / 2, 0);
-    return g;
-  }, [w, h, d, radius]);
-  useGeometryCleanup(geometry);
-  return (
-    <mesh geometry={geometry} position={position}>
-      <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
-    </mesh>
-  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -447,251 +400,82 @@ export function RulerModel({ spec, art, label, showDims }: ModelProps) {
 // ---------------------------------------------------------------------------------------------
 // Suporte de celular
 
-const PHONE = { w: 14.7, h: 7.15, d: 0.78, radius: 0.95 };
-/** Inclinação da frente impressa e do celular (rad, a partir da vertical). */
-const FASCIA_TILT = 0.28;
-const PHONE_TILT = 0.2;
-const KICK_TILT = 0.42;
-
-/** Arredonda as quinas da polilinha (dobra a quente) com arcos quadráticos. */
-function fillet(points: Pt[], radius: number, steps = 6): Pt[] {
-  const out: Pt[] = [points[0]];
-  for (let i = 1; i < points.length - 1; i += 1) {
-    const [px, py] = points[i];
-    const [ax, ay] = points[i - 1];
-    const [cx, cy] = points[i + 1];
-    const l1 = Math.hypot(px - ax, py - ay) || 1;
-    const l2 = Math.hypot(cx - px, cy - py) || 1;
-    const r = Math.min(radius, l1 * 0.45, l2 * 0.45);
-    const p1: Pt = [px - ((px - ax) / l1) * r, py - ((py - ay) / l1) * r];
-    const p2: Pt = [px + ((cx - px) / l2) * r, py + ((cy - py) / l2) * r];
-    for (let s = 0; s <= steps; s += 1) {
-      const k = s / steps;
-      const u = 1 - k;
-      out.push([u * u * p1[0] + 2 * u * k * px + k * k * p2[0], u * u * p1[1] + 2 * u * k * py + k * k * p2[1]]);
-    }
-  }
-  out.push(points[points.length - 1]);
-  return out;
-}
-
-/** Contorno de uma chapa de espessura t seguindo a linha central (juntas em esquadria). */
-function thickOutline(line: Pt[], t: number): THREE.Shape {
-  const left: THREE.Vector2[] = [];
-  const right: THREE.Vector2[] = [];
-  const normalOf = (a: Pt, b: Pt): Pt => {
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    return [-(b[1] - a[1]) / len, (b[0] - a[0]) / len];
-  };
-  const last = line.length - 1;
-  line.forEach(([x, y], i) => {
-    const n0 = i > 0 ? normalOf(line[i - 1], line[i]) : normalOf(line[0], line[1]);
-    const n1 = i < last ? normalOf(line[i], line[i + 1]) : n0;
-    let mx = n0[0] + n1[0];
-    let my = n0[1] + n1[1];
-    const ml = Math.hypot(mx, my) || 1;
-    mx /= ml;
-    my /= ml;
-    const k = t / 2 / Math.max(0.35, mx * n1[0] + my * n1[1]);
-    left.push(new THREE.Vector2(x + mx * k, y + my * k));
-    right.push(new THREE.Vector2(x - mx * k, y - my * k));
-  });
-  return new THREE.Shape([...left, ...right.reverse()]);
-}
-
 /**
- * Perfil (z, y) em cm da chapa dobrada: aba na mesa, frente impressa inclinada, patamar com canaleta
- * onde o celular encaixa deitado e o pé traseiro descendo até a mesa.
+ * Peças do suporte de celular no gabarito oficial ("suporte-para-celular", mm, y para baixo): a placa frontal de
+ * 9 × 21 cm com o recorte do cabo embaixo e os dois rasgos de 28 × 6,8 mm, e a base de encaixe de 9 × 10 cm com as
+ * duas abas no topo (entram nos rasgos e sobram na frente como apoio do celular) e o recorte do cabo.
  */
-function standProfile(heightCm: number, t: number) {
-  const r = t / 2 + 0.15;
-  const up: Pt = [-Math.sin(FASCIA_TILT), Math.cos(FASCIA_TILT)];
-  const down: Pt = [Math.sin(PHONE_TILT), -Math.cos(PHONE_TILT)];
-  const slotDepth = 1.5;
-  const slotWidth = (t + PHONE.d) / Math.cos(PHONE_TILT) + 0.22;
-  const fascia = heightCm + 2 * r;
-  const p0: Pt = [1.5, t / 2];
-  const p1: Pt = [0, t / 2];
-  const p2: Pt = [p1[0] + up[0] * fascia, p1[1] + up[1] * fascia];
-  const p3: Pt = [p2[0] - 1.2, p2[1]];
-  const p4: Pt = [p3[0] + down[0] * slotDepth, p3[1] + down[1] * slotDepth];
-  const p5: Pt = [p4[0] - slotWidth, p4[1]];
-  const p6: Pt = [p5[0] - down[0] * slotDepth, p5[1] - down[1] * slotDepth];
-  const p7: Pt = [p6[0] - 1.2, p6[1]];
-  // A ponta do pé encosta na mesa com a quina mais baixa em y = 0.
-  const footY = (t / 2) * Math.sin(KICK_TILT);
-  const p8: Pt = [p7[0] - (p7[1] - footY) * Math.tan(KICK_TILT), footY];
-  const shape = thickOutline(fillet([p0, p1, p2, p3, p4, p5, p6, p7, p8], r), t);
-  const faceOffset = t / 2 + 0.012;
-  const face: Pt = [
-    p1[0] + up[0] * (r + heightCm / 2) + Math.cos(FASCIA_TILT) * faceOffset,
-    p1[1] + up[1] * (r + heightCm / 2) + Math.sin(FASCIA_TILT) * faceOffset,
-  ];
-  const seat: Pt = [(p4[0] + p5[0]) / 2, p4[1] + t / 2 + 0.12];
-  const phone: Pt = [seat[0] - Math.sin(PHONE_TILT) * (PHONE.h / 2), seat[1] + Math.cos(PHONE_TILT) * (PHONE.h / 2)];
-  return { shape, face, phone };
-}
+const STAND_PLATE = {
+  box: { x: 132, y: 19.8, w: 90, h: 210 },
+  d: "M138.8 19.8L215.1 19.8C218.9 19.8 222 22.8 222 26.6L222 222.9C222 226.7 218.9 229.8 215.1 229.8L187.9 229.8C186.2 229.8 184.8 228.8 184.1 227.4C184.1 227.4 182.4 222.3 177 222.3C171.5 222.3 169.8 227.4 169.9 227.4C169.2 228.8 167.7 229.8 166.1 229.8L138.8 229.8C135 229.8 132 226.7 132 222.9L132 26.6C132 22.8 135 19.8 138.8 19.8Z M142.5 196.2L170.5 196.2L170.5 203L142.5 203Z M183.5 196.2L211.5 196.2L211.5 203L183.5 203Z",
+  /** Centro dos rasgos acima da base da placa (cm). */
+  slot: 3.02,
+};
+const STAND_BASE = {
+  box: { x: 28, y: 129.8, w: 90, h: 100 },
+  d: "M85 129.8L102 129.8C104.8 129.8 107 132 107 134.8L107 159.8L114.7 159.8C116.5 159.8 118 161.3 118 163.1L118 226.4C118 228.3 116.5 229.8 114.7 229.8L83.2 229.8C80.9 229.8 79 227.9 79 225.7L79 210.8C79 207.5 76.3 204.8 73 204.8C69.7 204.8 67 207.5 67 210.8L67 225.7C67 227.9 65.2 229.8 62.9 229.8L31.4 229.8C29.5 229.8 28 228.3 28 226.4L28 163.1C28 161.3 29.5 159.8 31.4 159.8L39 159.8L39 134.8C39 132 41.3 129.8 44 129.8L61 129.8C63.8 129.8 66 132 66 134.8L66 159.8L80 159.8L80 134.8C80 132 82.3 129.8 85 129.8Z",
+  /** Raiz das abas (cm acima do centro da peça) e comprimento do corpo abaixo delas. */
+  root: 2,
+  body: 7,
+};
+/** Inclinação da placa (rad, a partir da vertical), como na foto do produto. */
+const STAND_TILT = 0.32;
 
-/** Tela de bloqueio discreta: degradê escuro com brilhos suaves, ilha da câmera e barra inferior. */
-function drawScreen(ctx: CanvasRenderingContext2D, w: number, h: number) {
-  const base = ctx.createLinearGradient(0, 0, w, h);
-  base.addColorStop(0, "#1a2140");
-  base.addColorStop(0.5, "#251538");
-  base.addColorStop(1, "#06070b");
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, w, h);
-  const glows: [number, number, number, string][] = [
-    [0.28, 0.3, 0.55, "rgba(56,225,255,0.32)"],
-    [0.74, 0.72, 0.6, "rgba(255,79,216,0.26)"],
-  ];
-  glows.forEach(([x, y, r, color]) => {
-    const glow = ctx.createRadialGradient(x * w, y * h, 0, x * w, y * h, r * w);
-    glow.addColorStop(0, color);
-    glow.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, w, h);
-  });
-  ctx.fillStyle = "#000000";
-  ctx.beginPath();
-  ctx.roundRect(w * 0.035, h * 0.41, w * 0.026, h * 0.18, w * 0.013);
-  ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.55)";
-  ctx.beginPath();
-  ctx.roundRect(w * 0.38, h * 0.93, w * 0.24, h * 0.016, h * 0.008);
-  ctx.fill();
-}
-
-/** Smartphone moderno de apoio: corpo com bisel, vidro, tela, módulo de câmeras com lentes. */
-function Smartphone() {
-  const body = useMemo(() => {
-    const bevel = 0.12;
-    const g = new THREE.ExtrudeGeometry(makeShape("rect", PHONE.w, PHONE.h, PHONE.radius), {
-      depth: PHONE.d - bevel * 2,
-      bevelEnabled: true,
-      bevelThickness: bevel,
-      bevelSize: bevel,
-      bevelOffset: -bevel,
-      bevelSegments: 3,
-      curveSegments: 10,
-    });
-    g.translate(0, 0, -PHONE.d / 2 + bevel);
-    return splitLids(g);
-  }, []);
-  const screenW = PHONE.w - 0.45;
-  const screenH = PHONE.h - 0.45;
-  const screen = useMemo(() => faceGeometry(makeShape("rect", screenW, screenH, PHONE.radius - 0.2), screenW, screenH), [screenW, screenH]);
-  const bump = useMemo(() => {
-    const g = new THREE.ExtrudeGeometry(makeShape("rect", 3.5, 3.5, 0.85), {
-      depth: 0.06,
-      bevelEnabled: true,
-      bevelThickness: 0.04,
-      bevelSize: 0.06,
-      bevelOffset: -0.06,
-      bevelSegments: 2,
-      curveSegments: 8,
-    });
-    g.rotateY(Math.PI);
-    return g;
-  }, []);
-  const ring = useMemo(() => new THREE.CylinderGeometry(0.66, 0.68, 0.16, 32).rotateX(Math.PI / 2), []);
-  const lens = useMemo(() => new THREE.CylinderGeometry(0.46, 0.46, 0.18, 32).rotateX(Math.PI / 2), []);
-  useGeometryCleanup(body);
-  useGeometryCleanup(screen);
-  useGeometryCleanup(bump);
-  useGeometryCleanup(ring);
-  useGeometryCleanup(lens);
-  const screenTexture = useCanvasTexture(512, (512 * screenH) / screenW, drawScreen);
-  const back = -PHONE.d / 2;
-  // Visto de frente, o módulo fica no canto superior esquerdo (mesmo lado da ilha da câmera).
-  const cameraModule: [number, number, number] = [-PHONE.w / 2 + 2.15, PHONE.h / 2 - 2.15, back];
-  const lenses: Pt[] = [
-    [0.8, 0.8],
-    [0.8, -0.8],
-    [-0.75, 0],
-  ];
-  return (
-    <group>
-      <mesh geometry={body}>
-        <meshPhysicalMaterial attach="material-0" color="#050507" roughness={0.05} clearcoat={1} clearcoatRoughness={0.03} />
-        <meshStandardMaterial attach="material-1" color="#45474c" metalness={0.9} roughness={0.28} />
-        <meshStandardMaterial attach="material-2" color="#2a2d33" roughness={0.42} metalness={0.1} />
-      </mesh>
-      <mesh geometry={screen} position-z={PHONE.d / 2 + 0.004}>
-        <meshStandardMaterial color="#000000" emissive="#ffffff" emissiveMap={screenTexture} emissiveIntensity={0.85} roughness={0.06} />
-      </mesh>
-      <group position={cameraModule}>
-        <mesh geometry={bump}>
-          <meshStandardMaterial color="#2f3238" roughness={0.18} metalness={0.2} />
-        </mesh>
-        {lenses.map(([x, y]) => (
-          <group key={`${x}:${y}`} position={[x, y, -0.16]}>
-            <mesh geometry={ring}>
-              <meshStandardMaterial color="#8d9096" metalness={1} roughness={0.22} />
-            </mesh>
-            <mesh geometry={lens} position-z={-0.02}>
-              <meshPhysicalMaterial color="#07090f" roughness={0.04} clearcoat={1} metalness={0.3} />
-            </mesh>
-          </group>
-        ))}
-        <mesh position={[-0.75, 1.05, -0.12]} rotation-x={Math.PI / 2}>
-          <cylinderGeometry args={[0.2, 0.2, 0.06, 20]} />
-          <meshStandardMaterial color="#f4efe0" roughness={0.3} />
-        </mesh>
-      </group>
-      {/* Botões na borda superior. */}
-      {[-3.6, -2.3, 3.2].map((x) => (
-        <mesh key={x} position={[x, PHONE.h / 2 + 0.02, 0]}>
-          <boxGeometry args={[x > 0 ? 1.6 : 0.95, 0.08, 0.32]} />
-          <meshStandardMaterial color="#45474c" metalness={0.9} roughness={0.3} />
-        </mesh>
-      ))}
-    </group>
-  );
+/** Chapa de PVC com borda levemente quebrada, centrada na espessura. */
+function pvcSheet(shape: THREE.Shape, t: number) {
+  const bevel = Math.min(0.04, t * 0.12);
+  const g = new THREE.ExtrudeGeometry(shape, { depth: t - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelOffset: -bevel, bevelSegments: 2, curveSegments: 8 });
+  g.translate(0, 0, -t / 2 + bevel);
+  return g;
 }
 
 /**
- * Suporte de celular em chapa de PVC expandido dobrada a quente: perfil extrudado na largura da peça
- * (aba na mesa, frente impressa inclinada, canaleta no topo e pé traseiro) com dobras arredondadas.
- * A arte ocupa a frente inteira (largura × altura da spec) e o celular fica deitado na canaleta, acima
- * dela, para a impressão ficar toda à vista.
+ * Suporte de celular em PVC expandido 5 mm, como na foto do produto: a placa impressa (9 × 21 cm) inclinada para
+ * trás, com o recorte do cabo e os dois rasgos; a base de encaixe passa pelos rasgos, sobra na frente como os dois
+ * apoios do celular e desce por trás até a mesa, segurando a placa.
  */
 export function PhoneStandModel({ spec, art, label }: ModelProps) {
-  const widthCm = Math.max(spec.widthCm, 6);
-  const heightCm = Math.max(spec.heightCm, 4);
+  // O "Tamanho 21x9 cm" é a placa em pé: 9 de largura por 21 de altura.
+  const W = Math.max(Math.min(spec.widthCm, spec.heightCm), 4);
+  const H = Math.max(spec.widthCm, spec.heightCm, W * 1.4);
   const t = clamp(spec.depthCm || 0.5, 0.3, 0.8);
-  const front = useArtTexture(artAspect({ widthCm, heightCm }), "front", art, label);
-  const profile = useMemo(() => standProfile(heightCm, t), [heightCm, t]);
-  const sheetW = widthCm + 0.2;
-  const geometry = useMemo(() => {
-    const bevel = 0.05;
-    const g = new THREE.ExtrudeGeometry(profile.shape, {
-      depth: sheetW - bevel * 2,
-      bevelEnabled: true,
-      bevelThickness: bevel,
-      bevelSize: bevel,
-      bevelOffset: -bevel,
-      bevelSegments: 2,
-      curveSegments: 4,
-    });
-    // Extrusão em z vira a largura em x; o perfil (z, y) fica no plano lateral.
-    g.translate(0, 0, bevel);
-    g.rotateY(-Math.PI / 2);
-    g.translate(sheetW / 2, 0, 0);
-    return g;
-  }, [profile, sheetW]);
-  useGeometryCleanup(geometry);
+  const sx = W / (STAND_PLATE.box.w / 10);
+  const sy = H / (STAND_PLATE.box.h / 10);
+  const front = useArtTexture(artAspect({ widthCm: W, heightCm: H }), "front", art, label);
+  const parts = useMemo(() => {
+    const plate = cutShape(STAND_PLATE.d, STAND_PLATE.box, [sx, sy]);
+    const base = cutShape(STAND_BASE.d, STAND_BASE.box, [sx, sx]);
+    return { plate: pvcSheet(plate, t), face: faceGeometry(plate, W, H), base: pvcSheet(base, t) };
+  }, [sx, sy, t, W, H]);
+  useGeometryCleanup(parts.plate);
+  useGeometryCleanup(parts.face);
+  useGeometryCleanup(parts.base);
+
+  // Placa: base da frente apoiada na mesa (y = 0), "para cima" inclinado para trás.
+  const up = new THREE.Vector3(0, Math.cos(STAND_TILT), -Math.sin(STAND_TILT));
+  const bottom = new THREE.Vector3(0, (t / 2) * Math.sin(STAND_TILT), 0);
+  const center = bottom.clone().addScaledVector(up, H / 2);
+  // Base: atravessa os rasgos e desce para trás até a borda de baixo tocar a mesa.
+  const slot = bottom.clone().addScaledVector(up, STAND_PLATE.slot * sy);
+  const body = STAND_BASE.body * sx;
+  const fall = Math.asin(clamp((slot.y - t / 2) / (body + t / 2), 0.05, 0.9));
+  const forward = new THREE.Vector3(0, Math.sin(fall), Math.cos(fall));
+  const root = slot.clone().addScaledVector(forward, -t / 2);
+  const basePosition = root.clone().addScaledVector(forward, -STAND_BASE.root * sx);
+  const pvc = "#f3f3f0";
   return (
-    <group scale={UNIT} userData={{ view: { elevation: 0.2 } }}>
-      <mesh geometry={geometry}>
-        <meshStandardMaterial color="#f6f6f4" roughness={0.78} />
-      </mesh>
-      <mesh position={[0, profile.face[1], profile.face[0]]} rotation-x={-FASCIA_TILT}>
-        <planeGeometry args={[widthCm, heightCm]} />
-        <PrintMaterial map={front} spec={spec} />
-      </mesh>
-      <group position={[0, profile.phone[1], profile.phone[0]]} rotation-x={-PHONE_TILT}>
-        <Smartphone />
+    <group scale={UNIT} rotation-y={0.5} userData={{ view: { elevation: 0.2 } }}>
+      <group position={[center.x, center.y, center.z]} rotation-x={-STAND_TILT}>
+        <mesh geometry={parts.plate}>
+          <meshStandardMaterial color={pvc} roughness={0.8} />
+        </mesh>
+        <mesh geometry={parts.face} position-z={t / 2 + 0.012}>
+          <PrintMaterial map={front} spec={spec} />
+        </mesh>
       </group>
+      <mesh geometry={parts.base} position={[basePosition.x, basePosition.y, basePosition.z]} rotation-x={Math.PI / 2 - fall}>
+        <meshStandardMaterial color="#e7e7e3" roughness={0.82} />
+      </mesh>
     </group>
   );
 }
@@ -699,108 +483,92 @@ export function PhoneStandModel({ spec, art, label }: ModelProps) {
 // ---------------------------------------------------------------------------------------------
 // Wobbler
 
-/** Etiqueta de preço que vai na canaleta da gôndola (detalhe de cena). */
-function drawPriceTag(ctx: CanvasRenderingContext2D, w: number, h: number) {
-  ctx.fillStyle = "#fbfbf8";
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#e0322a";
-  ctx.fillRect(0, 0, w, h * 0.24);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `700 ${Math.round(h * 0.15)}px ${fontFamily()}`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("OFERTA", w / 2, h * 0.125);
-  ctx.fillStyle = "#151515";
-  ctx.font = `800 ${Math.round(h * 0.36)}px ${fontFamily()}`;
-  ctx.fillText("9,90", w * 0.6, h * 0.6);
-  ctx.font = `700 ${Math.round(h * 0.14)}px ${fontFamily()}`;
-  ctx.fillText("R$", w * 0.2, h * 0.5);
-  for (let i = 0; i < 26; i += 1) {
-    const x = w * 0.08 + i * w * 0.0105;
-    ctx.fillRect(x, h * 0.8, i % 3 === 0 ? 2.4 : 1.2, h * 0.12);
-  }
-}
+/**
+ * Corte do wobbler de 16 cm no gabarito oficial ("wobbler", mm, y para baixo): disco de Ø 16,2 cm, pescoço de
+ * 3,5 cm e a aba de 7 × 3,5 cm no topo, onde a haste plástica cola.
+ */
+const WOBBLER_CUT = {
+  box: { x: 14, y: 9.2, w: 161.9, h: 311.6 },
+  d: "M64.9 9.2L125.1 9.2C127.9 9.2 130.2 11.5 130.2 14.3L130.2 39.2C130.2 42 127.9 44.3 125.1 44.3L112.6 44.3L112.6 161.3C148.8 169.3 175.9 201.5 175.9 240.1C175.9 284.7 139.7 320.8 95 320.8C50.3 320.8 14 284.7 14 240.1C14 201.5 41.1 169.3 77.4 161.3L77.4 44.3L64.9 44.3C62.1 44.3 59.7 42 59.7 39.2L59.7 14.3C59.7 11.5 62.1 9.2 64.9 9.2Z",
+  /** Disco (cm, a partir do centro da caixa) e altura da aba. */
+  disc: { y: -7.51, r: 8.1 },
+  tab: 3.51,
+};
+/** Haste plástica de prateleira (cm): largura, espessura, subida acima da aba, raio da curva e trecho para trás. */
+const ARM = { w: 2.4, t: 0.08, rise: 3.2, bend: 2.2, reach: 6.5 };
 
-/** Faixa de PVC cristal com leve caimento: reta presa no clipe, depois segue a tangente atrás do cartão. */
-function stripGeometry(free: number, overlap: number, width: number, drop: number) {
-  const length = free + overlap;
-  const g = new THREE.BoxGeometry(length, width, 0.05, 32, 1, 1);
-  g.translate(length / 2, 0, 0);
-  const k = drop / (free * free);
-  const slope = 2 * k * free;
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i += 1) {
-    const x = pos.getX(i);
-    const dy = x <= free ? -k * x * x : -drop - slope * (x - free);
-    pos.setY(i, pos.getY(i) + dy);
+/** Fita de seção retangular ao longo de uma curva no plano (y, z): a haste flexível do wobbler. */
+function ribbonGeometry(points: THREE.Vector2[], width: number, thick: number) {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const n = points.length;
+  points.forEach((p, i) => {
+    const a = points[Math.max(0, i - 1)];
+    const b = points[Math.min(n - 1, i + 1)];
+    const ty = b.x - a.x;
+    const tz = b.y - a.y;
+    const len = Math.hypot(ty, tz) || 1;
+    const ny = -tz / len;
+    const nz = ty / len;
+    for (const [sx, sn] of [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ]) {
+      positions.push((sx * width) / 2, p.x + (sn * thick * ny) / 2, p.y + (sn * thick * nz) / 2);
+    }
+  });
+  for (let i = 0; i < n - 1; i += 1) {
+    for (let k = 0; k < 4; k += 1) {
+      const a = i * 4 + k;
+      const b = i * 4 + ((k + 1) % 4);
+      indices.push(a, a + 4, b, b, a + 4, b + 4);
+    }
   }
-  pos.needsUpdate = true;
+  indices.push(0, 1, 2, 0, 2, 3);
+  const last = (n - 1) * 4;
+  indices.push(last, last + 2, last + 1, last, last + 3, last + 2);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  g.setIndex(indices);
   g.computeVertexNormals();
   return g;
 }
 
-/** Canaleta de preço em C (perfil x, y), extrudada ao longo de z. */
-function railGeometry(length: number) {
-  const outline: Pt[] = [
-    [0, 0],
-    [0.62, 0],
-    [0.62, 0.42],
-    [0.5, 0.42],
-    [0.5, 0.14],
-    [0.14, 0.14],
-    [0.14, 3.76],
-    [0.5, 3.76],
-    [0.5, 3.48],
-    [0.62, 3.48],
-    [0.62, 3.9],
-    [0, 3.9],
-  ];
-  const g = new THREE.ExtrudeGeometry(new THREE.Shape(outline.map(([x, y]) => new THREE.Vector2(x, y))), {
-    depth: length - 0.06,
-    bevelEnabled: true,
-    bevelThickness: 0.03,
-    bevelSize: 0.03,
-    bevelOffset: -0.03,
-    bevelSegments: 1,
-  });
-  g.translate(0, 0, -length / 2 + 0.03);
-  return g;
-}
-
-const WOBBLE = { free: 7, overlap: 2.2, strip: 2.4, drop: 0.38, clip: 0.9 };
-/** Trecho de gôndola enxuto (cm): só o bastante para explicar a peça sem roubar o enquadramento do cartão. */
-const SHELF = { depth: 9, length: 14 };
-/** Etiqueta de preço na canaleta, longe do clipe (largura em cm; altura pelo canvas 512 × 290). */
-const TAG = { w: 5, z: 4.1 };
-
 /**
- * Wobbler de gôndola: cartão impresso (frente e verso, no formato da spec) preso numa faixa de PVC
- * cristal com caimento leve, que sai de um clipe na canaleta de preço de um trecho de prateleira.
- * Balança devagar quando a animação está liberada (só pede frames enquanto anima).
+ * Wobbler como na foto do produto: o recorte em couchê 250 g (disco impresso, pescoço e aba) preso na haste plástica
+ * branca de prateleira, que sobe atrás da aba e faz a curva para trás até a ponta com o adesivo. Balança devagar
+ * quando a animação está liberada (só pede frames enquanto anima).
  */
 export function WobblerModel({ spec, art, label }: ModelProps) {
-  const widthCm = Math.max(spec.widthCm, 3);
-  const heightCm = Math.max(spec.heightCm, 3);
-  const aspect = artAspect({ widthCm, heightCm });
-  const mask: MaskPath | undefined = spec.shape === "round" ? roundPath : spec.shape === "heart" ? heartPath : undefined;
-  const front = useArtTexture(aspect, "front", art, label, mask);
-  const back = useArtTexture(aspect, backVariant(spec), art, label, mask);
-  const tag = useCanvasTexture(512, 290, drawPriceTag);
-  const strip = useMemo(() => stripGeometry(WOBBLE.free, WOBBLE.overlap, WOBBLE.strip, WOBBLE.drop), []);
-  const rail = useMemo(() => railGeometry(SHELF.length), []);
-  useGeometryCleanup(strip);
-  useGeometryCleanup(rail);
-
-  // Cartão inclinado na tangente da faixa; a gôndola tem altura para ele não tocar a mesa.
-  const slope = (2 * WOBBLE.drop) / WOBBLE.free;
-  const tilt = Math.atan(slope);
-  const cardX = WOBBLE.clip + WOBBLE.free + (widthCm / 2) * Math.cos(tilt);
-  const cardY = -WOBBLE.drop - (widthCm / 2) * Math.sin(tilt);
-  const lowest = WOBBLE.drop + widthCm * Math.sin(tilt) + (heightCm / 2) * Math.cos(tilt);
-  const anchorY = Math.max(9, lowest + 1.4);
-  const shelfH = anchorY + 2.35;
-  const shelfD = SHELF.depth;
-  const shelfL = SHELF.length;
+  const size = Math.max(Math.min(spec.widthCm, spec.heightCm), 6);
+  const s = size / (WOBBLER_CUT.box.w / 10);
+  const d = 0.035;
+  const front = useArtTexture(1, "front", art, label);
+  const back = useArtTexture(1, spec.back === "blank" ? "blank" : spec.back === "gray" ? "gray" : "front", art, label);
+  const discR = WOBBLER_CUT.disc.r * s;
+  const discY = WOBBLER_CUT.disc.y * s;
+  const top = (WOBBLER_CUT.box.h / 20) * s;
+  const parts = useMemo(() => {
+    const cut = cutShape(WOBBLER_CUT.d, WOBBLER_CUT.box, [s, s]);
+    const card = new THREE.ExtrudeGeometry(cut, { depth: d, bevelEnabled: false, curveSegments: 24 });
+    card.translate(0, 0, -d / 2);
+    const disc = faceGeometry(makeShape("round", discR * 2, discR * 2, 0), discR * 2, discR * 2);
+    // Haste: cola atrás da aba, sobe, curva para trás e segue reta até o adesivo.
+    const start = top - WOBBLER_CUT.tab * s * 0.85;
+    const z0 = -d / 2 - ARM.t / 2 - 0.01;
+    const points: THREE.Vector2[] = [new THREE.Vector2(start, z0), new THREE.Vector2(top + ARM.rise, z0)];
+    for (let k = 1; k <= 14; k += 1) {
+      const a = (k / 14) * (Math.PI / 2);
+      points.push(new THREE.Vector2(top + ARM.rise + Math.sin(a) * ARM.bend, z0 - ARM.bend + Math.cos(a) * ARM.bend));
+    }
+    points.push(new THREE.Vector2(top + ARM.rise + ARM.bend, z0 - ARM.bend - ARM.reach));
+    return { card, disc, arm: ribbonGeometry(points, ARM.w, ARM.t), pad: new THREE.Vector3(0, top + ARM.rise + ARM.bend + ARM.t / 2 + 0.08, z0 - ARM.bend - ARM.reach + 1.2) };
+  }, [s, d, discR, top]);
+  useGeometryCleanup(parts.card);
+  useGeometryCleanup(parts.disc);
+  useGeometryCleanup(parts.arm);
 
   const pivot = useRef<THREE.Group>(null);
   const clock = useRef(0);
@@ -811,32 +579,30 @@ export function WobblerModel({ spec, art, label }: ModelProps) {
     clock.current += Math.min(delta, 0.1);
     const time = clock.current;
     group.rotation.y = Math.sin(time * 2.2) * 0.075 + Math.sin(time * 3.7 + 1.1) * 0.015;
-    group.rotation.z = Math.sin(time * 2.2 + 0.7) * 0.01;
+    group.rotation.x = Math.sin(time * 2.2 + 0.7) * 0.02;
     state.invalidate();
   });
 
   return (
-    <group scale={UNIT} userData={{ view: { elevation: 0.16, azimuth: 0.42 } }}>
-      {/* Trecho de gôndola: rodapé escuro, corpo claro, tampo metálico e canaleta de preço. */}
-      <SoftBox w={shelfD - 1.2} h={1.2} d={shelfL - 1.2} radius={0.2} color="#3a3c41" roughness={0.7} position={[-shelfD / 2 - 0.4, 0.6, 0]} />
-      <SoftBox w={shelfD} h={shelfH - 1.2} d={shelfL} radius={0.35} color="#ececed" roughness={0.55} position={[-shelfD / 2, 1.2 + (shelfH - 1.2) / 2, 0]} />
-      <SoftBox w={shelfD + 0.5} h={0.6} d={shelfL + 0.4} radius={0.2} color="#d3d6da" roughness={0.32} metalness={0.4} position={[-shelfD / 2 + 0.25, shelfH + 0.3, 0]} />
-      <mesh geometry={rail} position={[0, anchorY - 1.95, 0]}>
-        <meshPhysicalMaterial color="#dfe3e7" roughness={0.22} clearcoat={0.6} clearcoatRoughness={0.1} />
+    <group scale={UNIT} rotation-y={0.35} userData={{ view: { elevation: 0.12 } }}>
+      <mesh geometry={parts.arm}>
+        <meshPhysicalMaterial color="#f6f7f7" roughness={0.3} clearcoat={0.5} clearcoatRoughness={0.2} />
       </mesh>
-      <mesh position={[0.16, anchorY, TAG.z]} rotation-y={Math.PI / 2}>
-        <planeGeometry args={[TAG.w, (TAG.w * 290) / 512]} />
-        <meshStandardMaterial map={tag} roughness={0.6} />
+      <mesh position={parts.pad}>
+        <boxGeometry args={[ARM.w * 0.9, 0.16, 2]} />
+        <meshStandardMaterial color="#e9ecee" roughness={0.6} />
       </mesh>
-
-      <group ref={pivot} position={[0.12, anchorY, 0]}>
-        <SoftBox w={WOBBLE.clip} h={3.2} d={0.8} radius={0.15} color="#f3f5f6" roughness={0.3} position={[WOBBLE.clip / 2, 0, 0]} />
-        <mesh geometry={strip} position-x={WOBBLE.clip} renderOrder={2}>
-          <meshPhysicalMaterial color="#eef7f6" transparent opacity={0.38} roughness={0.06} clearcoat={1} clearcoatRoughness={0.04} depthWrite={false} side={THREE.DoubleSide} />
-        </mesh>
-        {/* O Slab trabalha em unidades de cena (o afastamento fixo da face não pode encolher com a escala). */}
-        <group position={[cardX, cardY, 0.025 + 0.03]} rotation-z={-tilt} scale={1 / UNIT}>
-          <Slab w={widthCm * UNIT} h={heightCm * UNIT} d={0.035 * UNIT} spec={spec} front={front} back={back} radius={0.5 * UNIT} edgeColor="#f7f7f5" />
+      <group ref={pivot} position-y={top}>
+        <group position-y={-top}>
+          <mesh geometry={parts.card}>
+            <meshStandardMaterial color="#f7f7f5" roughness={0.85} />
+          </mesh>
+          <mesh geometry={parts.disc} position={[0, discY, d / 2 + 0.006]}>
+            <PrintMaterial map={front} spec={spec} />
+          </mesh>
+          <mesh geometry={parts.disc} position={[0, discY, -d / 2 - 0.006]} rotation-y={Math.PI}>
+            <PrintMaterial map={back} spec={spec} />
+          </mesh>
         </group>
       </group>
     </group>
