@@ -14,7 +14,7 @@
  * Puro e testado (superficies.test.ts): imports com extensão .ts, tipos com `import type`, sem JSX.
  */
 
-import { piecesOf, printsBack, type Piece, type TemplatePage } from "./templates.ts";
+import { folhaDeVerniz, piecesOf, printsBack, type Piece, type TemplatePage } from "./templates.ts";
 import type { Selection } from "./pricing.ts";
 
 export type Superficie = {
@@ -121,6 +121,8 @@ export function superficiesDe({ pages, verso, frontLabel = "Frente", backLabel =
   if (verso) list.push({ id: "back", label: backLabel });
   const seen = new Set(list.map((s) => s.id));
   for (const page of pages) {
+    // A máscara de verniz não é superfície de arte (sai da arte da frente e do verso).
+    if (folhaDeVerniz(page)) continue;
     const pieces = piecesOf(page);
     for (const piece of pieces) {
       const id = superficieDaPeca(page, piece);

@@ -30,6 +30,7 @@ import { formatSize, mockupSpec, normalizeName } from "@/lib/mockup";
 import { rotulosDosLados, superficieDaPeca, superficiesDe, temVerso } from "@/lib/superficies";
 import { PROCESSO_INFO, arquivoServe, monoDo, processoDa } from "@/lib/processo";
 import { contornoDo } from "@/lib/contorno";
+import { destinoDoVerniz, tiposDoVerniz, vernizResumo } from "@/lib/verniz";
 import { orientacaoDe, orientacaoLivre, orientar, type Orientacao } from "@/lib/orientacao";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
 import { describePanel, hasBackPanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, piecesOf, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
@@ -294,11 +295,15 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const processo = semArte ? null : processoDa({ kind: spec.kind, name: normalizeName(product.name), selection });
   // Contorno automático (lona com corte especial, quadro com LED): a faca ou o caminho do LED saem do desenho.
   const contorno = semArte ? null : contornoDo({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name) });
+  // Verniz localizado: a máscara sai da arte (ArtSettings.varnish) para os tipos de anexo de verniz da variação.
+  const vernizTipos = spec.spotVarnish && !semArte ? tiposDoVerniz(destinoDoVerniz(producao)) : [];
+  const automaticFiles = [...(contorno ? [contorno.anexo] : []), ...vernizTipos];
+  const semFundo = contorno !== null;
   const renderArt = useMemo(() => {
     const painted = withMono(art, monoDo(processo));
     // DTF e contorno automático: a imagem vai sem o retângulo de fundo (aplicação localizada, corte no desenho).
-    return processo === "dtf" || contorno ? { ...painted, background: "rgba(0,0,0,0)" } : painted;
-  }, [art, processo, contorno]);
+    return processo === "dtf" || semFundo ? { ...painted, background: "rgba(0,0,0,0)" } : painted;
+  }, [art, processo, semFundo]);
   // Verso pela cor e pelo tipo de peça (4/1, 4/4, "frente e verso", camisa, almofada, wind banner…), com ou sem gabarito.
   const versoPelaCor = !semArte && temVerso({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name), selection, anexos: custom.anexos });
   // Gabarito oficial da seleção: folhas (no tamanho de referência, nas camisas), painel da frente e do verso.
@@ -596,6 +601,16 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         autoContorno = null;
       }
     }
+    // Máscaras de verniz localizado feitas da arte, nos tipos que o cliente não mandou.
+    let autoVerniz: { file: File; tipo: string }[] = [];
+    if (vernizTipos.length && !artLater && !singleFile && ownArt) {
+      try {
+        const { arquivosDeVerniz } = await import("./verniz-arquivo");
+        autoVerniz = await arquivosDeVerniz({ art: renderArt, spec, gabarito, anexos: producao, enviados: productionFiles, label: product.name, slug: product.slug });
+      } catch {
+        autoVerniz = [];
+      }
+    }
     const artFiles =
       semArte || artLater
         ? []
@@ -608,6 +623,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
                   ...producao.filter((tipo) => tipo !== ARQUIVO_UNICO && tipo !== "Impressão Frente" && tipo !== "Impressão Verso").map((tipo) => ({ file: productionFiles[tipo], kind: "extra" as const, tipo })),
                   // A variação que não lista o tipo recebe o arquivo como "Arquivo Único" (attachmentType).
                   ...(autoContorno && contorno ? [{ file: autoContorno, kind: "extra" as const, tipo: contorno.anexo }] : []),
+                  ...autoVerniz.map(({ file, tipo }) => ({ file, kind: "extra" as const, tipo })),
                 ],
             product.name,
           );
@@ -623,6 +639,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         ...Object.fromEntries(extras),
         ...(!semArte && !artLater ? artSummary(art, family, surfaceLabels) : {}),
         ...(autoContorno && contorno ? { [contorno.anexo]: `automática · ${String(contorno.margemCm).replace(".", ",")} cm do desenho` } : {}),
+        ...(vernizTipos.length && !semArte && !artLater ? { "Verniz localizado": autoVerniz.length ? `${vernizResumo(art.varnish)} · máscara automática` : vernizResumo(art.varnish) } : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
@@ -821,6 +838,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               surfaces={surfaces}
               processo={processo}
               contorno={contorno}
+              automaticFiles={automaticFiles}
               onSide={setArtSide}
               extraTypes={producao}
               extraFiles={extraFiles}

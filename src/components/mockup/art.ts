@@ -46,6 +46,16 @@ export type ArtSettings = {
    * 3D, no editor e no PDF.
    */
   mono?: "gray" | "black" | null;
+  /**
+   * Verniz localizado (cartão, postal, marcador, lona, adesivo…): o que leva verniz nesta arte. "tudo" (padrão) = imagem
+   * e texto, sem o fundo; "imagem" ou "texto" = só essa camada. A máscara sai daqui (varnishMask).
+   */
+  varnish?: Varnish | null;
+  /**
+   * Pinta a máscara do verniz em vez da arte: as camadas de `varnish` numa cor e o resto na outra. "black" = arquivo da
+   * produção (preto onde vai verniz, branco no resto); "white" = brilho do 3D (clearcoatMap: branco onde vai verniz).
+   */
+  varnishMask?: "black" | "white" | null;
   /** Cores de LED escolhidas pelo cliente no neon (sobrepõem a cor da opção do produto). */
   ledColors?: string[] | null;
   /** Chinelo: região personalizada ("inteira", "dedos", "meio", "calcanhar"). */
@@ -132,7 +142,21 @@ export const DEFAULT_ART: ArtSettings = {
  * não pelo canvas: em pixels a proporção sai arredondada, e uma placa de 3,6 × 1,2 m (3:1, bem no limite da faixa)
  * virava "faixa" na textura do 3D e "largo" no editor 2D, com a arte montada de outro jeito.
  */
-export type ArtRender = ArtSettings & { kind?: MockupKind; ledColors?: string[]; surface?: string; opaque?: boolean; frontWindow?: number; sample?: boolean; aspect?: number };
+export type Varnish = "tudo" | "imagem" | "texto";
+
+export type ArtRender = ArtSettings & {
+  kind?: MockupKind;
+  ledColors?: string[];
+  surface?: string;
+  opaque?: boolean;
+  frontWindow?: number;
+  sample?: boolean;
+  aspect?: number;
+  /** A peça tem verniz localizado (spec.spotVarnish): a textura do 3D ganha a máscara do brilho. */
+  spotVarnish?: boolean;
+  /** Só uma camada (máscara do verniz): a imagem ou o texto, sem o fundo. */
+  paintOnly?: "imagem" | "texto";
+};
 
 /** A arte tem algo do cliente (texto, subtexto ou imagem)? Verso vazio = sem impressão no verso. */
 export function hasArtContent(art: ArtSettings | null | undefined): boolean {
@@ -2419,13 +2443,14 @@ function paintArea(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
   if (image) {
     ctx.fillStyle = art.background;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
-    info.image = paintImage(ctx, w, h, image, art, layout?.image ?? null);
-    if (art.text.trim() || (art.subtext ?? "").trim()) {
+    if (art.paintOnly !== "texto") info.image = paintImage(ctx, w, h, image, art, layout?.image ?? null);
+    if (art.paintOnly !== "imagem" && (art.text.trim() || (art.subtext ?? "").trim())) {
       const style = styleOf(art.style);
       info.text = drawBlock(ctx, w, h, art, label, (s) => paintCaption(s, style), { transparent: true, sample: false }, layout?.text ?? null);
     }
     return;
   }
+  if (art.paintOnly === "imagem") return;
   info.text = paintTemplate(ctx, w, h, art, label, layout?.text ?? null, fill);
 }
 
@@ -2720,6 +2745,7 @@ export type PaintBleed = { left: number; top: number; right: number; bottom: num
  * `opts.bleed`: o canvas inclui a sangria do gabarito em volta da área (arquivo de impressão e editor).
  */
 export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string, opts?: { bleed?: PaintBleed | null; extend?: boolean }): PaintInfo {
+  if (art.varnishMask) return paintVarnishMask(canvas, variant, art, image, label, opts);
   const info: PaintInfo = { text: null, image: null };
   const ctx = canvas.getContext("2d");
   if (!ctx) return info;
@@ -2790,6 +2816,27 @@ export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: Ar
     }
     ctx.putImageData(data, 0, 0);
   }
+  return info;
+}
+
+/**
+ * Máscara do verniz localizado: as camadas de art.varnish (sem o fundo, na mesma posição da arte) numa cor só e o resto
+ * na outra. A camada escolhida que não existe (só a imagem, numa arte só de texto) vira "tudo".
+ */
+function paintVarnishMask(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string, opts?: { bleed?: PaintBleed | null; extend?: boolean }): PaintInfo {
+  const hasText = Boolean(art.text.trim() || (art.subtext ?? "").trim());
+  const only = art.varnish === "imagem" && image ? "imagem" : art.varnish === "texto" && hasText ? "texto" : undefined;
+  const ink = art.varnishMask === "white" ? 255 : 0;
+  const info = paintArt(canvas, variant === "neon" ? "neon" : "front", { ...art, varnishMask: null, mono: null, background: "rgba(0,0,0,0)", paintOnly: only }, image, label, opts);
+  const ctx = canvas.getContext("2d");
+  if (!ctx || !canvas.width || !canvas.height) return info;
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < data.data.length; i += 4) {
+    const v = data.data[i + 3] > 40 ? ink : 255 - ink;
+    data.data[i] = data.data[i + 1] = data.data[i + 2] = v;
+    data.data[i + 3] = 255;
+  }
+  ctx.putImageData(data, 0, 0);
   return info;
 }
 

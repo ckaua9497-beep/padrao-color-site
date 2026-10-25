@@ -34,6 +34,7 @@ import {
   type ArtStyle,
   type ArtVariant,
   type FlipflopRegion,
+  type Varnish,
 } from "@/components/mockup/art";
 import { NEON_FONT_KEYS, TEXT_FONT_KEYS, type ArtFont } from "@/components/mockup/fonts";
 import { Button } from "@/components/ui/Button";
@@ -100,7 +101,7 @@ type Props = {
    * Spec do mockup (opcional): medida da área em cm (régua e resolução no editor), garrafa térmica
    * (faixa de 60%), cor da peça (fundo da estampa) e subtipo da camisa (manequim).
    */
-  spec?: Pick<MockupSpec, "kind" | "widthCm" | "heightCm" | "thermal" | "variant" | "baseColor" | "back">;
+  spec?: Pick<MockupSpec, "kind" | "widthCm" | "heightCm" | "thermal" | "variant" | "baseColor" | "back" | "spotVarnish">;
   /**
    * Superfícies com arte própria (src/lib/superficies.ts): frente, verso e as extras do gabarito (miolo, lâminas,
    * abas, lados…). Sem a lista, vale a regra antiga: frente e verso nas peças de duas faces e no gabarito com verso.
@@ -116,6 +117,8 @@ type Props = {
    * aviso, tira o fundo da arte e marca o anexo dele como automático nos arquivos para a produção.
    */
   contorno?: Contorno | null;
+  /** Anexos que o site faz sozinho quando o cliente não manda (faca, posição do LED, máscara de verniz). */
+  automaticFiles?: readonly string[];
   /** Superfície em edição ("front", "back" ou o id da extra): a página vira o mockup 3D para ela. */
   onSide?: (side: string) => void;
   /** Gabarito oficial da seleção (medidas, sangria, corte e segurança): o editor e o PDF seguem ele. */
@@ -155,7 +158,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, automaticFiles = [], onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -575,9 +578,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
         )}
       </div>
 
+      {spec?.spotVarnish && !blank && !neon && <VarnishPicker art={sideArt} onArt={onSideArt} sideLabel={list.length > 1 ? sideInfo.label : null} />}
+
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
 
-      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} automatic={contorno?.anexo ?? null} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
+      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} automatic={automaticFiles} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
 
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
@@ -607,6 +612,34 @@ const PRODUCTION_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.svg,.tif,.tiff,.psd,.ai,.
  * aceita na API. Enviar o arquivo único esconde os separados e enviar um separado esconde o único (camposVisiveis). Sem
  * arquivo próprio na frente ou no verso, vale a imagem enviada no editor acima.
  */
+const VARNISH_OPTIONS: { value: Varnish; label: string }[] = [
+  { value: "tudo", label: "Imagem e texto" },
+  { value: "imagem", label: "Só a imagem" },
+  { value: "texto", label: "Só o texto" },
+];
+
+/**
+ * Verniz localizado: o que leva verniz na arte do lado em edição. A máscara para a produção sai daqui (o cliente ainda
+ * pode mandar a dele em "Arquivos para a produção") e o brilho aparece no 3D.
+ */
+function VarnishPicker({ art, onArt, sideLabel }: { art: ArtSettings; onArt: (update: (art: ArtSettings) => ArtSettings) => void; sideLabel: string | null }) {
+  const image = Boolean(art.src);
+  const text = Boolean(art.text.trim() || (art.subtext ?? "").trim());
+  return (
+    <div className="mt-4 rounded-card bg-white p-4 ring-1 ring-line">
+      <p className="text-[15px] font-bold">
+        Verniz localizado {sideLabel && <span className="font-normal text-muted">· {sideLabel.toLowerCase()}</span>}
+      </p>
+      <p className="mt-1 text-caption text-muted">O verniz dá brilho só onde você escolher; o resto fica fosco. A máscara de verniz é feita a partir da sua arte.</p>
+      {image && text ? (
+        <OptionGroup className="mt-3" label="Onde vai o verniz" value={art.varnish ?? "tudo"} onChange={(value) => onArt((a) => ({ ...a, varnish: value as Varnish }))} options={VARNISH_OPTIONS} />
+      ) : (
+        <p className="mt-2 text-sm">{image ? "O verniz vai na imagem (o fundo fica sem)." : "O verniz vai no texto e nos enfeites da arte (o fundo fica sem)."}</p>
+      )}
+    </div>
+  );
+}
+
 function ProductionFiles({
   types,
   files,
@@ -618,8 +651,8 @@ function ProductionFiles({
   types: readonly string[];
   files: Record<string, File>;
   onFile: (tipo: string, file: File | null) => void;
-  /** Anexo que o site faz sozinho a partir da arte (faca de corte, posição do LED) quando o cliente não envia. */
-  automatic: string | null;
+  /** Anexos que o site faz sozinho a partir da arte (faca de corte, posição do LED, máscara de verniz) quando o cliente não envia. */
+  automatic: readonly string[];
   editorFront: string | null;
   editorBack: string | null;
 }) {
@@ -637,7 +670,7 @@ function ProductionFiles({
   const row = (tipo: string) => {
     const file = files[tipo];
     const editor = !file ? fromEditor(tipo) : null;
-    const auto = !file && tipo === automatic;
+    const auto = !file && automatic.includes(tipo);
     return (
       <li key={tipo} className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="min-w-36 text-sm font-semibold">{tipo === ARQUIVO_UNICO ? "Arquivo único" : tipo}</span>
@@ -651,7 +684,7 @@ function ProductionFiles({
         ) : (
           <>
             {editor && <span className="min-w-0 flex-1 truncate text-sm text-muted">a imagem enviada acima ({editor})</span>}
-            {auto && <span className="min-w-0 flex-1 truncate text-sm text-muted">feita automaticamente pelo contorno da arte</span>}
+            {auto && <span className="min-w-0 flex-1 truncate text-sm text-muted">feito automaticamente a partir da sua arte</span>}
             <label className="cursor-pointer text-sm font-bold text-coral-700 underline-offset-2 hover:underline">
               {editor ? "Trocar" : auto ? "Enviar a sua" : "Enviar arquivo"}
               <input type="file" accept={PRODUCTION_ACCEPT} className="sr-only" onChange={(event) => pick(tipo, event.target.files?.[0])} />

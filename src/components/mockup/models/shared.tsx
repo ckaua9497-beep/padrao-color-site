@@ -72,7 +72,7 @@ const COARSE = typeof window !== "undefined" && typeof window.matchMedia === "fu
 
 
 export function repaintArt(
-  target: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture },
+  target: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; shine?: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } | null },
   variant: ArtVariant,
   art: ArtRender,
   image: HTMLImageElement | null,
@@ -82,7 +82,15 @@ export function repaintArt(
   paintArt(target.canvas, variant, art, image, label);
   if (mask) shapeMask(target.canvas, mask);
   target.texture.needsUpdate = true;
+  if (target.shine) {
+    // Verniz localizado: a máscara do brilho na mesma posição da arte (branco onde vai o verniz).
+    paintArt(target.shine.canvas, variant, { ...art, varnishMask: "white" }, image, label);
+    target.shine.texture.needsUpdate = true;
+  }
 }
+
+/** Textura da máscara do verniz localizado ligada à da arte (PrintMaterial lê em map.userData.varnishMap). */
+const VARNISH_MAP = "varnishMap";
 
 
 /**
@@ -100,7 +108,16 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
   const hires = Boolean(art.src) && variant !== "blank" && variant !== "gray" && !dragging;
   const longSide = hires ? textureLongSide(aspect, { maxTexture: gl.capabilities.maxTextureSize, mobile: COARSE }) : 1024;
   const anisotropy = gl.capabilities.getMaxAnisotropy();
-  const target = useMemo(() => createArtTexture(aspect, longSide, anisotropy), [aspect, longSide, anisotropy]);
+  // Verniz localizado: a frente impressa ganha a máscara do brilho (512 px bastam para o clearcoat).
+  const varnish = Boolean(art.spotVarnish) && variant !== "blank" && variant !== "neon";
+  const target = useMemo(() => {
+    const created = createArtTexture(aspect, longSide, anisotropy);
+    if (!varnish) return { ...created, shine: null };
+    const shine = createArtTexture(aspect, 512, anisotropy);
+    shine.texture.colorSpace = THREE.NoColorSpace;
+    created.texture.userData[VARNISH_MAP] = shine.texture;
+    return { ...created, shine };
+  }, [aspect, longSide, anisotropy, varnish]);
   // Repinta quando a fonte escolhida termina de carregar (o canvas não espera por ela sozinho).
   const [fontsLoaded, setFontsLoaded] = useState("");
   // Estilo e subtexto também trocam de fonte: repinta quando ela termina de carregar.
@@ -127,6 +144,7 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
     () => () => {
       waitingTextures.delete(target);
       target.texture.dispose();
+      target.shine?.texture.dispose();
     },
     [target],
   );
@@ -148,8 +166,10 @@ export function roughnessOf(spec: MockupSpec) {
 export function PrintMaterial({ map, spec, transparent = false, alphaMap = null }: { map: THREE.Texture; spec: MockupSpec; transparent?: boolean; alphaMap?: THREE.Texture | null }) {
   const alphaTest = transparent || alphaMap ? 0.5 : 0;
   if (spec.spotVarnish) {
-    // Verniz localizado: a própria arte serve de máscara (canal vermelho) — brilha onde é clara.
-    return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={0.75} clearcoat={1} clearcoatMap={map} clearcoatRoughness={0.04} transparent={transparent} alphaTest={alphaTest} />;
+    // Verniz localizado: a máscara das camadas escolhidas (ArtSettings.varnish, pintada com a arte em useArtTexture);
+    // sem ela, a própria arte (canal vermelho) — brilha onde é clara.
+    const shine = (map.userData[VARNISH_MAP] as THREE.Texture | undefined) ?? map;
+    return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={0.75} clearcoat={1} clearcoatMap={shine} clearcoatRoughness={0.04} transparent={transparent} alphaTest={alphaTest} />;
   }
   if (spec.clearcoat > 0) {
     return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={roughnessOf(spec)} clearcoat={spec.clearcoat} clearcoatRoughness={0.08} transparent={transparent} alphaTest={alphaTest} />;

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { piecesOf, pagesFor, type ProductTemplate, type TemplatePage } from "./templates.ts";
+import { folhaDeVerniz, piecesOf, pagesFor, type ProductTemplate, type TemplatePage } from "./templates.ts";
 import { faceIdOf, superficieDaPeca, superficiesDe, temVerso } from "./superficies.ts";
 
 type Raw = { templates: Record<string, { pages: TemplatePage[] }>; products: Record<string, { template: string; pages: string[]; byOption?: ProductTemplate["byOption"]; bySize?: ProductTemplate["bySize"] }> };
@@ -68,4 +68,17 @@ test("caixa acrílica (123): frontal, traseira e as outras peças do gabarito", 
 test("sem verso na cor: a peça do verso do gabarito não vira superfície extra", () => {
   const list = superficiesDe({ pages: pagesOf("356"), verso: false });
   assert.deepEqual(list.map((s) => s.id), ["front"]);
+});
+
+test("máscara de verniz do gabarito não vira superfície (e a Máscara de Dormir não é máscara de verniz)", () => {
+  for (const id of ["470", "372"]) {
+    const list = superficiesDe({ pages: pagesOf(id, { Cor: "4/4 (colorido frente e verso)" }), verso: true });
+    assert.deepEqual(
+      list.map((s) => s.id),
+      ["front", "back"],
+      `produto ${id}`,
+    );
+  }
+  const dormir = raw.templates[raw.products["189"].template].pages.filter((p) => raw.products["189"].pages.includes(p.id));
+  assert.ok(dormir.length > 0 && dormir.every((p) => !folhaDeVerniz(p)));
 });

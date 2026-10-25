@@ -623,8 +623,8 @@ function Stage({ spec, art, label, showDims, modelKey, shadowKey, dark, resetTok
   // A arte leva o tipo da peça (escolhe o template) e as cores do LED (neon).
   // Cores de LED escolhidas pelo cliente (neon) valem mais que a cor da opção do produto.
   const renderArt = useMemo(
-    () => ({ ...art, kind: spec.kind, ledColors: art.ledColors?.length ? art.ledColors : spec.ledColors, surface: spec.baseColor }),
-    [art, spec.kind, spec.ledColors, spec.baseColor],
+    () => ({ ...art, kind: spec.kind, ledColors: art.ledColors?.length ? art.ledColors : spec.ledColors, surface: spec.baseColor, spotVarnish: spec.spotVarnish }),
+    [art, spec.kind, spec.ledColors, spec.baseColor, spec.spotVarnish],
   );
   const get = useThree((state) => state.get);
   const hasControls = useThree((state) => Boolean(state.controls));

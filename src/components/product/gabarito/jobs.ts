@@ -1,7 +1,7 @@
 import { hasArtContent, sourceOf, sourceSizeOf, withPlacement, type ArtRender, type ArtSettings } from "@/components/mockup/art";
 import type { MockupKind } from "@/lib/mockup-kinds";
 import { DPI_MARGIN, coverLoss, dpiTargets, hexOf, type FitMode } from "@/lib/image-prep";
-import { autoPlacementFor, containBox, coverBox, pieceFrame, pieceKey, piecesOf, placementFromBox, placementFromVisual, safeBoxOf, type Box, type PanelRef, type Piece, type TemplatePage } from "@/lib/templates";
+import { autoPlacementFor, containBox, coverBox, folhaDeVerniz, pieceFrame, pieceKey, piecesOf, placementFromBox, placementFromVisual, safeBoxOf, type Box, type PanelRef, type Piece, type TemplatePage } from "@/lib/templates";
 import { superficieDaPeca } from "@/lib/superficies";
 import { backgroundTouched, restoreBackground } from "../auto-fit";
 import type { PanelJob, PieceJob, SheetJob } from "./print-file";
@@ -176,8 +176,8 @@ export function printSheets(g: Gabarito, art: ArtSettings, pages: TemplatePage[]
   const mainPiece = g.front?.ref.piece ?? null;
   const sheets: SheetJob[] = [];
   for (const page of pages) {
-    // Máscara de verniz localizado: o cliente manda à parte; não entra a arte principal.
-    if (/m[aá]scara/i.test(`${page.part ?? ""} ${page.label}`)) continue;
+    // Máscara de verniz localizado: sai à parte (verniz-arquivo.ts); não entra a arte principal.
+    if (folhaDeVerniz(page)) continue;
     const pieces = piecesOf(page);
     // Verso sem arte (cartão só frente): a folha do verso fica fora do arquivo.
     if (pieces.length && pieces.every((p) => p.side === "back") && !back && !wholeSheet) continue;
