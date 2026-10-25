@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "r
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, neonTextBox, withMono, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, ledColorName, neonTextBox, withMono, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { keepArtFiles, uploadedFileOf } from "./art-source";
@@ -30,6 +30,8 @@ import { formatSize, mockupSpec, normalizeName } from "@/lib/mockup";
 import { rotulosDosLados, superficieDaPeca, superficiesDe, temVerso } from "@/lib/superficies";
 import { PROCESSO_INFO, arquivoServe, monoDo, processoDa } from "@/lib/processo";
 import { contornoDo } from "@/lib/contorno";
+import { desenhoDe, resumoLed } from "@/lib/led-linhas";
+import { novoAceite } from "@/lib/termos-arte";
 import { destinoDoVerniz, tiposDoVerniz, vernizResumo } from "@/lib/verniz";
 import { orientacaoDe, orientacaoLivre, orientar, type Orientacao } from "@/lib/orientacao";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
@@ -473,10 +475,15 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
 
   // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
-  const hasArt = semArte || artLater || Boolean(artName) || typedArt || facesWithArt(art).length > 0 || Object.keys(productionFiles).length > 0;
+  // Quadro com LED: as linhas desenhadas com o pincel já são a arte (acrílico só com o LED).
+  const ledDrawn = contorno?.tipo === "led" && desenhoDe(art).linhas.length > 0;
+  const hasArt = semArte || artLater || Boolean(artName) || typedArt || ledDrawn || facesWithArt(art).length > 0 || Object.keys(productionFiles).length > 0;
 
   // Escolher um valor ajusta os passos seguintes para uma combinação que existe na API.
   const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
+  // Termos de envio de arte (src/lib/termos-arte.ts): o aceite vai com o item para o carrinho e o pedido.
+  const [termosAceitos, setTermosAceitos] = useState(false);
+  const [termosFaltando, setTermosFaltando] = useState(false);
   const updateArt = (update: (art: ArtSettings) => ArtSettings) => {
     setArt(update);
     setArtMissing(false);
@@ -522,7 +529,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       const frontSide = gabarito?.front ?? null;
       const src = pdf
         ? (await (await import("./gabarito/pdf-artwork")).readPdfArtwork(file)).src
-        : (await intakeImage(file, { removeWhite: transparentBase, treat: !raw, madeForTemplate: frontSide?.frame ? (px, vector) => madeForTemplate(frontSide, px, vector) : null })).src;
+        : (await intakeImage(file, { removeWhite: transparentBase || contorno?.tipo === "led", treat: !raw, madeForTemplate: frontSide?.frame ? (px, vector) => madeForTemplate(frontSide, px, vector) : null })).src;
       if (seq !== uploadSeq.current) {
         releaseSource(src);
         return;
@@ -563,6 +570,13 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       goTo("passo-arte");
       return;
     }
+    // Todo produto personalizado pede o aceite dos termos de envio de arte.
+    if (!semArte && !termosAceitos) {
+      setTermosFaltando(true);
+      setPreview(false);
+      goTo("termos-arte");
+      return;
+    }
     setAdding(true);
     let thumb: string | null = null;
     try {
@@ -575,7 +589,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // Arquivo de impressão no gabarito (PDF no tamanho real): fica no navegador e segue com o pedido.
     let printFile: { id: string; name: string } | null = null;
     // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado.
-    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back) || facesWithArt(art).length > 0;
+    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back) || facesWithArt(art).length > 0 || ledDrawn;
     if (gabarito && !artLater && ownArt && !singleFile) {
       try {
         const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
@@ -595,10 +609,16 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     const manualBack = productionFiles["Impressão Verso"];
     // Faca de corte ou posição do LED feita do contorno da arte, quando o cliente não mandou a dele nem o arquivo único.
     let autoContorno: File | null = null;
+    let ledResumo: string | null = null;
     if (contorno && !semArte && !artLater && !singleFile && !productionFiles[contorno.anexo] && ownArt) {
       try {
-        const { arquivoDeContorno } = await import("./contorno-arquivo");
-        autoContorno = await arquivoDeContorno(renderArt, spec, contorno, product.name, product.slug);
+        const { arquivoDeContorno, arquivoDeLed } = await import("./contorno-arquivo");
+        if (contorno.tipo === "led") {
+          // Linhas de LED (contorno e pincel), cada uma com a sua cor: o resumo vai junto no pedido.
+          const led = await arquivoDeLed(renderArt, spec, contorno, product.name, product.slug);
+          autoContorno = led?.file ?? null;
+          ledResumo = led ? resumoLed(led.linhas, ledColorName) : null;
+        } else autoContorno = await arquivoDeContorno(renderArt, spec, contorno, product.name, product.slug);
       } catch {
         autoContorno = null;
       }
@@ -640,7 +660,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
         ...(!semArte && !artLater ? artSummary(art, family, surfaceLabels) : {}),
-        ...(autoContorno && contorno ? { [contorno.anexo]: `automática · ${String(contorno.margemCm).replace(".", ",")} cm do desenho` } : {}),
+        ...(autoContorno && contorno ? { [contorno.anexo]: contorno.tipo === "led" ? "automática" : `automática · ${String(contorno.margemCm).replace(".", ",")} cm do desenho` } : {}),
+        ...(ledResumo ? { "Linhas de LED": ledResumo } : {}),
         ...(vernizTipos.length && !semArte && !artLater ? { "Verniz localizado": autoVerniz.length ? `${vernizResumo(art.varnish)} · máscara automática` : vernizResumo(art.varnish) } : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
@@ -656,8 +677,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       variationId: price.variation?.id,
       ...(area ? { widthCm, heightCm } : {}),
       express: expressChosen,
+      ...(!semArte ? { termosArte: novoAceite(new Date()) } : {}),
       // O carrinho mostra "Arte: …"; null = enviar depois (só multiloja).
-      artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : singleFile ? `${singleFile.name} · arquivo único` : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : Object.keys(productionFiles).length ? "arquivos para a produção" : null)),
+      artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : singleFile ? `${singleFile.name} · arquivo único` : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : ledDrawn ? "linhas de LED desenhadas no editor" : Object.keys(productionFiles).length ? "arquivos para a produção" : null)),
     });
     setAdding(false);
     setPreview(false);
@@ -868,6 +890,14 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
                   }
                 : {})}
               missing={artMissing}
+              termos={{
+                aceito: termosAceitos,
+                onAceito: (value) => {
+                  setTermosAceitos(value);
+                  if (value) setTermosFaltando(false);
+                },
+                faltando: termosFaltando,
+              }}
               kind={spec.kind}
               aspect={artAspect(spec)}
               ledColors={spec.ledColors}

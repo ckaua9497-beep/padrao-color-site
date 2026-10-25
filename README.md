@@ -109,6 +109,34 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
 - **Hospedagem:** o envio aceita até 60 MB por arquivo; plataformas serverless limitam o corpo bem abaixo disso (4,5 MB na
   Vercel). Num servidor próprio (VPS + Cloudflare Tunnel), sem limite extra.
 
+### Fila de pedidos do site (`src/lib/fila-pedidos/`)
+
+Quando o pedido não chega à produção pelo `POST /gerarpedido`, o site guarda o pedido e as artes em vez de dar erro.
+
+- **Quando entra na fila.** Sem conexão com a API (no `GET /cliente`, nos preços ou no próprio `gerarpedido`: API fora do ar,
+  firewall, disjuntor do `client.ts`) → **aguardando reenvio**, com o token do cliente selado (chave derivada do
+  `PADRAO_SESSION_SECRET`) para refazer cliente e preços. Resposta sem confirmação (5xx, conexão caída depois de enviar) →
+  **conferir**: pode ter sido criado, então nada é reenviado sozinho. Recusa da API (4xx) volta para o cliente corrigir, como
+  antes. Regras puras em `regras.ts` (testadas); fechamento compartilhado entre o checkout e a fila em `processar.ts`.
+- **O que o cliente vê.** "Pedido recebido · Protocolo PF-00001" (o carrinho é limpo, nada é cobrado) e, em Meus pedidos, a
+  lista "Pedidos recebidos pelo site" com a situação e o número da Padrão quando sai.
+- **Artes.** Sem Bunny (ou com ele fora), `/api/arte` guarda o arquivo no banco (`arquivos`, dono `fila/<cliente>`) e a URL é do
+  próprio site: `{MULTILOJA_URL_PUBLICA}/api/pedidos/arquivo/<nome>` (sempre baixa como anexo). Antes de reenviar, a fila sobe
+  esses arquivos para o Bunny se ele voltou. Ficam 180 dias.
+- **Reenvio automático.** `worker.ts`, ligado em `src/instrumentation.ts`: uma volta por minuto, até 3 pedidos, um de cada vez,
+  parando na primeira falta de conexão; espera de 1, 2, 5, 10, 20, 30 e depois 60 minutos; com 72 tentativas vai para conferir.
+  `FILA_PEDIDOS_DESLIGADA=true` desliga (o admin ainda envia na mão).
+- **Admin** (`/admin/fila-pedidos`, "Fila do site" no menu): situação, motivo, último erro, artes para baixar, histórico e JSON;
+  ações "Enviar agora" ("Conferi: enviar agora"), "Marcar como enviado" com o número do pedido, "Devolver ao reenvio automático"
+  e "Cancelar". Banco: tabela `pedidos_fila` (migração 5).
+
+### Termos de envio de arte (`src/lib/termos-arte.ts`)
+
+Todo produto personalizado pede "Li e aceito os termos de envio de arte" no passo "Sua arte" antes de ir para o carrinho
+(`TermosArte.tsx`, com os termos para ler). O aceite (versão + data) vai na linha do carrinho e no pedido (`desc_trabalho`).
+Item que chega ao checkout sem o aceite (carrinho antigo, kit, festa, fachada) pede o aceite lá. O `/api/pedidos` recusa item
+personalizado sem aceite. O texto é provisório, para a Padrão validar; mudar o texto pede uma `TERMOS_ARTE_VERSAO` nova.
+
 ### Frete (API de frete da Padrão)
 
 - **Quem calcula.** A Padrão já cota no Melhor Envio com a conta, o CEP de despacho e as regras dela; o site não fala com o
@@ -397,10 +425,26 @@ Base de arte da revisão da Padrão de 25/10/2026 ("Observações Site Novo"). T
 - **Contorno automático** (`src/lib/contorno.ts`). É o mesmo traçado do acrílico do LED neon: campo de distância mais marching
   squares sobre a arte sem fundo.
   - **Lona com corte especial (41):** o 3D sai recortado a 1 cm do desenho, e o PDF vetorial "Faca de Corte" vai no pedido.
-  - **Quadro acrílico com LED (337):** o tubo contorna o desenho a 1,5 cm, sem sair do quadro, e o PDF "Posição do Led" vai no
-    pedido.
+  - **Quadro acrílico com LED (337):** linhas de LED (`src/lib/led-linhas.ts`, testado), só na frente (`ArtSettings.led`). O LED
+    é uma fita contínua que acende numa cor só, então cada linha tem uma cor; para trocar de cor, o cliente finaliza a linha e
+    começa outra.
+    - **Contorno automático:** um laço por parte do desenho, a 1,5 cm dele e a 1,2 cm da borda, cada um com a sua cor (guardada
+      pela ordem, do maior para o menor). A imagem enviada com fundo branco perde o fundo sozinha, para o contorno seguir o
+      desenho; foto ou arte com fundo ganha o LED na moldura. O contorno só desliga quando há uma linha do pincel.
+    - **Pincel:** no editor (`ArtEditor2D` com `led`, painel `LedLinesPanel`), o arraste desenha por cima da imagem enviada ou
+      da arte criada; soltar não termina a linha (o traço seguinte continua dela), um clique leva o LED reto até ali, dois
+      cliques ou "Finalizar linha" terminam (fechando quando acaba perto do começo). "Desfazer" tira o último traço, e cada
+      linha da lista troca de cor ou é apagada.
+    - **Correção do traço** (`src/lib/led-forma.ts`, testado): ao finalizar, o traço feito à mão é interpretado e refeito limpo:
+      reta, retângulo (endireitado quando quase alinhado), círculo ou elipse, polígono de 3 a 8 lados ou traço livre suavizado,
+      sempre com os cantos no raio mínimo da fita (`LED_RAIO_CM` = 2 cm, provisório, a confirmar com a produção). O traço como
+      foi desenhado fica guardado: "Usar o traço como desenhei" volta a ele e "Corrigir este traço" refaz; "Corrigir o traço
+      sozinho" desliga a correção para as próximas linhas.
+    - **Saídas:** o 3D (`NeonFrame`) mostra um tubo de uma cor por linha; o PDF "Posição do Led" (`arquivoDeLed`) tem a página 1
+      com as linhas em magenta 100% e a página 2 com cada linha na cor do LED, numerada, e a legenda (cor, origem e comprimento);
+      o carrinho e o pedido levam "Linhas de LED" (`resumoLed`).
   - **Arte com fundo:** a lona é cortada reta, e o LED fica na moldura.
-  - **Arquivos:** os PDFs saem em `product/contorno-arquivo.ts`, com a linha em magenta 100%.
+  - **Arquivos:** os PDFs saem em `product/contorno-arquivo.ts`, com a linha em magenta 100% (o do LED com a página das cores).
 - **Verniz localizado** (`src/lib/verniz.ts`):
   - **Escolha do cliente:** em cada lado, o que leva verniz (`ArtSettings.varnish`: imagem e texto, só a imagem ou só o texto).
   - **Máscara:** `varnishMask` pinta essas camadas em preto sobre branco. Ela sai pelo mesmo `printSheets`/`buildPrintPdf` do

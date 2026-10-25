@@ -6,6 +6,7 @@ import type { AcabamentoEscolhido } from "@/lib/acabamentos";
 import { currentCustomer, customerVariations, useCustomer, useGroupPrices } from "@/lib/customer";
 import { quantityLabel } from "@/lib/format";
 import { bundleTitle, isLineError, priceLine, type OrderItemInput } from "@/lib/orders";
+import type { AceiteTermos } from "@/lib/termos-arte";
 import { prunePrintFilesExcept } from "@/components/product/gabarito/print-store";
 import { track } from "@/lib/tracking";
 
@@ -48,6 +49,8 @@ export type CartItem = {
   acabamentos?: AcabamentoEscolhido[];
   /** Preço dos acabamentos ao adicionar: só vale enquanto o preço do cliente não chega. */
   acabamentosPreco?: number;
+  /** Aceite dos termos de envio de arte dado na página do produto (sem ele, o checkout pede). */
+  termosArte?: AceiteTermos | null;
 };
 
 export type CartArtFile = { id: string; name: string; kind: Exclude<ArtFileKind, "pdf">; /** Tipo de anexo do complementar ("Faca de Corte"…). */ tipo?: string };
@@ -232,6 +235,7 @@ export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderIt
     unitPrice,
     files: uploadedFilesOf(item),
     ...(item.acabamentos?.length ? { acabamentos: item.acabamentos } : {}),
+    ...(item.termosArte ? { termosArte: item.termosArte } : {}),
   };
 }
 

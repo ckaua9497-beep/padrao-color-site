@@ -1,30 +1,12 @@
 import { createHash } from "node:crypto";
 import { ordersEnabled } from "@/lib/api/checkout";
-import { ApiError } from "@/lib/api/client";
 import { apiFailure, fail, json, limits, overLimit, readJsonBody, SESSION_EXPIRED, sessionOr401 } from "@/lib/api/guard";
-import { gerarPedido, getCliente } from "@/lib/api/padrao";
-import { groupPrices, linePricesFor, type PriceAccount } from "@/lib/api/prices";
-import type { ApiCliente } from "@/lib/api/types";
-import { artBase } from "@/lib/bunny";
-import { getProduct, type Product } from "@/lib/catalog";
-import { produtoDoGrupo } from "@/lib/catalogo-vivo";
-import { productFacts } from "@/lib/order-facts";
-import {
-  addressFromApi,
-  buildOrderPayload,
-  extractOrderNumber,
-  isLineError,
-  missingArt,
-  orderDelivery,
-  orderTotal,
-  parseOrderRequest,
-  priceLine,
-  totalsDiffer,
-  type LinePrices,
-  type OrderItemInput,
-  type PricedLine,
-} from "@/lib/orders";
-import { clearSession, profileOf } from "@/lib/session";
+import { getProduct } from "@/lib/catalog";
+import { enviarPedido, pastasDaArte, prepararPedido, selarToken, textoDoErro, type Quote } from "@/lib/fila-pedidos/processar";
+import { esperaMinutos } from "@/lib/fila-pedidos/regras";
+import { enfileirar } from "@/lib/fila-pedidos/repo";
+import { missingArt, missingTerms, parseOrderRequest, type LineError, type OrderPayload, type OrderRequest, type PricedLine } from "@/lib/orders";
+import { clearSession, type Session } from "@/lib/session";
 import { recordOrderEvent } from "@/lib/multiloja/analytics";
 import { isTrackingId } from "@/lib/multiloja/eventos";
 
@@ -32,9 +14,14 @@ import { isTrackingId } from "@/lib/multiloja/eventos";
  * POST /api/pedidos — fecha o pedido do checkout.
  * 1. Exige sessão (o POST /gerarpedido precisa do idCliente) e confere o token no GET /cliente.
  * 2. Recalcula cada item no servidor com a tabela do cliente (balcão ou revenda + categoria): o preço que vem
- *    do navegador nunca vale. Se o total mudou, devolve 409 com a nova cotação para o cliente confirmar.
- * 3. Monta o payload (src/lib/orders.ts). PADRAO_ORDERS_ENABLED != "true" → simulação: devolve o payload e
- *    não chama a API. "true" → POST /gerarpedido, com proteção contra pedido duplicado (duplo clique).
+ *    do navegador nunca vale. Se o total mudou, devolve 409 com a nova cotação para o cliente confirmar. Item
+ *    personalizado sem arte ou sem o aceite dos termos de envio de arte é recusado (422).
+ * 3. Monta o payload (src/lib/orders.ts, via fila-pedidos/processar.ts). PADRAO_ORDERS_ENABLED != "true" →
+ *    simulação: devolve o payload e não chama a API. "true" → POST /gerarpedido, com proteção contra pedido
+ *    duplicado (duplo clique).
+ * 4. Sem conexão com a API (no cliente, nos preços ou no gerarpedido) ou sem confirmação do gerarpedido: o pedido e
+ *    os arquivos ficam guardados na fila do site (src/lib/fila-pedidos) e o cliente recebe um protocolo (202). Sem
+ *    conexão, o servidor reenvia sozinho; sem confirmação, a equipe confere no admin antes (evita pedido em dobro).
  */
 
 const DUPLICATE_WINDOW_MS = 2 * 60_000;
@@ -46,11 +33,25 @@ function rememberOrder(key: string, value: { order: number | null } | { pending:
   recentOrders.set(key, { at: now, ...value });
 }
 
-/** Item antigo sem grupo: acha pelo slug do produto (ou pelo ID do grupo no começo dele, num produto novo da API). */
-function withGroup(item: OrderItemInput): OrderItemInput {
-  if (item.groupId) return item;
-  const groupId = getProduct(item.slug)?.groupId ?? (Number(/^(\d+)-/.exec(item.slug)?.[1]) || undefined);
-  return groupId ? { ...item, groupId } : item;
+/** Guarda o pedido na fila e responde com o protocolo; null quando nem o banco do site responde. */
+async function guardar(session: Session, pedido: OrderRequest, { etapa, motivo, payload, quote, erro }: { etapa: "pendente" | "conferir"; motivo: string; payload: OrderPayload | null; quote: Quote | null; erro: unknown }): Promise<Response | null> {
+  try {
+    const entrada = await enfileirar({
+      clienteId: session.id,
+      etapa,
+      motivo,
+      pedido,
+      payload,
+      token: selarToken(session.token),
+      total: quote?.total ?? pedido.expectedTotal,
+      erro: textoDoErro(erro),
+      esperaMin: esperaMinutos(1),
+    });
+    return json({ mode: "queued", protocolo: entrada.protocolo, etapa, quote }, 202);
+  } catch (error) {
+    console.error("[pedidos] fila:", error instanceof Error ? error.message : "erro desconhecido");
+    return null;
+  }
 }
 
 export async function POST(request: Request) {
@@ -59,75 +60,40 @@ export async function POST(request: Request) {
   const auth = await sessionOr401();
   if (!auth.ok) return auth.response;
   const session = auth.session;
-  // Arquivos da arte: só os da pasta pública do Bunny entram no pedido (arte.anexos).
-  const parsed = parseOrderRequest(body.data, { artBase: artBase() });
+  // Arquivos da arte: só os da pasta pública do Bunny (ou dos guardados no site, quando o Bunny falhou) entram no pedido.
+  const parsed = parseOrderRequest(body.data, { artBase: pastasDaArte(new URL(request.url).origin) });
   if (!parsed.ok) return fail(400, parsed.error);
   const blocked = overLimit(limits.orders, `pedido:${session.id}`);
   if (blocked) return blocked;
+  const pedido = parsed.value;
 
-  const { payment, delivery, expectedTotal } = parsed.value;
-  const items = parsed.value.items.map(withGroup);
+  // Sem arte ou sem o aceite dos termos: recusa antes de falar com a API (e nunca vai para a fila assim).
+  const semArte = pedido.items.map((item) => missingArt(item) ?? missingTerms(item)).filter((erro): erro is LineError => erro !== null);
+  if (semArte.length) return fail(422, "Alguns itens do carrinho precisam de atenção.", { items: semArte });
 
-  // Cadastro de agora: confere o token, a categoria/tabela e o endereço de entrega.
-  let cliente: ApiCliente | null;
-  try {
-    cliente = await getCliente(session.token);
-  } catch (error) {
-    return apiFailure(error, { session: true });
-  }
-  if (!cliente?.id || Number(cliente.id) !== session.id) {
+  const preparo = await prepararPedido(pedido, session);
+  if (preparo.tipo === "sessao") {
     await clearSession();
     return fail(401, SESSION_EXPIRED, { session: "expired" });
   }
-  const profile = profileOf(cliente);
-  const account: PriceAccount = { id: session.id, token: session.token, reseller: profile.reseller, category: profile.category, priceTable: profile.priceTable };
-
-  const prices = new Map<number, LinePrices>();
-  try {
-    const groups = [...new Set(items.map((item) => item.groupId).filter((id): id is number => Boolean(id)))];
-    await Promise.all(
-      groups.map(async (groupId) => {
-        const group = await groupPrices(groupId, account);
-        if (group) prices.set(groupId, linePricesFor(group, account, { ordersOn: ordersEnabled() }));
-      }),
-    );
-  } catch (error) {
-    return apiFailure(error, { session: true, fallback: "Não foi possível confirmar os preços agora. Tente de novo." });
+  if (preparo.tipo === "itens") return fail(422, "Alguns itens do carrinho precisam de atenção.", { items: preparo.items });
+  if (preparo.tipo === "precos") return fail(409, "Os preços foram atualizados para a sua conta. Confira o novo total antes de confirmar.", { quote: preparo.quote });
+  if (preparo.tipo === "endereco") return fail(400, "Seu cadastro não tem endereço de entrega completo. Informe outro endereço ou escolha a retirada.");
+  if (preparo.tipo === "falha") {
+    // A API caiu antes do pedido (cliente ou preços): guarda e reenvia quando ela voltar.
+    if (preparo.classe === "sem-conexao") {
+      const queued = await guardar(session, pedido, { etapa: "pendente", motivo: "sem conexão com a API da Padrão antes do pedido", payload: null, quote: null, erro: preparo.erro });
+      if (queued) {
+        await trackOrder(request, `FILA-${Date.now().toString(36)}`, pedido.expectedTotal, null);
+        return queued;
+      }
+    }
+    return apiFailure(preparo.erro, { session: true, fallback: "Não foi possível confirmar os preços agora. Tente de novo." });
   }
 
-  const priced = items.map((item) => missingArt(item) ?? priceLine(item, item.groupId ? prices.get(item.groupId) : null));
-  const problems = priced.filter(isLineError);
-  if (problems.length) return fail(422, "Alguns itens do carrinho precisam de atenção.", { items: problems });
-  const lines = priced as PricedLine[];
-
-  const total = orderTotal(lines);
-  const quote = { total, reseller: profile.reseller, lines: lines.map((line) => ({ key: line.key, unitPrice: line.unitPrice, total: line.total, reseller: line.reseller })) };
-  if (totalsDiffer(total, expectedTotal)) {
-    return fail(409, "Os preços foram atualizados para a sua conta. Confira o novo total antes de confirmar.", { quote });
-  }
-
-  const registered = addressFromApi(cliente.endereco_entrega) ?? addressFromApi(cliente.endereco_cadastro);
-  const deliveryInfo = orderDelivery(delivery, registered);
-  if (!deliveryInfo) return fail(400, "Seu cadastro não tem endereço de entrega completo. Informe outro endereço ou escolha a retirada.");
-
-  // Foto, categoria, embalagem e anexos do produto que precificou cada linha (catálogo em tempo real; já em cache).
-  const vivos = new Map<number, Product | undefined>();
-  await Promise.all([...new Set(lines.map((line) => line.groupId))].map(async (groupId) => vivos.set(groupId, await produtoDoGrupo(groupId))));
-  const payload = buildOrderPayload({ customerId: session.id, lines, method: payment, delivery: deliveryInfo, facts: (line) => productFacts(line, vivos.get(line.groupId)) });
-  // Rastreamento (site da Padrão = loja 0): pedido e itens, ligados à sessão anônima de quem comprou.
-  const visitante = request.headers.get("x-pc-visitante");
-  const sessaoRastreio = request.headers.get("x-pc-sessao");
-  const trackOrder = (codigo: string) =>
-    recordOrderEvent("pedido_criado", {
-      lojaId: 0,
-      visitante: isTrackingId(visitante) ? visitante : null,
-      sessao: isTrackingId(sessaoRastreio) ? sessaoRastreio : null,
-      codigo,
-      total,
-      itens: lines.map((line) => ({ produto: getProduct(line.input.slug)?.id ?? String(line.groupId), quantidade: line.units, valor: line.total })),
-    });
+  const { payload, quote, total, lines } = preparo;
   if (!ordersEnabled()) {
-    await trackOrder(`SIM-${Date.now().toString(36)}`);
+    await trackOrder(request, `SIM-${Date.now().toString(36)}`, total, lines);
     return json({ mode: "simulation", payload, quote });
   }
 
@@ -139,22 +105,47 @@ export async function POST(request: Request) {
   }
 
   rememberOrder(key, { pending: true });
-  try {
-    const result = await gerarPedido(payload, session.token);
-    const order = extractOrderNumber(result);
-    rememberOrder(key, { order });
-    await trackOrder(order ? `PC-${order}` : `PC-${Date.now().toString(36)}`);
-    return json({ mode: "order", order, quote });
-  } catch (error) {
-    // Só libera a repetição com certeza de que o pedido não foi criado: nada saiu (sem conexão, disjuntor,
-    // certificado) ou a API recusou (4xx). Resposta inválida, 5xx, conexão caída ou muda depois de conectar:
-    // o pedido pode ter sido criado. Segura a repetição e manda conferir antes.
-    const certainlyNotCreated = error instanceof ApiError && (error.reached === false || (error.status >= 400 && error.status < 500));
-    if (!certainlyNotCreated) {
-      if (!(error instanceof ApiError)) console.error("[pedidos] gerarpedido:", error instanceof Error ? error.message : "erro desconhecido");
-      return fail(error instanceof ApiError && error.status === 504 ? 504 : 502, "Não deu para confirmar se o pedido foi criado. Confira em Meus pedidos antes de tentar de novo.", { checkOrders: true });
-    }
-    recentOrders.delete(key);
-    return apiFailure(error, { session: true, fallback: "Não foi possível criar o pedido agora. Nada foi cobrado." });
+  const envio = await enviarPedido(payload, session.token);
+  if (envio.tipo === "criado") {
+    rememberOrder(key, { order: envio.numero });
+    await trackOrder(request, envio.numero ? `PC-${envio.numero}` : `PC-${Date.now().toString(36)}`, total, lines);
+    return json({ mode: "order", order: envio.numero, quote });
   }
+  // Recusa da API (4xx): nada foi criado, o cliente corrige e tenta de novo.
+  if (envio.classe === "recusado") {
+    recentOrders.delete(key);
+    return apiFailure(envio.erro, { session: true, fallback: "Não foi possível criar o pedido agora. Nada foi cobrado." });
+  }
+  // Sem conexão (nada saiu): fila com reenvio automático. Sem confirmação (pode ter sido criado): fila para a equipe
+  // conferir antes, e a trava de duplicado continua valendo.
+  const semConexao = envio.classe === "sem-conexao";
+  if (semConexao) recentOrders.delete(key);
+  else console.error("[pedidos] gerarpedido sem confirmação:", textoDoErro(envio.erro));
+  const queued = await guardar(session, pedido, {
+    etapa: semConexao ? "pendente" : "conferir",
+    motivo: semConexao ? "sem conexão com a API da Padrão no envio do pedido" : "a API não confirmou se o pedido foi criado",
+    payload,
+    quote,
+    erro: envio.erro,
+  });
+  if (queued) {
+    await trackOrder(request, `FILA-${Date.now().toString(36)}`, total, lines);
+    return queued;
+  }
+  if (semConexao) return apiFailure(envio.erro, { session: true, fallback: "Não foi possível criar o pedido agora. Nada foi cobrado." });
+  return fail(502, "Não deu para confirmar se o pedido foi criado. Confira em Meus pedidos antes de tentar de novo.", { checkOrders: true });
+}
+
+/** Rastreamento (site da Padrão = loja 0): pedido e itens, ligados à sessão anônima de quem comprou. */
+async function trackOrder(request: Request, codigo: string, total: number, lines: PricedLine[] | null) {
+  const visitante = request.headers.get("x-pc-visitante");
+  const sessaoRastreio = request.headers.get("x-pc-sessao");
+  await recordOrderEvent("pedido_criado", {
+    lojaId: 0,
+    visitante: isTrackingId(visitante) ? visitante : null,
+    sessao: isTrackingId(sessaoRastreio) ? sessaoRastreio : null,
+    codigo,
+    total,
+    itens: (lines ?? []).map((line) => ({ produto: getProduct(line.input.slug)?.id ?? String(line.groupId), quantidade: line.units, valor: line.total })),
+  });
 }

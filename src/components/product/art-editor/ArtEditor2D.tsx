@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { MockupKind } from "@/lib/mockup-kinds";
+import type { V2 } from "@/lib/contorno";
+import type { LinhaDeLed } from "@/lib/led-linhas";
 import { dpiTargets } from "@/lib/image-prep";
 import { bleedFractions, containBox, coverBox, describePanel, placementFromBox, safeBoxOf, type TemplatePanel } from "@/lib/templates";
 import { PanelLines, outlinePath } from "../gabarito/TemplateSheet";
@@ -61,6 +63,28 @@ type Props = {
   template?: TemplatePanel | null;
   /** Refaz o encaixe automático do arquivo no gabarito ("Voltar ao encaixe automático"). */
   onAutoFit?: (() => void) | null;
+  /**
+   * Linhas de LED do quadro com neon (só na frente): aparecem acesas por cima da arte (o acrílico é transparente, o
+   * palco é a parede escura) e, com o pincel ligado, o arraste desenha em vez de mover o texto e a imagem.
+   */
+  led?: LedEditor | null;
+};
+
+export type LedEditor = {
+  linhas: readonly LinhaDeLed[];
+  /** Linha do pincel em andamento: o fim dela pisca (o próximo traço continua dali). */
+  emAndamento: string | null;
+  /** Linha escolhida no painel (contorno ou pincel), com o traço em destaque. */
+  destaque: string | null;
+  pincel: boolean;
+  /** Cor do traço que está sendo desenhado. */
+  cor: string;
+  /** Distância mínima até a borda, em fração da área (o LED fica no acrílico). */
+  borda: { x: number; y: number };
+  /** Traço terminado (soltou o dedo ou o mouse), em fração da área. */
+  onTraco: (pontos: V2[]) => void;
+  /** Dois cliques: finaliza a linha em andamento. */
+  onFinalizar: () => void;
 };
 
 type Pt = { x: number; y: number };
@@ -105,7 +129,7 @@ function snapRotation(deg: number, fine: boolean) {
  * pinça, giram, grudam nas guias do meio e andam com as setas do teclado. Tudo fica dentro da área e sem
  * distorcer; o 3D acompanha ao vivo (grava art.layout).
  */
-export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm = null, surface, ledColors, frontWindow, sample = true, label, sideLabel, template = null, onAutoFit = null }: Props) {
+export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm = null, surface, ledColors, frontWindow, sample = true, label, sideLabel, template = null, onAutoFit = null, led = null }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -122,6 +146,11 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   const [guides, setGuides] = useState({ x: false, y: false });
   const [announcement, setAnnouncement] = useState("");
   const [fontsReady, setFontsReady] = useState("");
+  // Pincel do LED: o traço em andamento (pixels do palco), mostrado antes de virar linha.
+  const drawRef = useRef<{ pointerId: number; points: Pt[] } | null>(null);
+  const strokeFrameRef = useRef(0);
+  const [stroke, setStroke] = useState<Pt[] | null>(null);
+  const brush = Boolean(led?.pincel);
   const statusId = useId();
   // Id seguro para url(#…) (o useId traz caracteres especiais).
   const maskId = `veu${statusId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -155,12 +184,14 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
 
   // Estampa de tecido: imagem sem fundo, como no 3D (o tecido aparece em volta).
   const fabric = family === "apparel";
+  // Quadro com LED: acrílico transparente (onde não há tinta, aparece a parede), como no 3D.
+  const clear = Boolean(led);
   const render = useMemo<ArtRender>(
     () => ({
       ...art,
       back: null,
       region: null,
-      background: fabric && art.src ? "rgba(0,0,0,0)" : art.background,
+      background: clear || (fabric && art.src) ? "rgba(0,0,0,0)" : art.background,
       kind,
       ledColors: ledColors?.length ? ledColors : undefined,
       surface,
@@ -169,7 +200,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
       // O palco tem a proporção da área (em pixels ela sai arredondada): o template monta igual ao 3D.
       aspect: safeAspect,
     }),
-    [art, fabric, kind, ledColors, surface, frontWindow, sample, safeAspect],
+    [art, clear, fabric, kind, ledColors, surface, frontWindow, sample, safeAspect],
   );
 
   useEffect(() => {
@@ -222,6 +253,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   useEffect(
     () => () => {
       cancelAnimationFrame(frameRef.current);
+      cancelAnimationFrame(strokeFrameRef.current);
       setArtGesture(false);
     },
     [],
@@ -238,8 +270,8 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   const textLabel = (art.text.trim() || art.subtext.trim()).slice(0, 40);
   const layerName = (layer: EditorLayer) => (layer === "text" ? `Texto${textLabel ? ` “${textLabel}”` : ""}` : "Imagem");
 
-  // Fundo do palco: noite (neon) ou o tecido (estampa sem fundo); nos demais a pintura cobre a área.
-  const neon = variant === "neon";
+  // Fundo do palco: noite (neon e quadro com LED) ou o tecido (estampa sem fundo); nos demais a pintura cobre a área.
+  const neon = variant === "neon" || clear;
   const stageColor = neon ? "var(--color-night)" : fabric ? (surface ?? "var(--color-paper)") : "var(--color-mist)";
   const darkStage = neon || (fabric && Boolean(surface) && readableInk(surface ?? "#ffffff") === "#ffffff");
 
@@ -276,6 +308,16 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    // Pincel do LED: um dedo (ou o mouse) desenha; o segundo dedo é ignorado.
+    if (brush) {
+      if (drawRef.current) return;
+      const pt = pointOf(event);
+      drawRef.current = { pointerId: event.pointerId, points: [pt] };
+      setStroke([pt]);
+      stageRef.current?.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     const target = event.target as HTMLElement;
     const layer = (target.closest<HTMLElement>("[data-layer]")?.dataset.layer as EditorLayer | undefined) ?? null;
     const handle = target.closest<HTMLElement>("[data-handle]")?.dataset.handle;
@@ -314,6 +356,21 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const draw = drawRef.current;
+    if (draw) {
+      if (draw.pointerId !== event.pointerId) return;
+      const pt = pointOf(event);
+      const last = draw.points[draw.points.length - 1];
+      if (Math.hypot(pt.x - last.x, pt.y - last.y) < 1.5) return;
+      draw.points.push(pt);
+      // Mostra o traço no próximo quadro (o mouse manda dezenas de eventos por segundo).
+      if (!strokeFrameRef.current)
+        strokeFrameRef.current = requestAnimationFrame(() => {
+          strokeFrameRef.current = 0;
+          if (drawRef.current) setStroke(drawRef.current.points.slice());
+        });
+      return;
+    }
     if (!pointersRef.current.has(event.pointerId)) return;
     const pt = pointOf(event);
     pointersRef.current.set(event.pointerId, pt);
@@ -358,6 +415,16 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
   };
 
   const onPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    const draw = drawRef.current;
+    if (draw) {
+      if (draw.pointerId !== event.pointerId) return;
+      drawRef.current = null;
+      cancelAnimationFrame(strokeFrameRef.current);
+      strokeFrameRef.current = 0;
+      setStroke(null);
+      if (led && stageW >= 2 && stageH >= 2) led.onTraco(draw.points.map((p): V2 => [p.x / stageW, p.y / stageH]));
+      return;
+    }
     pointersRef.current.delete(event.pointerId);
     const g = gestureRef.current;
     if (!g) return;
@@ -514,14 +581,16 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
             <div className={template ? "absolute overflow-hidden" : "contents"} style={template ? { left: -CLIP_PX, top: -CLIP_PX, width: sheetW + 2 * CLIP_PX, height: sheetH + 2 * CLIP_PX } : undefined}>
             <div
               ref={stageRef}
-              className={cx("absolute touch-pan-y select-none", !template && cx("rounded-[3px] ring-1", darkStage ? "ring-white/35" : "ring-ink/25"))}
+              className={cx("absolute select-none", brush ? "cursor-crosshair touch-none" : "touch-pan-y", !template && cx("rounded-[3px] ring-1", darkStage ? "ring-white/35" : "ring-ink/25"))}
               style={{ left: offX + (template ? CLIP_PX : 0), top: offY + (template ? CLIP_PX : 0), width: stageW, height: stageH, background: template ? undefined : stageColor }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerEnd}
               onPointerCancel={onPointerEnd}
+              onDoubleClick={brush ? () => led?.onFinalizar() : undefined}
             >
             {!template && <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full rounded-[3px]" />}
+            {led && <LedLayer led={led} stroke={stroke} width={stageW} height={stageH} />}
             {guides.x && <span aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-coral" />}
             {guides.y && <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-coral" />}
             {layers.map((layer) => {
@@ -544,10 +613,13 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
                   onFocus={() => setSelected(layer)}
                   onKeyDown={(event) => onLayerKey(event, layer)}
                   className={cx(
-                    "absolute cursor-move touch-none focus-visible:outline-offset-2",
-                    selectedNow
-                      ? cx("outline-2 outline-dashed", darkStage ? "outline-white" : "outline-ink")
-                      : cx("outline-0 hover:outline-1 hover:outline-dashed", darkStage ? "hover:outline-white/60" : "hover:outline-ink/50"),
+                    "absolute touch-none focus-visible:outline-offset-2",
+                    // Pincel ligado: o arraste desenha o LED, os elementos não se mexem.
+                    brush
+                      ? "pointer-events-none outline-0"
+                      : selectedNow
+                        ? cx("cursor-move outline-2 outline-dashed", darkStage ? "outline-white" : "outline-ink")
+                        : cx("cursor-move outline-0 hover:outline-1 hover:outline-dashed", darkStage ? "hover:outline-white/60" : "hover:outline-ink/50"),
                   )}
                   style={{
                     left: p.x * stageW,
@@ -557,7 +629,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
                     transform: `translate(-50%, -50%) rotate(${p.rotation}deg)`,
                   }}
                 >
-                  {selectedNow && (
+                  {selectedNow && !brush && (
                     <>
                       {(["0% 0%", "100% 0%", "0% 100%", "100% 100%"] as const).map((corner) => {
                         const [left, top] = corner.split(" ");
@@ -576,7 +648,7 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
                 </div>
               );
             })}
-            {!layers.length && info && (
+            {!layers.length && info && !brush && !led?.linhas.some((l) => l.origem === "pincel") && (
               <p className={cx("pointer-events-none absolute inset-0 grid place-items-center px-4 text-center text-caption font-semibold", darkStage ? "text-white/80" : "text-muted")}>
                 Escreva um texto ou envie uma imagem para posicionar{side}.
               </p>
@@ -696,7 +768,9 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-caption text-muted">
-          {template
+          {brush
+            ? "Pincel ligado: arraste para desenhar o LED; um clique leva o LED em linha reta até ali; dois cliques finalizam a linha."
+            : template
             ? [
                 "Arraste, use as alças ou dois dedos.",
                 bleed && Math.max(bleed.left, bleed.top, bleed.right, bleed.bottom) > 0
@@ -713,6 +787,91 @@ export function ArtEditor2D({ art, onArt, kind, family, variant, aspect, areaCm 
         </Button>
       </div>
     </section>
+  );
+}
+
+/** Cor do miolo aceso do tubo: a cor do LED clareada (o centro do neon é quase branco). */
+function ledCore(hex: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = Number.parseInt(m[1], 16);
+  const mix = (c: number) => Math.round(c + (255 - c) * 0.55);
+  return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
+}
+
+/**
+ * Linhas de LED acesas por cima da arte (contorno automático e pincel), com o número de cada uma (o mesmo da lista
+ * do painel e do arquivo "Posição do Led"), o traço que está sendo desenhado e o fim da linha em andamento piscando.
+ * Com o pincel, a faixa da borda onde o LED não vai fica tracejada.
+ */
+function LedLayer({ led, stroke, width, height }: { led: LedEditor; stroke: Pt[] | null; width: number; height: number }) {
+  const filterId = `brilho${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const px = ([x, y]: V2): Pt => ({ x: x * width, y: y * height });
+  const path = (points: readonly V2[], closed: boolean) =>
+    points
+      .map(px)
+      .map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+      .join("") + (closed ? "Z" : "");
+  const current = led.emAndamento ? led.linhas.find((l) => l.id === led.emAndamento) : undefined;
+  const end = current ? px(current.pontos[current.pontos.length - 1]) : null;
+  // O traço novo continua da linha em andamento: o LED vai reto do fim dela até onde o traço começou.
+  const live = stroke ? [...(end ? [end] : []), ...stroke] : null;
+  return (
+    <>
+      <svg aria-hidden className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox={`0 0 ${width} ${height}`}>
+        <defs>
+          <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3.2" />
+          </filter>
+        </defs>
+        {led.pincel && (
+          <rect
+            x={led.borda.x * width}
+            y={led.borda.y * height}
+            width={Math.max(0, width * (1 - 2 * led.borda.x))}
+            height={Math.max(0, height * (1 - 2 * led.borda.y))}
+            fill="none"
+            className="stroke-white/35"
+            strokeDasharray="4 4"
+            strokeWidth={1}
+          />
+        )}
+        {led.linhas.map((linha) => {
+          const d = path(linha.pontos, linha.fechada);
+          const focus = led.destaque === linha.id;
+          return (
+            <g key={linha.id}>
+              <path d={d} fill="none" stroke={linha.cor} strokeWidth={focus ? 9 : 7} strokeOpacity={0.6} strokeLinecap="round" strokeLinejoin="round" filter={`url(#${filterId})`} />
+              <path d={d} fill="none" stroke={ledCore(linha.cor)} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+              {focus && <path d={d} fill="none" className="stroke-white" strokeWidth={1} strokeDasharray="3 4" />}
+            </g>
+          );
+        })}
+        {live && live.length > 0 && (
+          <g>
+            <polyline points={live.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke={led.cor} strokeWidth={7} strokeOpacity={0.6} strokeLinecap="round" strokeLinejoin="round" filter={`url(#${filterId})`} />
+            <polyline points={live.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke={ledCore(led.cor)} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+          </g>
+        )}
+        {led.linhas.map((linha) => {
+          const p = px(linha.pontos[0]);
+          return (
+            <g key={`n${linha.id}`} transform={`translate(${p.x} ${p.y})`}>
+              <circle r={7.5} className="fill-ink stroke-white" strokeWidth={1} />
+              <text textAnchor="middle" dominantBaseline="central" className="fill-white text-[9px] font-bold">
+                {linha.n}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {end && led.pincel && !stroke && (
+        <span aria-hidden className="pointer-events-none absolute grid size-4 -translate-x-1/2 -translate-y-1/2 place-items-center" style={{ left: end.x, top: end.y }}>
+          <span className="absolute size-4 rounded-full bg-white/70 motion-safe:animate-ping" />
+          <span className="size-2 rounded-full bg-white" />
+        </span>
+      )}
+    </>
   );
 }
 

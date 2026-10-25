@@ -45,7 +45,7 @@ import { cx } from "@/components/ui/cx";
 import type { SizeChartRow } from "@/lib/catalog";
 import { normalizeName, variantOf, type MockupSpec } from "@/lib/mockup";
 import { artArea, type MockupKind } from "@/lib/mockup-kinds";
-import { ArtEditor2D } from "./art-editor/ArtEditor2D";
+import { ArtEditor2D, type LedEditor } from "./art-editor/ArtEditor2D";
 import { GabaritoPanel } from "./gabarito/GabaritoPanel";
 import { fitToTemplate, madeForTemplate, type Gabarito } from "./gabarito/jobs";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
@@ -57,7 +57,12 @@ import { PROCESSO_INFO, acceptDo, corServe, monoDo, type Processo } from "@/lib/
 import type { Contorno } from "@/lib/contorno";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
+import { LedLinesPanel } from "./art-editor/LedLinesPanel";
+import { useLedContour } from "./art-editor/use-led-contour";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
+import { TermosArte } from "./TermosArte";
+import { LED_BORDA_CM } from "@/lib/contorno";
+import { LED_COR_PADRAO, adicionarTraco, desenhoDe, finalizarLinha, linhasDeLed, type LedDesenho } from "@/lib/led-linhas";
 
 type Props = {
   /** Grade de tamanhos e medidas da camisa (manequim proporcional). */
@@ -129,6 +134,11 @@ type Props = {
   onStylePick?: (style: ArtStyle) => void;
   /** Título no lugar do "Sua arte" padrão (a fachada usa o mesmo título numerado dos outros passos). */
   heading?: ReactNode;
+  /**
+   * Aceite dos termos de envio de arte (src/lib/termos-arte.ts), obrigatório em todo produto personalizado: sem ele,
+   * a página não adiciona ao carrinho. Sem a prop (kit, fachada), o aceite fica para o checkout.
+   */
+  termos?: { aceito: boolean; onAceito: (aceito: boolean) => void; faltando: boolean } | null;
 };
 
 type Mode = "texto" | "imagem";
@@ -158,7 +168,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, automaticFiles = [], onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, automaticFiles = [], onSide, gabarito = null, slug = "", onStylePick, heading, termos = null }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -194,7 +204,10 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
     onSide?.(value);
   };
 
-  const neon = family === "neon";
+  // Quadro acrílico com LED (contorno "led"): a arte é impressa em U.V. no acrílico (texto com cor e fonte de
+  // impressão, não letra de tubo) e o LED são as linhas do painel "Linhas de LED", só na frente.
+  const ledFrame = contorno?.tipo === "led";
+  const neon = family === "neon" && !ledFrame;
   const apparel = family === "apparel";
   const style = styleOf(sideArt.style);
   const styleInfo = ART_STYLES.find((s) => s.value === style) ?? ART_STYLES[0];
@@ -223,6 +236,40 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   const stageAspect = templatePanel ? templatePanel.cut.w / templatePanel.cut.h : editorAspect;
   const stageCm = templatePanel ? { widthCm: templatePanel.cut.w / 10, heightCm: templatePanel.cut.h / 10 } : areaCm;
   const previewExtra: Partial<ArtRender> = { frontWindow, surface, sample: isFront };
+
+  // Linhas de LED do quadro: o contorno automático (traçado da arte sem fundo, como no 3D) e as do pincel.
+  const ledMedida = areaCm ?? { widthCm: 50, heightCm: 50 };
+  const ledCorPadrao = ledColors?.[0] ?? LED_COR_PADRAO;
+  const ledArt = useMemo<ArtRender>(() => ({ ...art, back: null, faces: null, ledColors: undefined, background: "rgba(0,0,0,0)", kind: pieceKind, aspect: baseAspect }), [art, pieceKind, baseAspect]);
+  const ledContour = useLedContour(ledArt, label, baseAspect, ledMedida.widthCm, ledFrame);
+  const desenho = desenhoDe(art);
+  const ledLinhas = ledFrame ? linhasDeLed(desenho, ledContour?.lacos ?? null, ledContour?.cheio ?? false, ledMedida, ledCorPadrao) : [];
+  const [ledPincel, setLedPincel] = useState(false);
+  const [ledCor, setLedCor] = useState<string | null>(null);
+  const [ledDestaque, setLedDestaque] = useState<string | null>(null);
+  const corDoPincel = ledCor ?? ledCorPadrao;
+  const onLed = (update: (d: LedDesenho) => LedDesenho) =>
+    onArt((a) => {
+      const next = update(desenhoDe(a));
+      // Sempre fica pelo menos uma linha de LED: sem nenhuma do pincel, o contorno automático volta.
+      return { ...a, led: !next.auto && next.linhas.length === 0 ? { ...next, auto: true } : next };
+    });
+  const ledEditor: LedEditor | null =
+    ledFrame && isFront
+      ? {
+          linhas: ledLinhas,
+          emAndamento: desenho.emAndamento,
+          destaque: ledDestaque,
+          pincel: ledPincel,
+          cor: desenho.linhas.find((l) => l.id === desenho.emAndamento)?.cor ?? corDoPincel,
+          borda: { x: LED_BORDA_CM / ledMedida.widthCm, y: LED_BORDA_CM / ledMedida.heightCm },
+          onTraco: (pontos) => {
+            setLedDestaque(null);
+            onLed((d) => adicionarTraco(d, pontos, corDoPincel, ledMedida, LED_BORDA_CM, () => crypto.randomUUID().slice(0, 8)));
+          },
+          onFinalizar: () => onLed((d) => finalizarLinha(d, ledMedida)),
+        }
+      : null;
 
   const pickStyle = (value: ArtStyle) => {
     const suggested = ART_STYLES.find((s) => s.value === value)?.font ?? DEFAULT_ART.font;
@@ -424,7 +471,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
               </p>
               <StylePicker
                 art={shownArt}
-                family={family}
+                family={ledFrame ? "sign" : family}
                 kind={pieceKind}
                 aspect={editorAspect}
                 ledColors={effectiveLeds}
@@ -568,8 +615,33 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             sideLabel={list.length > 1 ? sideInfo.label : undefined}
             template={templatePanel}
             onAutoFit={onAutoFit}
+            led={ledEditor}
           />
         </div>
+
+        {ledEditor && (
+          <div className="border-t border-line pt-5">
+            <LedLinesPanel
+              desenho={desenho}
+              onDesenho={onLed}
+              linhas={ledLinhas}
+              contorno={ledContour}
+              medida={ledMedida}
+              corPadrao={ledCorPadrao}
+              pincel={ledPincel}
+              onPincel={(on) => {
+                setLedPincel(on);
+                if (on) setLedDestaque(null);
+                // Desligar o pincel finaliza a linha em andamento.
+                else onLed((d) => finalizarLinha(d, ledMedida));
+              }}
+              cor={corDoPincel}
+              onCor={setLedCor}
+              destaque={ledDestaque}
+              onDestaque={setLedDestaque}
+            />
+          </div>
+        )}
 
         {gabarito && !blank && (
           <div className="border-t border-line pt-5">
@@ -594,6 +666,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
           </label>
         )
       )}
+      {!blank && termos && <TermosArte id="termos-arte" className="mt-4" aceito={termos.aceito} onAceito={termos.onAceito} faltando={termos.faltando} />}
       {missing && (
         <p role="alert" className="mt-2 text-sm font-semibold text-coral-700">
           {uploadOnly ? "Envie o arquivo do logotipo para continuar." : onArtLater ? "Escreva um texto, envie a arte ou marque “Enviar arte depois” para continuar." : "Escreva um texto ou envie a arte para continuar."}

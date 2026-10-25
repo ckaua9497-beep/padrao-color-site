@@ -1,5 +1,6 @@
 import type { MockupKind } from "@/lib/mockup-kinds";
 import { printQuality, type ImageAnalysis } from "@/lib/image-prep";
+import type { LedDesenho } from "@/lib/led-linhas";
 import { ART_FONTS, canvasFont, fontFamilyOf, isScriptFont, type ArtFont } from "./fonts";
 
 /** Estilos de layout dos templates de texto. */
@@ -58,6 +59,11 @@ export type ArtSettings = {
   varnishMask?: "black" | "white" | null;
   /** Cores de LED escolhidas pelo cliente no neon (sobrepõem a cor da opção do produto). */
   ledColors?: string[] | null;
+  /**
+   * Linhas de LED do quadro acrílico com neon (src/lib/led-linhas.ts), só na frente: o contorno automático do desenho
+   * (ligado ou não, com a cor de cada laço) e as linhas do pincel, uma cor por linha.
+   */
+  led?: LedDesenho | null;
   /** Chinelo: região personalizada ("inteira", "dedos", "meio", "calcanhar"). */
   region?: string | null;
   /** Camisa: manequim no tamanho escolhido e no tipo de corpo (medidas em cm da tabela da API). */

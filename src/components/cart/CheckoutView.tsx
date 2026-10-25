@@ -31,6 +31,8 @@ import { ItemTags, ResellerNote } from "./CartDrawer";
 import { CartThumb } from "./CartThumb";
 import { pendingArtFiles, uploadCartArt, type UploadProgress } from "./art-upload";
 import { itemArtFiles, quantityText, toOrderItem, useCart, type CartItem } from "./CartProvider";
+import { TermosArte } from "@/components/product/TermosArte";
+import { levaArte, novoAceite } from "@/lib/termos-arte";
 import { PrintFileLink } from "@/components/product/gabarito/PrintFileLink";
 import { keepPrintFiles } from "@/components/product/gabarito/print-store";
 
@@ -51,11 +53,15 @@ function withUploads(item: CartItem, uploaded: Record<string, { url: string; nom
 type AccountSummary = { customerId: number; document: string; address: DeliveryAddress | null; balance: number | null; blocked: number | null };
 type QuoteLine = { key: string; unitPrice: number; total: number; reseller: boolean };
 type Quote = { total: number; reseller: boolean; lines: QuoteLine[] };
-type OrderReply = { mode: "simulation"; payload: OrderPayload; quote: Quote } | { mode: "order"; order: number | null; quote: Quote; duplicate?: boolean };
+type OrderReply =
+  | { mode: "simulation"; payload: OrderPayload; quote: Quote }
+  | { mode: "order"; order: number | null; quote: Quote; duplicate?: boolean }
+  | { mode: "queued"; protocolo: string; etapa: "pendente" | "conferir"; quote: Quote | null };
 type PrintFile = { id: string; name: string; product: string };
 type Result =
   | { mode: "simulation"; payload: OrderPayload; quote: Quote; files: PrintFile[] }
-  | { mode: "order"; order: number | null; quote: Quote; method: PaymentMethod; cancelled: boolean; files: PrintFile[] };
+  | { mode: "order"; order: number | null; quote: Quote; method: PaymentMethod; cancelled: boolean; files: PrintFile[] }
+  | { mode: "queued"; protocolo: string; etapa: "pendente" | "conferir"; total: number; method: PaymentMethod; files: PrintFile[] };
 
 /** Arquivos de impressão no gabarito do pedido (PDF guardado no navegador), para baixar ou reenviar. */
 function PrintFiles({ files, className }: { files: PrintFile[]; className?: string }) {
@@ -351,6 +357,42 @@ function OrderResult({ result, onCancelled }: { result: Extract<Result, { mode: 
   );
 }
 
+/**
+ * Pedido guardado na fila do site (src/lib/fila-pedidos): a API da Padrão não recebeu ou não confirmou. O pedido e as
+ * artes estão no servidor do site; o cliente fica com o protocolo e não precisa mandar de novo.
+ */
+function QueuedResult({ result }: { result: Extract<Result, { mode: "queued" }> }) {
+  const method = PAYMENT_METHODS[result.method];
+  return (
+    <div className="mx-auto max-w-xl px-5 py-20 text-center">
+      <span className="mx-auto grid size-16 place-items-center rounded-full bg-ink text-white">
+        <IconCheck aria-hidden className="size-8" strokeWidth={2.4} />
+      </span>
+      <h1 className="mt-6 text-3xl font-bold">Pedido recebido</h1>
+      <p className="mt-2 text-lg font-semibold">
+        Protocolo <span className="tabular-nums">{result.protocolo}</span>
+      </p>
+      <p className="mt-3 text-ink/75">
+        {result.etapa === "pendente"
+          ? "A conexão com o sistema de produção da Padrão Color caiu agora. Seu pedido e suas artes ficaram guardados e vão para a produção sozinhos assim que a conexão voltar: não precisa enviar de novo."
+          : "O sistema de produção da Padrão Color não confirmou o recebimento. Seu pedido e suas artes estão guardados: a nossa equipe confere e confirma com você. Não envie de novo."}
+      </p>
+      <p className="mt-3 text-sm text-muted">
+        Total de {formatBRL(result.total)} no {method.label}. Nada foi cobrado: as instruções de pagamento chegam pelo e-mail e telefone do cadastro quando o pedido for criado. O número do pedido aparece em Meus pedidos.
+      </p>
+      <PrintFiles files={result.files} className="mt-6 ring-1 ring-line" />
+      <div className="mt-8 flex flex-wrap justify-center gap-3">
+        <Button href="/conta/pedidos" variant="buy" size="md">
+          Ver meus pedidos
+        </Button>
+        <Button href="/" variant="outline" size="md">
+          Voltar para a loja
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean }) {
   const { lines, subtotal, reseller, pricing, clear, setUploaded } = useCart();
   const customer = useCustomer();
@@ -372,6 +414,9 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const [sending, setSending] = useState<UploadProgress | null>(null);
   const [artNotice, setArtNotice] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
+  // Termos de envio de arte para os itens personalizados que chegaram sem o aceite (carrinho antigo, kit, festa, fachada).
+  const [termosAceitos, setTermosAceitos] = useState(false);
+  const [termosFaltando, setTermosFaltando] = useState(false);
   // CEP da última busca: resposta atrasada de um CEP anterior é descartada.
   const cepAsked = useRef("");
 
@@ -419,6 +464,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
 
   if (result?.mode === "simulation") return <SimulationResult payload={result.payload} files={result.files} onBack={() => setResult(null)} />;
   if (result?.mode === "order") return <OrderResult result={result} onCancelled={() => setResult({ ...result, cancelled: true })} />;
+  if (result?.mode === "queued") return <QueuedResult result={result} />;
 
   if (lines.length === 0) {
     return (
@@ -461,7 +507,14 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     setDeliveryDone(true);
   };
 
+  const semTermos = lines.filter((line) => levaArte(line.item) && !line.item.termosArte);
+
   const submit = async (expectedTotal: number) => {
+    if (semTermos.length && !termosAceitos) {
+      setTermosFaltando(true);
+      document.getElementById("termos-checkout")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     setBusy(true);
     setError(null);
     setItemErrors([]);
@@ -490,6 +543,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
       payment,
       delivery,
       expectedTotal,
+      ...(semTermos.length ? { termosArte: novoAceite(new Date()) } : {}),
     });
     setBusy(false);
     if (reply.ok) {
@@ -498,6 +552,13 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
       const files = lines.flatMap((line) => (line.item.printFile ? [{ ...line.item.printFile, product: line.item.name }] : []));
       if (reply.data.mode === "simulation") {
         setResult({ mode: "simulation", payload: reply.data.payload, quote: reply.data.quote, files });
+        return;
+      }
+      if (reply.data.mode === "queued") {
+        // Guardado na fila do site: o carrinho já foi para o servidor, com as artes.
+        keepPrintFiles(files, null);
+        setResult({ mode: "queued", protocolo: reply.data.protocolo, etapa: reply.data.etapa, total: reply.data.quote?.total ?? expectedTotal, method: payment, files });
+        clear();
         return;
       }
       keepPrintFiles(files, reply.data.order);
@@ -702,6 +763,19 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
             <p role="status" className="mt-3 rounded-thumb bg-mist p-3 text-caption text-ink/80">
               {artNotice}
             </p>
+          )}
+          {semTermos.length > 0 && (
+            <TermosArte
+              id="termos-checkout"
+              className="mt-4"
+              aceito={termosAceitos}
+              onAceito={(value) => {
+                setTermosAceitos(value);
+                if (value) setTermosFaltando(false);
+              }}
+              faltando={termosFaltando}
+              detalhe={`para ${semTermos.length === 1 ? "o item personalizado" : `os ${semTermos.length} itens personalizados`} do pedido`}
+            />
           )}
           {!quote && (
             <Button variant="buy" size="md" block className="mt-4" loading={busy} disabled={pricing} onClick={() => submit(total)}>

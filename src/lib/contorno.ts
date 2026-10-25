@@ -8,7 +8,8 @@
  * engrossa o desenho pela margem e o marching squares traça a borda. Arte sem transparência (foto inteira) dá a
  * borda da peça (`cheio`): não há desenho para seguir.
  *
- * O mesmo traçado recorta o acrílico do LED neon (models/signage.tsx). Puro e testado (contorno.test.ts).
+ * O mesmo traçado recorta o acrílico do LED neon (models/signage.tsx). No quadro com LED, cada laço vira uma linha de LED
+ * com a sua cor, junto com as linhas do pincel (led-linhas.ts). Puro e testado (contorno.test.ts).
  */
 
 export type V2 = [number, number];
@@ -46,7 +47,7 @@ const LED: Contorno = {
   margemCm: LED_MARGEM_CM,
   bordaCm: LED_BORDA_CM,
   titulo: "LED em volta do desenho",
-  texto: `O caminho do LED é feito automaticamente: contorna o desenho a ${String(LED_MARGEM_CM).replace(".", ",")} cm dele. Envie PNG sem fundo, vetor ou escreva o texto; arte com fundo ganha o LED em volta do quadro.`,
+  texto: `O caminho do LED é feito automaticamente: contorna o desenho a ${String(LED_MARGEM_CM).replace(".", ",")} cm dele (o fundo branco da imagem enviada sai sozinho). Foto ou arte com fundo ganha o LED em volta do quadro. Com o pincel, você desenha outras linhas de LED por cima da arte, cada uma na sua cor.`,
 };
 
 /** O produto tem contorno automático? `name` sem acento e minúsculo. Sempre o mesmo objeto (dependência estável). */

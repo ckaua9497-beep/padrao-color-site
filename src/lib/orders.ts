@@ -4,6 +4,7 @@ import { orderAttachments, parseUploadedFiles, type ArtAttachment, type Uploaded
 import { cotarAcabamentos, parseAcabamentosEscolhidos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido, type CotacaoAcabamentos } from "./acabamentos.ts";
 import { areaQuote, areaRules, cleanOptionLabel } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
+import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./termos-arte.ts";
 
 /*
  * Pedido do site para a API (POST /gerarpedido) — mapeamento explícito, tipado e isolado.
@@ -67,6 +68,8 @@ export type OrderItemInput = {
   files?: UploadedArtFile[];
   /** Acabamentos extras escolhidos (serrilha, furo, laminação…): o servidor recalcula o preço pelo catálogo. */
   acabamentos?: AcabamentoEscolhido[];
+  /** Aceite dos termos de envio de arte (termos-arte.ts): obrigatório no item personalizado. */
+  termosArte?: AceiteTermos | null;
 };
 
 /** Preços do cliente para um grupo: variações já com o desconto da categoria de revenda, se houver. */
@@ -131,6 +134,13 @@ export const MISSING_ART = "Este item está sem arte. Abra o produto, envie a ar
  */
 export function missingArt(input: Pick<OrderItemInput, "key" | "name" | "artName">): LineError | null {
   return input.artName ? null : { key: input.key, name: input.name, error: MISSING_ART };
+}
+
+export const MISSING_TERMS = "Aceite os termos de envio de arte para este item personalizado.";
+
+/** Item personalizado sem o aceite dos termos de envio de arte (termos-arte.ts). */
+export function missingTerms(input: Pick<OrderItemInput, "key" | "name" | "artName" | "termosArte">): LineError | null {
+  return levaArte(input) && !input.termosArte ? { key: input.key, name: input.name, error: MISSING_TERMS } : null;
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -428,7 +438,8 @@ function workDescription(line: PricedLine, variationLabels: Set<string>): string
     .filter(([key]) => !variationLabels.has(optionLabel(key)) && optionLabel(key) !== "Acabamentos")
     .map(([key, value]) => `${key}: ${value}`);
   const finishing = line.acabamentos.itens.length ? [`Acabamentos: ${resumoAcabamentos(line.acabamentos.itens)}`] : [];
-  return clip([art, ...extras, ...finishing].join(" · "), 1000);
+  const termos = line.input.termosArte ? [`Termos de envio de arte: ${textoDoAceite(line.input.termosArte)}`] : [];
+  return clip([art, ...extras, ...finishing, ...termos].join(" · "), 1000);
 }
 
 export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS): OrderProduct {
@@ -493,6 +504,9 @@ export function buildOrderPayload({ customerId, lines, method, delivery, facts, 
 
 export type OrderRequest = { items: OrderItemInput[]; payment: PaymentMethod; delivery: DeliveryChoice; expectedTotal: number };
 
+/** Pastas públicas aceitas nos arquivos da arte: a do Bunny e, quando ele falha, a do próprio site (fila-pedidos). */
+export type ArtBases = string | readonly string[];
+
 export const MAX_ORDER_ITEMS = 50;
 export const MAX_ITEM_QUANTITY = 100_000;
 
@@ -514,9 +528,10 @@ function measure(value: unknown): number | undefined | null {
 
 /**
  * Um item do carrinho vindo do navegador (validado campo a campo); null = inválido. `artBase`: pasta pública do
- * Bunny ("https://…b-cdn.net/uploads-clientes/"); só arquivos dela entram no pedido.
+ * Bunny ("https://…b-cdn.net/uploads-clientes/") e, quando o Bunny falha, a pasta dos arquivos guardados no próprio site
+ * (src/lib/fila-pedidos); só arquivos delas entram no pedido.
  */
-export function parseItem(raw: unknown, artBase = ""): OrderItemInput | null {
+export function parseItem(raw: unknown, artBase: ArtBases = ""): OrderItemInput | null {
   if (!isRecord(raw)) return null;
   const key = text(raw.key, 64);
   const name = text(raw.name, 200);
@@ -552,6 +567,7 @@ export function parseItem(raw: unknown, artBase = ""): OrderItemInput | null {
     unitPrice,
     files: parseUploadedFiles(raw.files, artBase),
     acabamentos: parseAcabamentosEscolhidos(raw.acabamentos),
+    termosArte: aceiteValido(raw.termosArte),
   };
 }
 
@@ -572,12 +588,19 @@ function parseDelivery(raw: unknown): DeliveryChoice | null {
   return addressProblem(address) ? null : { kind: "outro", address };
 }
 
-/** Valida o corpo do POST /api/pedidos (nada do navegador é confiável). `artBase`: ver parseItem. */
-export function parseOrderRequest(raw: unknown, { artBase = "" }: { artBase?: string } = {}): { ok: true; value: OrderRequest } | { ok: false; error: string } {
+/**
+ * Valida o corpo do POST /api/pedidos (nada do navegador é confiável). `artBase`: ver parseItem. `termosArte` no corpo
+ * é o aceite dado no checkout: vale para os itens personalizados que chegaram sem o aceite da página do produto.
+ */
+export function parseOrderRequest(raw: unknown, { artBase = "" }: { artBase?: ArtBases } = {}): { ok: true; value: OrderRequest } | { ok: false; error: string } {
   if (!isRecord(raw)) return { ok: false, error: "Pedido inválido." };
   if (!Array.isArray(raw.items) || raw.items.length === 0) return { ok: false, error: "Seu carrinho está vazio." };
   if (raw.items.length > MAX_ORDER_ITEMS) return { ok: false, error: `O pedido pode ter até ${MAX_ORDER_ITEMS} itens.` };
-  const items = raw.items.map((item) => parseItem(item, artBase));
+  const termos = aceiteValido(raw.termosArte);
+  const items = raw.items.map((item) => {
+    const parsed = parseItem(item, artBase);
+    return parsed && termos && !parsed.termosArte && levaArte(parsed) ? { ...parsed, termosArte: termos } : parsed;
+  });
   if (items.some((item) => item === null)) return { ok: false, error: "Há um item inválido no carrinho. Remova e adicione de novo." };
   if (new Set(items.map((item) => item!.key)).size !== items.length) return { ok: false, error: "Há itens repetidos no carrinho." };
   const payment = raw.payment;

@@ -95,9 +95,10 @@ export function isArtFileUrl(url: string, base: string): boolean {
 const KINDS: readonly ArtFileKind[] = ["pdf", "arquivo", "verso", "extra"];
 export const MAX_ITEM_FILES = 12;
 
-/** Arquivos de um item vindos do navegador (validados um a um); os inválidos ficam de fora. */
-export function parseUploadedFiles(raw: unknown, base: string): UploadedArtFile[] {
-  if (!Array.isArray(raw) || !base) return [];
+/** Arquivos de um item vindos do navegador (validados um a um, numa das pastas `base`); os inválidos ficam de fora. */
+export function parseUploadedFiles(raw: unknown, base: string | readonly string[]): UploadedArtFile[] {
+  const bases = (typeof base === "string" ? [base] : base).filter(Boolean);
+  if (!Array.isArray(raw) || !bases.length) return [];
   const out: UploadedArtFile[] = [];
   for (const entry of raw.slice(0, MAX_ITEM_FILES)) {
     if (typeof entry !== "object" || entry === null) continue;
@@ -105,7 +106,8 @@ export function parseUploadedFiles(raw: unknown, base: string): UploadedArtFile[
     if (typeof url !== "string" || typeof nome !== "string" || !KINDS.includes(kind as ArtFileKind)) continue;
     // Complementar sem o tipo de anexo não tem como ir para a produção.
     if (kind === "extra" && (typeof tipo !== "string" || !tipo.trim() || tipo.length > 60)) continue;
-    if (!isArtFileUrl(url, base) || url.slice(base.length) !== nome) continue;
+    const pasta = bases.find((b) => isArtFileUrl(url, b));
+    if (!pasta || url.slice(pasta.length) !== nome) continue;
     if (out.some((file) => file.url === url)) continue;
     out.push({ url, nome, kind: kind as ArtFileKind, ...(kind === "extra" ? { tipo: (tipo as string).trim() } : {}) });
   }

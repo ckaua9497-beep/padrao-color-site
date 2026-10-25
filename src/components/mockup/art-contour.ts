@@ -1,4 +1,5 @@
 import { contornoDaArte, type V2 } from "@/lib/contorno";
+import { ordenarLacos } from "@/lib/led-linhas";
 import { paintArt, type ArtRender } from "./art";
 
 /**
@@ -36,9 +37,12 @@ export function traceArtContour(canvas: HTMLCanvasElement, art: ArtRender, image
   return traced ? { ...traced, W, H } : null;
 }
 
-/** Laços em frações da área: x para a direita e y para cima, de -0,5 a 0,5. */
-export function normalizedLoops(contour: ArtContour): V2[][] {
-  return contour.loops.map((loop) => loop.map(([x, y]): V2 => [(x + 0.5) / contour.W - 0.5, 0.5 - (y + 0.5) / contour.H]));
+/**
+ * Laços em fração da área (x para a direita e y para baixo, de 0 a 1), do maior para o menor: o referencial das linhas
+ * de LED (src/lib/led-linhas.ts), em que a cor de cada laço do contorno automático é guardada pela ordem.
+ */
+export function fractionLoops(contour: ArtContour): V2[][] {
+  return ordenarLacos(contour.loops.map((loop) => loop.map(([x, y]): V2 => [(x + 0.5) / contour.W, (y + 0.5) / contour.H])));
 }
 
 /** Máscara do recorte (branco dentro dos laços, preto fora), no tamanho do canvas do contorno. */

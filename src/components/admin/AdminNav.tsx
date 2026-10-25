@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ComponentType, type SVGProps } from "react";
 import { sairAdmin } from "@/app/(admin)/admin/actions";
-import { IconCard, IconChart, IconClose, IconGauge, IconImage, IconLogout, IconMenu, IconPanel, IconReceipt, IconStorefront, IconWallet } from "@/components/icons";
+import { IconCard, IconChart, IconClock, IconClose, IconGauge, IconImage, IconLogout, IconMenu, IconPanel, IconReceipt, IconStorefront, IconWallet } from "@/components/icons";
 import { Drawer } from "@/components/ui/Drawer";
 import { cx } from "@/components/ui/cx";
 
@@ -15,7 +15,7 @@ import { cx } from "@/components/ui/cx";
  * Assinatura: a tira de cor C·M·Y·K das folhas impressas, embaixo da marca.
  */
 
-export type AdminNavCounts = { produzir: number; saques: number; lojas: number };
+export type AdminNavCounts = { produzir: number; saques: number; lojas: number; fila: number };
 
 type Item = { href: string; label: string; icon: ComponentType<SVGProps<SVGSVGElement>>; count?: (c: AdminNavCounts) => number; urgent?: boolean };
 
@@ -26,6 +26,7 @@ const GROUPS: { label: string; items: Item[] }[] = [
       { href: "/admin", label: "Visão geral", icon: IconGauge },
       { href: "/admin/pedidos", label: "Pedidos", icon: IconReceipt, count: (c) => c.produzir, urgent: true },
       { href: "/admin/saques", label: "Saques", icon: IconWallet, count: (c) => c.saques, urgent: true },
+      { href: "/admin/fila-pedidos", label: "Fila do site", icon: IconClock, count: (c) => c.fila, urgent: true },
     ],
   },
   {

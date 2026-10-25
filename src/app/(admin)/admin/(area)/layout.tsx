@@ -2,6 +2,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import { requireAdmin } from "@/lib/multiloja/auth";
 import { paymentSummary } from "@/lib/multiloja/payments";
 import { countPedidosByStatus, listLojasAdmin, listSaques } from "@/lib/multiloja/repo-vendas";
+import { contarPorEtapa } from "@/lib/fila-pedidos/repo";
 
 export default async function AdminAreaLayout({ children }: { children: React.ReactNode }) {
   const admin = await requireAdmin();
@@ -10,6 +11,8 @@ export default async function AdminAreaLayout({ children }: { children: React.Re
     produzir: (await countPedidosByStatus()).pago ?? 0,
     saques: (await listSaques(null)).filter((s) => s.status === "solicitado").length,
     lojas: (await listLojasAdmin()).length,
+    // Fila do site: o que precisa da equipe (conferir) e o que espera a API voltar.
+    fila: await contarPorEtapa().then((c) => (c.conferir ?? 0) + (c.pendente ?? 0)),
   };
   return (
     <div className="flex min-h-dvh flex-1 flex-col lg:flex-row">

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AccountNav, LogoutButton } from "@/components/account/AuthPanels";
 import { OrderCard } from "@/components/account/OrdersList";
+import { PedidosNaFila } from "@/components/account/PedidosNaFila";
 import { RecentPrintFiles } from "@/components/product/gabarito/RecentPrintFiles";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button, buttonClass } from "@/components/ui/Button";
@@ -10,6 +11,7 @@ import { ApiError } from "@/lib/api/client";
 import { getPedidos } from "@/lib/api/padrao";
 import type { ApiPedidos } from "@/lib/api/types";
 import { isValidIsoDate } from "@/lib/api/validation";
+import { daCliente } from "@/lib/fila-pedidos/repo";
 import { loginUrl, requireSession } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Meus pedidos", robots: { index: false, follow: false } };
@@ -43,6 +45,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
     else failure = error instanceof ApiError && error.status === 406 ? error.message : "Não foi possível carregar seus pedidos agora. Tente de novo em instantes.";
   }
   if (expired) redirect(loginUrl("/conta/pedidos", true));
+  // Pedidos guardados na fila do site (a API não recebeu na hora). Sem o banco, a lista some.
+  const naFila = filtered ? [] : await daCliente(session.id).catch(() => []);
 
   const orders = result?.pedidos ?? [];
   const pages = Math.max(1, result?.paginas ?? 1);
@@ -70,6 +74,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         <div className="mt-6">
           <AccountNav current="pedidos" />
         </div>
+        <PedidosNaFila entradas={naFila} />
 
         <form method="get" action="/conta/pedidos" className="mt-6 grid gap-3 rounded-card border border-line-strong bg-white p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
           <label className="text-caption font-semibold">

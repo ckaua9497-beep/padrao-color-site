@@ -12,7 +12,8 @@ import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
 import { FACA_MARGEM_CM, LED_BORDA_CM, LED_MARGEM_CM, distanceField, insidePolygon, polygonArea, smoothLoop, traceLoops } from "@/lib/contorno";
 import { canvasFor, loadArtFont, paintArt, type ArtRender } from "../art";
-import { normalizedLoops, paintContourMask, type ArtContour } from "../art-contour";
+import { fractionLoops, paintContourMask, type ArtContour } from "../art-contour";
+import { desenhoDe, linhasDeLed } from "@/lib/led-linhas";
 import { useArtContour } from "./use-art-contour";
 import { useAnimate } from "../viewer-hooks";
 import { Dimensions, PrintMaterial, backVariant, faceGeometry, fitFlat, makeShape, sizeLabels, useArtImage, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
@@ -1382,26 +1383,33 @@ function NeonSign({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Tubo de neon com degradê entre as cores de LED ao longo do caminho (cores em espaço linear). */
-function neonTubeGeometry(curve: THREE.Curve<THREE.Vector3>, radius: number, colors: string[], whiten: number, tubular = 320) {
+/** Tubo de neon de uma cor (o LED acende numa cor só por linha), aberto ou fechado, com tampas nas pontas abertas. */
+function neonTubeGeometry(curve: THREE.Curve<THREE.Vector3>, radius: number, color: string, whiten: number, closed: boolean, tubular = 320) {
   const radial = 12;
-  const g = new THREE.TubeGeometry(curve, tubular, radius, radial, true);
-  const a = new THREE.Color(colors[0]);
-  const b = new THREE.Color(colors[1] ?? colors[0]);
-  const white = new THREE.Color(1, 1, 1);
-  const tmp = new THREE.Color();
-  const data = new Float32Array(g.attributes.position.count * 3);
-  for (let i = 0; i <= tubular; i += 1) {
-    tmp.copy(a).lerp(b, 0.5 - 0.5 * Math.cos((i / tubular) * TAU)).lerp(white, whiten);
-    for (let j = 0; j <= radial; j += 1) {
-      const k = (i * (radial + 1) + j) * 3;
-      data[k] = tmp.r;
-      data[k + 1] = tmp.g;
-      data[k + 2] = tmp.b;
+  const tube = new THREE.TubeGeometry(curve, tubular, radius, radial, closed);
+  const parts: THREE.BufferGeometry[] = [tube];
+  if (!closed) {
+    for (const t of [0, 1]) {
+      const cap = new THREE.SphereGeometry(radius, radial, 8);
+      const p = curve.getPointAt(t);
+      cap.translate(p.x, p.y, p.z);
+      parts.push(cap);
     }
   }
-  g.setAttribute("color", new THREE.BufferAttribute(data, 3));
-  return g;
+  const tint = new THREE.Color(color).lerp(new THREE.Color(1, 1, 1), whiten);
+  for (const g of parts) {
+    const data = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < data.length; k += 3) {
+      data[k] = tint.r;
+      data[k + 1] = tint.g;
+      data[k + 2] = tint.b;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(data, 3));
+  }
+  if (parts.length === 1) return tube;
+  const merged = mergeGeometries(parts) ?? tube;
+  for (const g of parts) if (g !== merged) g.dispose();
+  return merged;
 }
 
 /** Caminho do tubo com no máximo `max` pontos (o contorno da arte vem com um ponto por pixel). */
@@ -1410,34 +1418,31 @@ function thinPath(path: V2[], max: number): V2[] {
   return path.filter((_, i) => i % step === 0);
 }
 
-/** Halo dos tubos do quadro (laços em unidades de cena), em segmentos para seguir o degradê das cores. */
-function paintLoopGlow(w: number, h: number, paths: V2[][], colors: string[]) {
+type Tubo = { path: V2[]; cor: string; fechada: boolean };
+
+/** Halo dos tubos do quadro (caminhos em unidades de cena), cada linha na cor dela. */
+function paintLedGlow(w: number, h: number, tubos: readonly Tubo[]) {
   const canvas = canvasFor(w / h, 384);
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
   const { width: W, height: H } = canvas;
   const unit = Math.min(W, H);
   const off = W * 3;
-  const a = new THREE.Color(colors[0]);
-  const b = new THREE.Color(colors[1] ?? colors[0]);
-  const tmp = new THREE.Color();
   ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   ctx.shadowOffsetX = off;
-  for (const path of paths) {
-    const loop = thinPath(path, 96);
-    const points = [...loop, loop[0]].map(([x, y]) => [(x / (w * GLOW_PAD) + 0.5) * W - off, (0.5 - y / (h * GLOW_PAD)) * H] as V2);
+  for (const tubo of tubos) {
+    const points = thinPath(tubo.path, 96).map(([x, y]) => [(x / (w * GLOW_PAD) + 0.5) * W - off, (0.5 - y / (h * GLOW_PAD)) * H] as V2);
+    if (points.length < 2) continue;
+    ctx.shadowColor = tubo.cor;
+    ctx.strokeStyle = tubo.cor;
+    ctx.lineWidth = unit * 0.014;
     for (const blur of [unit * 0.07, unit * 0.025]) {
       ctx.shadowBlur = blur;
-      for (let i = 0; i < points.length - 1; i += 1) {
-        const color = `#${tmp.copy(a).lerp(b, 0.5 - 0.5 * Math.cos((i / (points.length - 1)) * TAU)).getHexString()}`;
-        ctx.shadowColor = color;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = unit * 0.014;
-        ctx.beginPath();
-        ctx.moveTo(points[i][0], points[i][1]);
-        ctx.lineTo(points[i + 1][0], points[i + 1][1]);
-        ctx.stroke();
-      }
+      ctx.beginPath();
+      points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      if (tubo.fechada) ctx.closePath();
+      ctx.stroke();
     }
   }
   return canvas;
@@ -1447,51 +1452,54 @@ const FRAME_LIGHT = 1.6;
 const SHEATH_OPACITY = 0.32;
 
 /**
- * Quadro acrílico com LED neon. Arte sem fundo (spec.contour "led"): impressa no acrílico inteiro (a área do
- * editor) e o tubo contornando o desenho a LED_MARGEM_CM, o mesmo caminho do anexo "Posição do Led". Arte com fundo
- * (ou sem contorno): impressa no centro e o tubo contornando a moldura.
+ * Quadro acrílico com LED neon. As linhas de LED (src/lib/led-linhas.ts, as mesmas do editor e do anexo "Posição do
+ * Led") viram tubos de uma cor cada: o contorno automático do desenho a LED_MARGEM_CM (arte sem fundo: impressa no
+ * acrílico inteiro), ou a moldura (arte com fundo: impressa no centro), e as linhas que o cliente desenhou com o pincel.
  */
 function NeonFrame({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale: s } = fitFlat(spec, 2.4);
-  const colors = ledColorsOf(spec, art);
-  // O quadro usa só as duas primeiras cores (degradê da moldura); texto simples memoiza por valor.
-  const colorKey = `${colors[0]},${colors[1] ?? colors[0]}`;
+  const corPadrao = ledColorsOf(spec, art)[0];
   const aspect = artAspect(spec);
   const contour = useArtContour(aspect, art, label, spec.widthCm, LED_MARGEM_CM, LED_BORDA_CM, spec.contour === "led");
+  const desenho = desenhoDe(art);
   const traced = contour && !contour.cheio ? contour : null;
+  const lacos = useMemo(() => (contour ? fractionLoops(contour) : null), [contour]);
+  const linhas = useMemo(() => linhasDeLed(desenho, lacos, contour?.cheio ?? false, { widthCm: spec.widthCm, heightCm: spec.heightCm }, corPadrao), [desenho, lacos, contour, spec.widthCm, spec.heightCm, corPadrao]);
+  // Sem a moldura de LED (contorno do desenho, ou só as linhas do pincel), a arte cobre o acrílico inteiro.
+  const full = Boolean(traced) || !desenho.auto;
   const margin = THREE.MathUtils.clamp(Math.min(spec.widthCm, spec.heightCm) * 0.09, 3, 6) * s;
-  const pw = traced ? w : Math.max(w - margin * 2, w * 0.5);
-  const ph = traced ? h : Math.max(h - margin * 2, h * 0.5);
-  const front = useArtTexture(traced ? aspect : pw / ph, "front", art, label);
+  const pw = full ? w : Math.max(w - margin * 2, w * 0.5);
+  const ph = full ? h : Math.max(h - margin * 2, h * 0.5);
+  const front = useArtTexture(full ? aspect : pw / ph, "front", art, label);
   const tB = Math.max(spec.depthCm, 0.6) * s;
   const stage = neonStage(w, h, s, tB);
   const tubeR = Math.max(0.55 * s, 0.008);
-  // Caminhos do tubo em unidades de cena: o contorno do desenho ou a moldura.
-  const paths = useMemo<V2[][]>(() => {
-    if (traced) return normalizedLoops(traced).map((loop) => thinPath(loop, 240).map(([x, y]): V2 => [x * w, y * h]));
-    const rect = makeShape("rect", w - margin, h - margin, 3 * s)
-      .getSpacedPoints(200)
-      .map((p): V2 => [p.x, p.y]);
-    if (rect.length > 2 && Math.hypot(rect[0][0] - rect[rect.length - 1][0], rect[0][1] - rect[rect.length - 1][1]) < 1e-6) rect.pop();
-    return [rect];
-  }, [traced, w, h, margin, s]);
+  // Cores das luzes, do banho na parede e da borda do acrílico: as duas primeiras cores diferentes das linhas.
+  const colors = [...new Set(linhas.map((l) => l.cor))].slice(0, 2);
+  if (!colors.length) colors.push(corPadrao);
+  const colorKey = colors.join(",");
+  // Caminhos do tubo em unidades de cena (x para a direita, y para cima, centro do quadro na origem).
+  const tubos = useMemo<Tubo[]>(
+    () => linhas.map((l) => ({ path: thinPath(l.pontos, 240).map(([x, y]): V2 => [(x - 0.5) * w, (0.5 - y) * h]), cor: l.cor, fechada: l.fechada })).filter((t) => t.path.length >= 2),
+    [linhas, w, h],
+  );
   const parts = useMemo(() => {
-    const list = colorKey.split(",");
     const bev = tB * 0.25;
     const outline = makeShape("rect", w - bev * 2, h - bev * 2, 1.5 * s);
     const board = new THREE.ExtrudeGeometry(outline, { depth: tB - bev * 2, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 2, curveSegments: 8 });
     board.translate(0, 0, -(tB - bev));
-    const print = faceGeometry(makeShape("rect", pw, ph, (traced ? 1.5 : 0.6) * s), pw, ph);
-    const tubes = paths.map((path) => {
+    const print = faceGeometry(makeShape("rect", pw, ph, (full ? 1.5 : 0.6) * s), pw, ph);
+    const tubes = tubos.map((tubo) => {
       const curve = new THREE.CatmullRomCurve3(
-        path.map(([x, y]) => new THREE.Vector3(x, y, 0)),
-        true,
+        tubo.path.map(([x, y]) => new THREE.Vector3(x, y, 0)),
+        tubo.fechada,
         "centripetal",
       );
-      const tubular = THREE.MathUtils.clamp(Math.round(path.length * 1.4), 64, 320);
-      return { core: neonTubeGeometry(curve, tubeR, list, 0.45, tubular), sheath: neonTubeGeometry(curve, tubeR * 1.75, list, 0, tubular) };
+      const tubular = THREE.MathUtils.clamp(Math.round(tubo.path.length * 1.4), 64, 320);
+      return { core: neonTubeGeometry(curve, tubeR, tubo.cor, 0.45, tubo.fechada, tubular), sheath: neonTubeGeometry(curve, tubeR * 1.75, tubo.cor, 0, tubo.fechada, tubular) };
     });
     const merge = (geometries: THREE.BufferGeometry[]) => {
+      if (!geometries.length) return new THREE.BufferGeometry();
       if (geometries.length === 1) return geometries[0];
       const merged = mergeGeometries(geometries) ?? geometries[0];
       for (const g of geometries) if (g !== merged) g.dispose();
@@ -1501,13 +1509,13 @@ function NeonFrame({ spec, art, label, showDims }: ModelProps) {
     const sheath = merge(tubes.map((t) => t.sheath));
     const glowPlane = new THREE.PlaneGeometry(w * GLOW_PAD, h * GLOW_PAD);
     return { board, print, core, sheath, glowPlane };
-  }, [w, h, s, tB, pw, ph, traced, paths, tubeR, colorKey]);
+  }, [w, h, s, tB, pw, ph, full, tubos, tubeR]);
   useGeometryCleanup(parts.board);
   useGeometryCleanup(parts.print);
   useGeometryCleanup(parts.core);
   useGeometryCleanup(parts.sheath);
   useGeometryCleanup(parts.glowPlane);
-  const glow = useMemo(() => srgbTexture(paintLoopGlow(w, h, paths, colorKey.split(","))), [w, h, paths, colorKey]);
+  const glow = useMemo(() => srgbTexture(paintLedGlow(w, h, tubos)), [w, h, tubos]);
   useDispose(glow);
   const standoff = useStandoff(s, tB);
   const halo = useRef<THREE.MeshBasicMaterial>(null);
@@ -1548,7 +1556,7 @@ function NeonFrame({ spec, art, label, showDims }: ModelProps) {
       </mesh>
       <mesh geometry={parts.print} position-z={0.0008}>
         {/* Arte sem fundo: onde não há tinta, o acrílico aparece (a key remonta o programa com o alphaTest). */}
-        <meshPhysicalMaterial key={traced ? "cut" : "full"} map={front} emissiveMap={front} emissive="#ffffff" emissiveIntensity={0.3} roughness={0.3} clearcoat={1} clearcoatRoughness={0.05} alphaTest={traced ? 0.5 : 0} />
+        <meshPhysicalMaterial key={full ? "cut" : "full"} map={front} emissiveMap={front} emissive="#ffffff" emissiveIntensity={0.3} roughness={0.3} clearcoat={1} clearcoatRoughness={0.05} alphaTest={full ? 0.5 : 0} />
       </mesh>
       {corners.map(([x, y]) => (
         <mesh key={`${x}:${y}`} geometry={standoff.geometry} material={standoff.material} position={[x, y, stage.wallZ]} />
@@ -1557,7 +1565,7 @@ function NeonFrame({ spec, art, label, showDims }: ModelProps) {
         <meshBasicMaterial vertexColors toneMapped={false} />
       </mesh>
       <mesh geometry={parts.sheath} position-z={tubeZ} renderOrder={6}>
-        <meshBasicMaterial ref={sheath} vertexColors transparent opacity={SHEATH_OPACITY}blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial ref={sheath} vertexColors transparent opacity={SHEATH_OPACITY} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
       </mesh>
       <mesh geometry={parts.glowPlane} position-z={tubeZ * 2 + 0.003} renderOrder={12} userData={{ noBounds: true }}>
         <meshBasicMaterial ref={halo} map={glow} transparent opacity={HALO_OPACITY} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
