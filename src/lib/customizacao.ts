@@ -10,6 +10,10 @@
  * 5. Criação de arte com o preço da própria variação (null = não oferece).
  * 6. Arquivos aceitos = os da própria variação.
  * 7. Web2print só com template (sem ele, envio normal de arquivo).
+ * 8. Acessório não muda a arte: o controle remoto do LED neon (opção "s/ controle" / "c/ Controle") é só uma peça a
+ *    mais. Variações que só diferem nele aceitam os mesmos arquivos (a união dos tipos de anexo), a mesma criação e o
+ *    mesmo web2print. (25/10/2026: no Quadro Acrílico com Led Neon, só a "45x50cm s/ controle" vinha sem "Impressão
+ *    Verso" e "Verniz Local Frente", e o envio do verso aparecia ou sumia com o controle.)
  * O catálogo guarda os perfis distintos do produto em `customizacoes` e o índice de cada variação em `cz`.
  *
  * Módulo puro (sem React e sem o alias @/): roda no `node --test` e no sync-catalog.
@@ -84,9 +88,44 @@ export function customizacaoDaLinha(linha: LinhaCustomizacao, nomeGrupo: string)
   };
 }
 
-/** Perfis distintos do produto (o mais comum primeiro) e o índice do perfil de cada linha, na ordem das linhas. */
-export function perfisDeCustomizacao(linhas: readonly LinhaCustomizacao[], nomeGrupo: string): { perfis: Customizacao[]; indices: number[] } {
-  const todas = linhas.map((linha) => customizacaoDaLinha(linha, nomeGrupo));
+/** Valor de opção que é acessório e não muda a arte (regra 8): o controle remoto do LED neon. */
+export function opcaoDeAcessorio(valor: string): boolean {
+  return /\bcontrole\b/.test(semAcento(valor));
+}
+
+/**
+ * Regra 8: as variações que só diferem num acessório (opcaoDeAcessorio) ficam com o mesmo perfil, com a união dos tipos
+ * de anexo (na ordem da mais completa). Só junta variações do mesmo modo que recebem arte; o resto fica como veio.
+ */
+export function unirPorAcessorio(itens: readonly { variacoes?: Record<string, string> | null; perfil: Customizacao }[]): Customizacao[] {
+  const chave = (variacoes?: Record<string, string> | null) =>
+    JSON.stringify(
+      Object.entries(variacoes ?? {})
+        .filter(([, valor]) => !opcaoDeAcessorio(String(valor ?? "")))
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+  const grupos = new Map<string, number[]>();
+  itens.forEach((item, i) => {
+    const k = chave(item.variacoes);
+    grupos.set(k, [...(grupos.get(k) ?? []), i]);
+  });
+  const out = itens.map((item) => item.perfil);
+  for (const membros of grupos.values()) {
+    // Só variações que têm o acessório (e diferem nele): linhas sem opções ficam como vieram.
+    if (membros.length < 2 || !membros.every((i) => Object.values(itens[i].variacoes ?? {}).some((valor) => opcaoDeAcessorio(String(valor ?? ""))))) continue;
+    const perfis = membros.map((i) => itens[i].perfil);
+    if (new Set(perfis.map((perfil) => perfil.modo)).size > 1 || !recebeArte(perfis[0])) continue;
+    const base = [...perfis].sort((a, b) => b.anexos.length - a.anexos.length)[0];
+    const anexos = [...base.anexos];
+    for (const perfil of perfis) for (const nome of perfil.anexos) if (!anexos.includes(nome)) anexos.push(nome);
+    const unido: Customizacao = { modo: base.modo, anexos, criacao: base.criacao ?? perfis.find((perfil) => perfil.criacao !== null)?.criacao ?? null, web2print: perfis.some((perfil) => perfil.web2print) };
+    for (const i of membros) out[i] = unido;
+  }
+  return out;
+}
+
+/** Perfis distintos (o mais comum primeiro) e o índice do perfil de cada item, na ordem dos itens. */
+export function indexarPerfis(todas: readonly Customizacao[]): { perfis: Customizacao[]; indices: number[] } {
   const contagem = new Map<string, { perfil: Customizacao; n: number }>();
   for (const perfil of todas) {
     const chave = JSON.stringify(perfil);
@@ -96,6 +135,11 @@ export function perfisDeCustomizacao(linhas: readonly LinhaCustomizacao[], nomeG
   }
   const ordem = [...contagem.entries()].sort((a, b) => b[1].n - a[1].n).map(([chave]) => chave);
   return { perfis: ordem.map((chave) => contagem.get(chave)!.perfil), indices: todas.map((perfil) => ordem.indexOf(JSON.stringify(perfil))) };
+}
+
+/** Perfis distintos do produto (o mais comum primeiro) e o índice do perfil de cada linha, na ordem das linhas. */
+export function perfisDeCustomizacao(linhas: readonly LinhaCustomizacao[], nomeGrupo: string): { perfis: Customizacao[]; indices: number[] } {
+  return indexarPerfis(unirPorAcessorio(linhas.map((linha) => ({ variacoes: linha.variacoes, perfil: customizacaoDaLinha(linha, nomeGrupo) }))));
 }
 
 /** Customização da variação escolhida (sem variação, a do perfil mais comum do produto). */
