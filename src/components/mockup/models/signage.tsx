@@ -10,7 +10,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
+import { FACA_MARGEM_CM, LED_BORDA_CM, LED_MARGEM_CM, distanceField, insidePolygon, polygonArea, smoothLoop, traceLoops } from "@/lib/contorno";
 import { canvasFor, loadArtFont, paintArt, type ArtRender } from "../art";
+import { normalizedLoops, paintContourMask, type ArtContour } from "../art-contour";
+import { useArtContour } from "./use-art-contour";
 import { useAnimate } from "../viewer-hooks";
 import { Dimensions, PrintMaterial, backVariant, faceGeometry, fitFlat, makeShape, sizeLabels, useArtImage, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
 
@@ -286,10 +289,14 @@ type SheetProps = {
   fabric?: boolean;
   detail?: number;
   backColor?: string;
+  /** Recorte da peça (lona com corte especial): máscara da frente e a mesma espelhada para o verso. */
+  cut?: CutMaps | null;
 };
 
+type CutMaps = { front: THREE.Texture; back: THREE.Texture };
+
 /** Lona/tecido de duas faces: frente impressa e verso branco ou impresso (dupla face, 4/1). */
-function BannerSheet({ spec, w, h, thickness, drape, front, back, fabric = false, detail = 56, backColor = "#eceef0" }: SheetProps) {
+function BannerSheet({ spec, w, h, thickness, drape, front, back, fabric = false, detail = 56, backColor = "#eceef0", cut = null }: SheetProps) {
   const { bulge, folds, foldAmp, curl, bow, phase, flat } = drape;
   const long = Math.max(w, h);
   const segX = Math.max(8, Math.round((detail * w) / long));
@@ -301,20 +308,22 @@ function BannerSheet({ spec, w, h, thickness, drape, front, back, fabric = false
   useGeometryCleanup(geometries.front);
   useGeometryCleanup(geometries.back);
   const printedBack = back && spec.back !== "blank";
+  // Com recorte, o material é outro programa (alphaMap): a key remonta quando ele entra ou sai.
+  const cutKey = cut ? "cut" : "full";
   return (
     <group>
-      <mesh geometry={geometries.front}>{fabric ? <PrintedFabric map={front} /> : <PrintMaterial map={front} spec={spec} />}</mesh>
+      <mesh geometry={geometries.front}>{fabric ? <PrintedFabric map={front} /> : <PrintMaterial key={cutKey} map={front} spec={spec} alphaMap={cut?.front} />}</mesh>
       <mesh geometry={geometries.back}>
         {printedBack ? (
           fabric ? (
             <PrintedFabric map={back} />
           ) : (
-            <PrintMaterial map={back} spec={spec} />
+            <PrintMaterial key={cutKey} map={back} spec={spec} alphaMap={cut?.back} />
           )
         ) : fabric ? (
           <meshPhysicalMaterial color="#f3f1ec" roughness={0.95} sheen={0.6} sheenRoughness={0.8} sheenColor="#ffffff" />
         ) : (
-          <meshStandardMaterial color={backColor} roughness={0.78} />
+          <meshStandardMaterial key={cutKey} color={backColor} roughness={0.78} alphaMap={cut?.back ?? null} alphaTest={cut ? 0.5 : 0} />
         )}
       </mesh>
     </group>
@@ -775,10 +784,42 @@ function FabricBanner({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Lona sem acabamento: folha crua com as pontas enroladas, presa por dois prendedores no cordão. */
+/**
+ * Máscaras do recorte a partir do contorno (frente e verso espelhado, porque o UV do verso é invertido).
+ * null sem contorno ou com arte sem transparência (corte reto, na medida).
+ */
+function useCutMaps(contour: ArtContour | null): CutMaps | null {
+  const maps = useMemo(() => {
+    if (!contour || contour.cheio) return null;
+    const canvas = paintContourMask(contour);
+    const front = new THREE.CanvasTexture(canvas);
+    const back = new THREE.CanvasTexture(canvas);
+    back.repeat.x = -1;
+    back.offset.x = 1;
+    return { front, back };
+  }, [contour]);
+  useEffect(
+    () => () => {
+      maps?.front.dispose();
+      maps?.back.dispose();
+    },
+    [maps],
+  );
+  return maps;
+}
+
+/**
+ * Lona sem acabamento: folha crua com as pontas enroladas, presa por dois prendedores no cordão. Com corte especial
+ * (spec.contour "faca"), a folha sai recortada no contorno da arte, a FACA_MARGEM_CM do desenho, solta (sem prendedores).
+ */
 function RawBanner({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale: s } = fitFlat(spec, 2.4);
-  const { front, back } = useBannerArt(spec, art, label);
+  const faca = spec.contour === "faca";
+  // A arte chega sem fundo (o contorno sai do desenho); impressa, fica sobre o branco da lona.
+  const printed = useMemo(() => (faca ? { ...art, background: spec.baseColor } : art), [faca, art, spec.baseColor]);
+  const { front, back } = useBannerArt(spec, printed, label);
+  const contour = useArtContour(artAspect(spec), art, label, spec.widthCm, FACA_MARGEM_CM, 0, faca);
+  const cut = useCutMaps(contour);
   const m = Math.min(w, h);
   const gs = Math.max(s, 0.008);
   const thickness = Math.max(0.05 * s, 0.0012);
@@ -819,8 +860,9 @@ function RawBanner({ spec, art, label, showDims }: ModelProps) {
   const [lw, lh] = sizeLabels(spec);
   return (
     <group rotation-y={0.28}>
-      <BannerSheet spec={spec} w={w} h={h} thickness={thickness} drape={drape} front={front} back={back} detail={64} />
-      {clips.map(({ x, z }) => (
+      <BannerSheet spec={spec} w={w} h={h} thickness={thickness} drape={drape} front={front} back={back} detail={64} cut={cut} />
+      {!cut &&
+        clips.map(({ x, z }) => (
         <group key={x} position={[x, h / 2 - 0.35 * gs, z - thickness / 2]}>
           <mesh geometry={parts.body}>
             <meshPhysicalMaterial color="#151517" metalness={0.5} roughness={0.32} clearcoat={0.6} />
@@ -833,7 +875,7 @@ function RawBanner({ spec, art, label, showDims }: ModelProps) {
           </mesh>
         </group>
       ))}
-      <Rope points={cord} radius={cordR} color="#1d1d1f" segments={80} />
+      {!cut && <Rope points={cord} radius={cordR} color="#1d1d1f" segments={80} />}
       {showDims && <Dimensions w={w} h={h} z={0.03} labelW={lw} labelH={lh} />}
     </group>
   );
@@ -957,45 +999,6 @@ function paintNeonGlow(glow: HTMLCanvasElement, soft: HTMLCanvasElement, mid: HT
   ctx.globalCompositeOperation = "source-over";
 }
 
-/** Distância (px, métrica chanfrada 1/√2) de cada pixel até o tubo mais próximo; null sem tubo. */
-function distanceField(data: Uint8ClampedArray, W: number, H: number): Float32Array | null {
-  const d = new Float32Array(W * H);
-  let any = false;
-  for (let i = 0; i < d.length; i += 1) {
-    if (data[i * 4 + 3] >= 48) any = true;
-    d[i] = data[i * 4 + 3] >= 48 ? 0 : 1e9;
-  }
-  if (!any) return null;
-  const D = Math.SQRT2;
-  for (let y = 0; y < H; y += 1) {
-    for (let x = 0; x < W; x += 1) {
-      const i = y * W + x;
-      let v = d[i];
-      if (x > 0) v = Math.min(v, d[i - 1] + 1);
-      if (y > 0) {
-        v = Math.min(v, d[i - W] + 1);
-        if (x > 0) v = Math.min(v, d[i - W - 1] + D);
-        if (x < W - 1) v = Math.min(v, d[i - W + 1] + D);
-      }
-      d[i] = v;
-    }
-  }
-  for (let y = H - 1; y >= 0; y -= 1) {
-    for (let x = W - 1; x >= 0; x -= 1) {
-      const i = y * W + x;
-      let v = d[i];
-      if (x < W - 1) v = Math.min(v, d[i + 1] + 1);
-      if (y < H - 1) {
-        v = Math.min(v, d[i + W] + 1);
-        if (x < W - 1) v = Math.min(v, d[i + W + 1] + D);
-        if (x > 0) v = Math.min(v, d[i + W - 1] + D);
-      }
-      d[i] = v;
-    }
-  }
-  return d;
-}
-
 const RING8: V2[] = [
   [1, 0],
   [0.71, 0.71],
@@ -1006,129 +1009,6 @@ const RING8: V2[] = [
   [0, -1],
   [0.71, -0.71],
 ];
-
-/** Contornos de uma máscara binária (marching squares), em pixels. Só fecha laços completos. */
-function traceLoops(inside: Uint8Array, W: number, H: number): V2[][] {
-  const at = (x: number, y: number) => (x >= 0 && y >= 0 && x < W && y < H ? inside[y * W + x] : 0);
-  const wp = W + 2;
-  const hEdge = (x: number, y: number) => ((y + 1) * wp + (x + 1)) * 2;
-  const vEdge = (x: number, y: number) => hEdge(x, y) + 1;
-  const positions = new Map<number, V2>();
-  const links = new Map<number, number[]>();
-  const link = (a: number, pa: V2, b: number, pb: V2) => {
-    positions.set(a, pa);
-    positions.set(b, pb);
-    const la = links.get(a);
-    if (la) la.push(b);
-    else links.set(a, [b]);
-    const lb = links.get(b);
-    if (lb) lb.push(a);
-    else links.set(b, [a]);
-  };
-  for (let y = -1; y < H; y += 1) {
-    for (let x = -1; x < W; x += 1) {
-      const code = (at(x, y) << 3) | (at(x + 1, y) << 2) | (at(x + 1, y + 1) << 1) | at(x, y + 1);
-      if (code === 0 || code === 15) continue;
-      const T: [number, V2] = [hEdge(x, y), [x + 0.5, y]];
-      const R: [number, V2] = [vEdge(x + 1, y), [x + 1, y + 0.5]];
-      const B: [number, V2] = [hEdge(x, y + 1), [x + 0.5, y + 1]];
-      const L: [number, V2] = [vEdge(x, y), [x, y + 0.5]];
-      const pairs: [[number, V2], [number, V2]][] = [];
-      switch (code) {
-        case 1:
-        case 14:
-          pairs.push([L, B]);
-          break;
-        case 2:
-        case 13:
-          pairs.push([B, R]);
-          break;
-        case 3:
-        case 12:
-          pairs.push([L, R]);
-          break;
-        case 4:
-        case 11:
-          pairs.push([T, R]);
-          break;
-        case 6:
-        case 9:
-          pairs.push([T, B]);
-          break;
-        case 7:
-        case 8:
-          pairs.push([L, T]);
-          break;
-        case 5:
-          pairs.push([L, T], [B, R]);
-          break;
-        case 10:
-          pairs.push([T, R], [L, B]);
-          break;
-      }
-      for (const [a, b] of pairs) link(a[0], a[1], b[0], b[1]);
-    }
-  }
-  const visited = new Set<number>();
-  const loops: V2[][] = [];
-  for (const start of links.keys()) {
-    if (visited.has(start)) continue;
-    const loop: V2[] = [];
-    let prev = -1;
-    let current: number | undefined = start;
-    while (current !== undefined && !visited.has(current)) {
-      visited.add(current);
-      const p = positions.get(current);
-      if (p) loop.push(p);
-      const from: number = prev;
-      const next: number | undefined = (links.get(current) ?? []).find((n) => n !== from && !visited.has(n));
-      prev = current;
-      current = next;
-    }
-    if (loop.length > 8) loops.push(loop);
-  }
-  return loops;
-}
-
-function polygonArea(loop: V2[]) {
-  let area = 0;
-  for (let i = 0; i < loop.length; i += 1) {
-    const [x1, y1] = loop[i];
-    const [x2, y2] = loop[(i + 1) % loop.length];
-    area += x1 * y2 - x2 * y1;
-  }
-  return area / 2;
-}
-
-function insidePolygon([px, py]: V2, loop: V2[]) {
-  let inside = false;
-  for (let i = 0, j = loop.length - 1; i < loop.length; j = i, i += 1) {
-    const [xi, yi] = loop[i];
-    const [xj, yj] = loop[j];
-    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi || 1e-9) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-/** Arredonda o contorno em escada (Chaikin) e tira pontos colados. */
-function smoothLoop(loop: V2[], minStep: number): V2[] {
-  let points = loop;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const next: V2[] = [];
-    for (let i = 0; i < points.length; i += 1) {
-      const [ax, ay] = points[i];
-      const [bx, by] = points[(i + 1) % points.length];
-      next.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25], [ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]);
-    }
-    points = next;
-  }
-  const kept: V2[] = [];
-  for (const p of points) {
-    const last = kept[kept.length - 1];
-    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) >= minStep) kept.push(p);
-  }
-  return kept;
-}
 
 /**
  * Acrílico recortado em volta do desenho: os tubos nítidos viram máscara, o campo de distância engrossa
@@ -1588,8 +1468,7 @@ function NeonSign({ spec, art, label, showDims }: ModelProps) {
 }
 
 /** Tubo de neon com degradê entre as cores de LED ao longo do caminho (cores em espaço linear). */
-function neonTubeGeometry(curve: THREE.Curve<THREE.Vector3>, radius: number, colors: string[], whiten: number) {
-  const tubular = 320;
+function neonTubeGeometry(curve: THREE.Curve<THREE.Vector3>, radius: number, colors: string[], whiten: number, tubular = 320) {
   const radial = 12;
   const g = new THREE.TubeGeometry(curve, tubular, radius, radial, true);
   const a = new THREE.Color(colors[0]);
@@ -1610,33 +1489,40 @@ function neonTubeGeometry(curve: THREE.Curve<THREE.Vector3>, radius: number, col
   return g;
 }
 
-/** Halo do contorno do quadro, em segmentos para seguir o degradê das cores. */
-function paintLoopGlow(w: number, h: number, loopW: number, loopH: number, loopR: number, colors: string[]) {
+/** Caminho do tubo com no máximo `max` pontos (o contorno da arte vem com um ponto por pixel). */
+function thinPath(path: V2[], max: number): V2[] {
+  const step = Math.max(1, Math.ceil(path.length / max));
+  return path.filter((_, i) => i % step === 0);
+}
+
+/** Halo dos tubos do quadro (laços em unidades de cena), em segmentos para seguir o degradê das cores. */
+function paintLoopGlow(w: number, h: number, paths: V2[][], colors: string[]) {
   const canvas = canvasFor(w / h, 384);
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
   const { width: W, height: H } = canvas;
   const unit = Math.min(W, H);
   const off = W * 3;
-  const points = makeShape("rect", loopW, loopH, loopR)
-    .getSpacedPoints(96)
-    .map((p) => [(p.x / (w * GLOW_PAD) + 0.5) * W - off, (0.5 - p.y / (h * GLOW_PAD)) * H] as V2);
   const a = new THREE.Color(colors[0]);
   const b = new THREE.Color(colors[1] ?? colors[0]);
   const tmp = new THREE.Color();
   ctx.lineCap = "round";
   ctx.shadowOffsetX = off;
-  for (const blur of [unit * 0.07, unit * 0.025]) {
-    ctx.shadowBlur = blur;
-    for (let i = 0; i < points.length - 1; i += 1) {
-      const color = `#${tmp.copy(a).lerp(b, 0.5 - 0.5 * Math.cos((i / (points.length - 1)) * TAU)).getHexString()}`;
-      ctx.shadowColor = color;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = unit * 0.014;
-      ctx.beginPath();
-      ctx.moveTo(points[i][0], points[i][1]);
-      ctx.lineTo(points[i + 1][0], points[i + 1][1]);
-      ctx.stroke();
+  for (const path of paths) {
+    const loop = thinPath(path, 96);
+    const points = [...loop, loop[0]].map(([x, y]) => [(x / (w * GLOW_PAD) + 0.5) * W - off, (0.5 - y / (h * GLOW_PAD)) * H] as V2);
+    for (const blur of [unit * 0.07, unit * 0.025]) {
+      ctx.shadowBlur = blur;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const color = `#${tmp.copy(a).lerp(b, 0.5 - 0.5 * Math.cos((i / (points.length - 1)) * TAU)).getHexString()}`;
+        ctx.shadowColor = color;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = unit * 0.014;
+        ctx.beginPath();
+        ctx.moveTo(points[i][0], points[i][1]);
+        ctx.lineTo(points[i + 1][0], points[i + 1][1]);
+        ctx.stroke();
+      }
     }
   }
   return canvas;
@@ -1645,45 +1531,68 @@ function paintLoopGlow(w: number, h: number, loopW: number, loopH: number, loopR
 const FRAME_LIGHT = 1.6;
 const SHEATH_OPACITY = 0.32;
 
-/** Quadro acrílico com LED neon: arte impressa no centro e o tubo de neon contornando a moldura. */
+/**
+ * Quadro acrílico com LED neon. Arte sem fundo (spec.contour "led"): impressa no acrílico inteiro (a área do
+ * editor) e o tubo contornando o desenho a LED_MARGEM_CM, o mesmo caminho do anexo "Posição do Led". Arte com fundo
+ * (ou sem contorno): impressa no centro e o tubo contornando a moldura.
+ */
 function NeonFrame({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale: s } = fitFlat(spec, 2.4);
   const colors = ledColorsOf(spec, art);
   // O quadro usa só as duas primeiras cores (degradê da moldura); texto simples memoiza por valor.
   const colorKey = `${colors[0]},${colors[1] ?? colors[0]}`;
+  const aspect = artAspect(spec);
+  const contour = useArtContour(aspect, art, label, spec.widthCm, LED_MARGEM_CM, LED_BORDA_CM, spec.contour === "led");
+  const traced = contour && !contour.cheio ? contour : null;
   const margin = THREE.MathUtils.clamp(Math.min(spec.widthCm, spec.heightCm) * 0.09, 3, 6) * s;
-  const pw = Math.max(w - margin * 2, w * 0.5);
-  const ph = Math.max(h - margin * 2, h * 0.5);
-  const front = useArtTexture(pw / ph, "front", art, label);
+  const pw = traced ? w : Math.max(w - margin * 2, w * 0.5);
+  const ph = traced ? h : Math.max(h - margin * 2, h * 0.5);
+  const front = useArtTexture(traced ? aspect : pw / ph, "front", art, label);
   const tB = Math.max(spec.depthCm, 0.6) * s;
   const stage = neonStage(w, h, s, tB);
   const tubeR = Math.max(0.55 * s, 0.008);
-  const loopW = w - margin;
-  const loopH = h - margin;
-  const loopR = 3 * s;
+  // Caminhos do tubo em unidades de cena: o contorno do desenho ou a moldura.
+  const paths = useMemo<V2[][]>(() => {
+    if (traced) return normalizedLoops(traced).map((loop) => thinPath(loop, 240).map(([x, y]): V2 => [x * w, y * h]));
+    const rect = makeShape("rect", w - margin, h - margin, 3 * s)
+      .getSpacedPoints(200)
+      .map((p): V2 => [p.x, p.y]);
+    if (rect.length > 2 && Math.hypot(rect[0][0] - rect[rect.length - 1][0], rect[0][1] - rect[rect.length - 1][1]) < 1e-6) rect.pop();
+    return [rect];
+  }, [traced, w, h, margin, s]);
   const parts = useMemo(() => {
     const list = colorKey.split(",");
     const bev = tB * 0.25;
     const outline = makeShape("rect", w - bev * 2, h - bev * 2, 1.5 * s);
     const board = new THREE.ExtrudeGeometry(outline, { depth: tB - bev * 2, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 2, curveSegments: 8 });
     board.translate(0, 0, -(tB - bev));
-    const print = faceGeometry(makeShape("rect", pw, ph, 0.6 * s), pw, ph);
-    const path = makeShape("rect", loopW, loopH, loopR)
-      .getSpacedPoints(200)
-      .map((p) => new THREE.Vector3(p.x, p.y, 0));
-    if (path.length > 2 && path[0].distanceTo(path[path.length - 1]) < 1e-6) path.pop();
-    const curve = new THREE.CatmullRomCurve3(path, true, "centripetal");
-    const core = neonTubeGeometry(curve, tubeR, list, 0.45);
-    const sheath = neonTubeGeometry(curve, tubeR * 1.75, list, 0);
+    const print = faceGeometry(makeShape("rect", pw, ph, (traced ? 1.5 : 0.6) * s), pw, ph);
+    const tubes = paths.map((path) => {
+      const curve = new THREE.CatmullRomCurve3(
+        path.map(([x, y]) => new THREE.Vector3(x, y, 0)),
+        true,
+        "centripetal",
+      );
+      const tubular = THREE.MathUtils.clamp(Math.round(path.length * 1.4), 64, 320);
+      return { core: neonTubeGeometry(curve, tubeR, list, 0.45, tubular), sheath: neonTubeGeometry(curve, tubeR * 1.75, list, 0, tubular) };
+    });
+    const merge = (geometries: THREE.BufferGeometry[]) => {
+      if (geometries.length === 1) return geometries[0];
+      const merged = mergeGeometries(geometries) ?? geometries[0];
+      for (const g of geometries) if (g !== merged) g.dispose();
+      return merged;
+    };
+    const core = merge(tubes.map((t) => t.core));
+    const sheath = merge(tubes.map((t) => t.sheath));
     const glowPlane = new THREE.PlaneGeometry(w * GLOW_PAD, h * GLOW_PAD);
     return { board, print, core, sheath, glowPlane };
-  }, [w, h, s, tB, pw, ph, loopW, loopH, loopR, tubeR, colorKey]);
+  }, [w, h, s, tB, pw, ph, traced, paths, tubeR, colorKey]);
   useGeometryCleanup(parts.board);
   useGeometryCleanup(parts.print);
   useGeometryCleanup(parts.core);
   useGeometryCleanup(parts.sheath);
   useGeometryCleanup(parts.glowPlane);
-  const glow = useMemo(() => srgbTexture(paintLoopGlow(w, h, loopW, loopH, loopR, colorKey.split(","))), [w, h, loopW, loopH, loopR, colorKey]);
+  const glow = useMemo(() => srgbTexture(paintLoopGlow(w, h, paths, colorKey.split(","))), [w, h, paths, colorKey]);
   useDispose(glow);
   const standoff = useStandoff(s, tB);
   const halo = useRef<THREE.MeshBasicMaterial>(null);
@@ -1723,7 +1632,8 @@ function NeonFrame({ spec, art, label, showDims }: ModelProps) {
         <NeonAcrylic tint={colors[0]} />
       </mesh>
       <mesh geometry={parts.print} position-z={0.0008}>
-        <meshPhysicalMaterial map={front} emissiveMap={front} emissive="#ffffff" emissiveIntensity={0.3} roughness={0.3} clearcoat={1} clearcoatRoughness={0.05} />
+        {/* Arte sem fundo: onde não há tinta, o acrílico aparece (a key remonta o programa com o alphaTest). */}
+        <meshPhysicalMaterial key={traced ? "cut" : "full"} map={front} emissiveMap={front} emissive="#ffffff" emissiveIntensity={0.3} roughness={0.3} clearcoat={1} clearcoatRoughness={0.05} alphaTest={traced ? 0.5 : 0} />
       </mesh>
       {corners.map(([x, y]) => (
         <mesh key={`${x}:${y}`} geometry={standoff.geometry} material={standoff.material} position={[x, y, stage.wallZ]} />

@@ -53,6 +53,7 @@ import { uploadProblem } from "@/lib/art-files";
 import { ARQUIVO_UNICO, camposVisiveis } from "@/lib/customizacao";
 import type { Superficie } from "@/lib/superficies";
 import { PROCESSO_INFO, acceptDo, corServe, monoDo, type Processo } from "@/lib/processo";
+import type { Contorno } from "@/lib/contorno";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
@@ -110,6 +111,11 @@ type Props = {
    * vetor), DTF sem fundo. Mostra o aviso e filtra as cores, o fundo e os arquivos aceitos.
    */
   processo?: Processo | null;
+  /**
+   * Contorno automático (src/lib/contorno.ts): faca da lona com corte especial ou caminho do LED do quadro. Mostra o
+   * aviso, tira o fundo da arte e marca o anexo dele como automático nos arquivos para a produção.
+   */
+  contorno?: Contorno | null;
   /** Superfície em edição ("front", "back" ou o id da extra): a página vira o mockup 3D para ela. */
   onSide?: (side: string) => void;
   /** Gabarito oficial da seleção (medidas, sangria, corte e segurança): o editor e o PDF seguem ele. */
@@ -149,7 +155,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -174,7 +180,8 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   const shownArt = useMemo(() => (mono ? { ...sideArt, mono } : sideArt), [sideArt, mono]);
   const shownAll = useMemo(() => withMono(art, mono), [art, mono]);
   // Laser, talhamento e DTF não imprimem fundo.
-  const noBackground = processo === "laser" || processo === "talhamento" || processo === "dtf";
+  // O contorno automático sai do desenho sem fundo.
+  const noBackground = processo === "laser" || processo === "talhamento" || processo === "dtf" || contorno !== null;
   const onSideArt = (update: (a: ArtSettings) => ArtSettings) => onArt((a) => withSurfaceArt(a, side, update));
   const mode: Mode = uploadOnly ? "imagem" : (modes[side] ?? (sideArt.src ? "imagem" : "texto"));
   const setMode = (value: Mode) => setModes((m) => ({ ...m, [side]: value }));
@@ -315,6 +322,12 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       {processo && (
         <p role="note" className="mb-3 rounded-control bg-mist px-3 py-2 text-caption text-ink">
           <strong>{PROCESSO_INFO[processo].titulo}.</strong> {PROCESSO_INFO[processo].texto}
+        </p>
+      )}
+
+      {contorno && (
+        <p role="note" className="mb-3 rounded-control bg-mist px-3 py-2 text-caption text-ink">
+          <strong>{contorno.titulo}.</strong> {contorno.texto}
         </p>
       )}
 
@@ -564,7 +577,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
 
-      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
+      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} automatic={contorno?.anexo ?? null} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
 
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
@@ -594,7 +607,22 @@ const PRODUCTION_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.svg,.tif,.tiff,.psd,.ai,.
  * aceita na API. Enviar o arquivo único esconde os separados e enviar um separado esconde o único (camposVisiveis). Sem
  * arquivo próprio na frente ou no verso, vale a imagem enviada no editor acima.
  */
-function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { types: readonly string[]; files: Record<string, File>; onFile: (tipo: string, file: File | null) => void; editorFront: string | null; editorBack: string | null }) {
+function ProductionFiles({
+  types,
+  files,
+  onFile,
+  automatic,
+  editorFront,
+  editorBack,
+}: {
+  types: readonly string[];
+  files: Record<string, File>;
+  onFile: (tipo: string, file: File | null) => void;
+  /** Anexo que o site faz sozinho a partir da arte (faca de corte, posição do LED) quando o cliente não envia. */
+  automatic: string | null;
+  editorFront: string | null;
+  editorBack: string | null;
+}) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const pick = (tipo: string, file: File | undefined) => {
     if (!file) return;
@@ -609,6 +637,7 @@ function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { ty
   const row = (tipo: string) => {
     const file = files[tipo];
     const editor = !file ? fromEditor(tipo) : null;
+    const auto = !file && tipo === automatic;
     return (
       <li key={tipo} className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="min-w-36 text-sm font-semibold">{tipo === ARQUIVO_UNICO ? "Arquivo único" : tipo}</span>
@@ -622,8 +651,9 @@ function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { ty
         ) : (
           <>
             {editor && <span className="min-w-0 flex-1 truncate text-sm text-muted">a imagem enviada acima ({editor})</span>}
+            {auto && <span className="min-w-0 flex-1 truncate text-sm text-muted">feita automaticamente pelo contorno da arte</span>}
             <label className="cursor-pointer text-sm font-bold text-coral-700 underline-offset-2 hover:underline">
-              {editor ? "Trocar" : "Enviar arquivo"}
+              {editor ? "Trocar" : auto ? "Enviar a sua" : "Enviar arquivo"}
               <input type="file" accept={PRODUCTION_ACCEPT} className="sr-only" onChange={(event) => pick(tipo, event.target.files?.[0])} />
             </label>
           </>

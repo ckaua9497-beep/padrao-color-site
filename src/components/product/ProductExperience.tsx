@@ -29,6 +29,7 @@ import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
 import { formatSize, mockupSpec, normalizeName } from "@/lib/mockup";
 import { rotulosDosLados, superficieDaPeca, superficiesDe, temVerso } from "@/lib/superficies";
 import { PROCESSO_INFO, arquivoServe, monoDo, processoDa } from "@/lib/processo";
+import { contornoDo } from "@/lib/contorno";
 import { orientacaoDe, orientacaoLivre, orientar, type Orientacao } from "@/lib/orientacao";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
 import { describePanel, hasBackPanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, piecesOf, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
@@ -291,11 +292,13 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
 
   // Processo que limita a arte (P&B, laser, talhamento, DTF): a prévia, o 3D e o PDF saem como a produção faz.
   const processo = semArte ? null : processoDa({ kind: spec.kind, name: normalizeName(product.name), selection });
+  // Contorno automático (lona com corte especial, quadro com LED): a faca ou o caminho do LED saem do desenho.
+  const contorno = semArte ? null : contornoDo({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name) });
   const renderArt = useMemo(() => {
     const painted = withMono(art, monoDo(processo));
-    // DTF: a imagem vai sem o retângulo de fundo (aplicação localizada).
-    return processo === "dtf" ? { ...painted, background: "rgba(0,0,0,0)" } : painted;
-  }, [art, processo]);
+    // DTF e contorno automático: a imagem vai sem o retângulo de fundo (aplicação localizada, corte no desenho).
+    return processo === "dtf" || contorno ? { ...painted, background: "rgba(0,0,0,0)" } : painted;
+  }, [art, processo, contorno]);
   // Verso pela cor e pelo tipo de peça (4/1, 4/4, "frente e verso", camisa, almofada, wind banner…), com ou sem gabarito.
   const versoPelaCor = !semArte && temVerso({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name), selection, anexos: custom.anexos });
   // Gabarito oficial da seleção: folhas (no tamanho de referência, nas camisas), painel da frente e do verso.
@@ -583,6 +586,16 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // (no lugar da arte montada); senão, a frente e o verso do editor (ou os arquivos próprios deles) e os separados.
     const manualFront = productionFiles["Impressão Frente"];
     const manualBack = productionFiles["Impressão Verso"];
+    // Faca de corte ou posição do LED feita do contorno da arte, quando o cliente não mandou a dele nem o arquivo único.
+    let autoContorno: File | null = null;
+    if (contorno && !semArte && !artLater && !singleFile && !productionFiles[contorno.anexo] && ownArt) {
+      try {
+        const { arquivoDeContorno } = await import("./contorno-arquivo");
+        autoContorno = await arquivoDeContorno(renderArt, spec, contorno, product.name, product.slug);
+      } catch {
+        autoContorno = null;
+      }
+    }
     const artFiles =
       semArte || artLater
         ? []
@@ -593,6 +606,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
                   manualFront ? { file: manualFront, kind: "extra" as const, tipo: "Impressão Frente" } : { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" as const },
                   manualBack ? { file: manualBack, kind: "extra" as const, tipo: "Impressão Verso" } : { file: uploadedFileOf(art.back?.src), kind: "verso" as const },
                   ...producao.filter((tipo) => tipo !== ARQUIVO_UNICO && tipo !== "Impressão Frente" && tipo !== "Impressão Verso").map((tipo) => ({ file: productionFiles[tipo], kind: "extra" as const, tipo })),
+                  // A variação que não lista o tipo recebe o arquivo como "Arquivo Único" (attachmentType).
+                  ...(autoContorno && contorno ? [{ file: autoContorno, kind: "extra" as const, tipo: contorno.anexo }] : []),
                 ],
             product.name,
           );
@@ -607,6 +622,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
         ...(!semArte && !artLater ? artSummary(art, family, surfaceLabels) : {}),
+        ...(autoContorno && contorno ? { [contorno.anexo]: `automática · ${String(contorno.margemCm).replace(".", ",")} cm do desenho` } : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
@@ -804,6 +820,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               spec={spec}
               surfaces={surfaces}
               processo={processo}
+              contorno={contorno}
               onSide={setArtSide}
               extraTypes={producao}
               extraFiles={extraFiles}

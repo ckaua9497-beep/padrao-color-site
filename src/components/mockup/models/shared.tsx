@@ -141,17 +141,20 @@ export function roughnessOf(spec: MockupSpec) {
 }
 
 
-/** Material da área impressa. Sem verniz usa o material padrão, mais leve de compilar que o físico. */
-export function PrintMaterial({ map, spec, transparent = false }: { map: THREE.Texture; spec: MockupSpec; transparent?: boolean }) {
-  const alphaTest = transparent ? 0.5 : 0;
+/**
+ * Material da área impressa. Sem verniz usa o material padrão, mais leve de compilar que o físico. `alphaMap`
+ * recorta a peça (lona com corte especial); quem troca entre com e sem recorte remonta o material (key).
+ */
+export function PrintMaterial({ map, spec, transparent = false, alphaMap = null }: { map: THREE.Texture; spec: MockupSpec; transparent?: boolean; alphaMap?: THREE.Texture | null }) {
+  const alphaTest = transparent || alphaMap ? 0.5 : 0;
   if (spec.spotVarnish) {
     // Verniz localizado: a própria arte serve de máscara (canal vermelho) — brilha onde é clara.
-    return <meshPhysicalMaterial map={map} roughness={0.75} clearcoat={1} clearcoatMap={map} clearcoatRoughness={0.04} transparent={transparent} alphaTest={alphaTest} />;
+    return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={0.75} clearcoat={1} clearcoatMap={map} clearcoatRoughness={0.04} transparent={transparent} alphaTest={alphaTest} />;
   }
   if (spec.clearcoat > 0) {
-    return <meshPhysicalMaterial map={map} roughness={roughnessOf(spec)} clearcoat={spec.clearcoat} clearcoatRoughness={0.08} transparent={transparent} alphaTest={alphaTest} />;
+    return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={roughnessOf(spec)} clearcoat={spec.clearcoat} clearcoatRoughness={0.08} transparent={transparent} alphaTest={alphaTest} />;
   }
-  return <meshStandardMaterial map={map} roughness={roughnessOf(spec)} transparent={transparent} alphaTest={alphaTest} />;
+  return <meshStandardMaterial map={map} alphaMap={alphaMap} roughness={roughnessOf(spec)} transparent={transparent} alphaTest={alphaTest} />;
 }
 
 type BandOptions = {
