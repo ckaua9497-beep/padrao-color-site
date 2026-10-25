@@ -5,7 +5,7 @@ import ListingBanner from "@/components/listing/ListingBanner";
 import PartyBuilder from "@/components/party/PartyBuilder";
 import { PartyBoundary } from "@/components/party/PartyBoundary";
 import { PARTY_FAQ } from "@/components/party/party-faq";
-import { getProducts } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { KITS, resolvePartyItems } from "@/lib/party";
@@ -16,6 +16,9 @@ import { KITS, resolvePartyItems } from "@/lib/party";
  * fechada dos mesmos produtos.
  */
 
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
+
 export const metadata: Metadata = {
   title: "Crie Sua Festa",
   description:
@@ -23,7 +26,7 @@ export const metadata: Metadata = {
 };
 
 export default async function CrieSuaFestaPage() {
-  const items = resolvePartyItems(produtosComMidia(getProducts(), await midiaDoSite()));
+  const items = resolvePartyItems(produtosComMidia((await catalogoVivo()).getProducts(), await midiaDoSite()));
   const images = ["cilindros", "neon-happy-birthday", "sacola-mochila"]
     .map((id) => items.find((item) => item.id === id)?.product.image)
     .filter((src): src is string => Boolean(src));

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
 import { Price } from "@/components/ui/Price";
-import { getProducts } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl } from "@/lib/format";
@@ -28,11 +28,14 @@ export function generateStaticParams() {
   return KITS.map((kit) => ({ slug: kit.slug }));
 }
 
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const kit = getKit(slug);
   if (!kit) return {};
-  const cover = resolveKitItems(kit, produtosComMidia(getProducts(), await midiaDoSite())).find((item) => item.id === kit.cover);
+  const cover = resolveKitItems(kit, produtosComMidia((await catalogoVivo()).getProducts(), await midiaDoSite())).find((item) => item.id === kit.cover);
   return {
     title: kit.name,
     description: `${kit.tagline} ${kit.audience}. Valor calculado item a item.`,
@@ -44,7 +47,7 @@ export default async function KitPage({ params }: Props) {
   const { slug } = await params;
   const kit = getKit(slug);
   if (!kit) notFound();
-  const items = resolveKitItems(kit, produtosComMidia(getProducts(), await midiaDoSite()));
+  const items = resolveKitItems(kit, produtosComMidia((await catalogoVivo()).getProducts(), await midiaDoSite()));
   const cover = items.find((item) => item.id === kit.cover) ?? items[0];
   if (!cover) notFound();
   const quote = kitQuote(items);

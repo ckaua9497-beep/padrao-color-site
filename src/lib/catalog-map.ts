@@ -212,7 +212,35 @@ export function neonMode(rows: readonly ApiRow[]): "frase" | "logo" | null {
 }
 
 
-type GroupLike = Pick<ApiGrupo, "id" | "nome" | "categoria"> & Partial<ApiGrupo>;
+export type GroupLike = Pick<ApiGrupo, "id" | "nome" | "categoria"> & Partial<ApiGrupo>;
+
+/**
+ * O que o produto tira do grupo (GET /grupos): nome, slug, categoria, textos, gabarito, marcas e "veja também". O
+ * catálogo vivo (src/lib/catalogo-grupos.ts) põe estes campos, lidos agora, por cima do produto do sync.
+ */
+export function groupFields(grupo: GroupLike, site = "https://padraocolor.com.br") {
+  return {
+    id: String(grupo.id),
+    groupId: grupo.id,
+    slug: `${grupo.id}-${officialSlug(grupo.nome)}`,
+    name: grupo.nome.trim(),
+    category: grupo.categoria,
+    categoryId: num(grupo.id_categoria),
+    categorySlug: slugify(grupo.categoria),
+    description: (grupo.descricao ?? "").trim(),
+    summary: (grupo.resumo ?? "").trim(),
+    info: (grupo.informacao ?? []).map((b) => ({ title: b.titulo.trim(), text: b.texto.trim() })).filter((b) => b.text),
+    template: grupo.gabarito || null,
+    tags: (grupo.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean),
+    metaTitle: grupo.meta_title || grupo.nome,
+    metaDescription: grupo.meta_description || "",
+    bestSeller: sim(grupo.mais_vendido),
+    isNew: sim(grupo.lancamento),
+    sourceUrl: `${site}/produto/${grupo.id}-${officialSlug(grupo.nome)}`,
+    related: (grupo.veja_tambem ?? []).map((r) => r.id),
+    sizeChart: parseSizeChart(grupo.informacao ?? []),
+  } satisfies Partial<Product>;
+}
 
 /**
  * Grupo da API (GET /grupos) + as variações dele (GET /produtos?id_grupo=) → produto do catálogo.
@@ -266,21 +294,22 @@ export function mapGroup(grupo: GroupLike, apiRows: readonly ApiRow[], { feature
   const sizesRow = rows.find((r) => r.quantidade_tamanho && r.quantidade_tamanho !== "Não");
   const images = [grupo.imagem, ...rows.flatMap((r) => [r.imagem_1, r.imagem_2, r.imagem_3, r.imagem_4])].filter((v): v is string => Boolean(v));
 
+  const fields = groupFields(grupo, site);
   return {
-    id: String(grupo.id),
-    groupId: grupo.id,
-    slug: `${grupo.id}-${officialSlug(grupo.nome)}`,
-    name: grupo.nome.trim(),
-    category: grupo.categoria,
-    categoryId: num(grupo.id_categoria),
-    categorySlug: slugify(grupo.categoria),
-    description: (grupo.descricao ?? "").trim(),
-    summary: (grupo.resumo ?? "").trim(),
-    info: (grupo.informacao ?? []).map((b) => ({ title: b.titulo.trim(), text: b.texto.trim() })).filter((b) => b.text),
-    template: grupo.gabarito || null,
-    tags: (grupo.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean),
-    metaTitle: grupo.meta_title || grupo.nome,
-    metaDescription: grupo.meta_description || "",
+    id: fields.id,
+    groupId: fields.groupId,
+    slug: fields.slug,
+    name: fields.name,
+    category: fields.category,
+    categoryId: fields.categoryId,
+    categorySlug: fields.categorySlug,
+    description: fields.description,
+    summary: fields.summary,
+    info: fields.info,
+    template: fields.template,
+    tags: fields.tags,
+    metaTitle: fields.metaTitle,
+    metaDescription: fields.metaDescription,
     image: grupo.imagem ?? "",
     images: [...new Set(images)].slice(0, 6),
     options,
@@ -291,12 +320,12 @@ export function mapGroup(grupo: GroupLike, apiRows: readonly ApiRow[], { feature
     priceQty: neon ? 1 : (cheapest?.q ?? 1),
     leadDays: leads.length ? Math.min(...leads) : null,
     featured,
-    bestSeller: sim(grupo.mais_vendido),
-    isNew: sim(grupo.lancamento),
-    sourceUrl: `${site}/produto/${grupo.id}-${officialSlug(grupo.nome)}`,
-    related: (grupo.veja_tambem ?? []).map((r) => r.id),
+    bestSeller: fields.bestSeller,
+    isNew: fields.isNew,
+    sourceUrl: fields.sourceUrl,
+    related: fields.related,
     sizes: sizesRow && typeof sizesRow.quantidade_tamanho === "object" ? Object.values(sizesRow.quantidade_tamanho).filter(Boolean) : null,
-    sizeChart: parseSizeChart(grupo.informacao ?? []),
+    sizeChart: fields.sizeChart,
     customSize,
     ...(neon ? { neon } : {}),
     customizacoes: custom.perfis,

@@ -1,17 +1,23 @@
 import type { Metadata } from "next";
-import { notFound, permanentRedirect } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 import VitrineCard from "@/components/VitrineCard";
 import { GRADE_CARDS, SIZES_CARDS, visivelEmLinhasCompletas } from "@/components/listing/grade";
 import ProductExperience from "@/components/product/ProductExperience";
 import ProductInfo from "@/components/product/ProductInfo";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { IconClock, IconCube, IconShield } from "@/components/icons";
-import { getProduct, getProductMovedFrom, getProducts, getRelated, seoTitle, toSummary } from "@/lib/catalog";
+import { getProducts, seoTitle, toSummary } from "@/lib/catalog";
+import { catalogoVivo, produtoDaPagina } from "@/lib/catalogo-vivo";
 import { produtoComMidia, produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl, spectrumAt } from "@/lib/format";
 import { cleanOptionLabel, optionKeys } from "@/lib/pricing";
 import { productTemplate } from "@/lib/templates-data";
+
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): a página se refaz a cada 10 min com os dados da API, e o produto
+// que não estava no sync (grupo novo) é montado na primeira visita.
+export const revalidate = 600;
+export const dynamicParams = true;
 
 export function generateStaticParams() {
   return getProducts().map((p) => ({ slug: p.slug }));
@@ -25,9 +31,9 @@ function shortDescription(product: { metaDescription?: string; summary?: string;
 
 export async function generateMetadata(props: PageProps<"/produto/[slug]">): Promise<Metadata> {
   const { slug } = await props.params;
-  const found = getProduct(slug);
-  if (!found) return {};
-  const product = produtoComMidia(found, await midiaDoSite());
+  const found = await produtoDaPagina(slug);
+  if (!found || !("product" in found)) return {};
+  const product = produtoComMidia(found.product, await midiaDoSite());
   const description = shortDescription(product);
   return {
     title: seoTitle(product.metaTitle, product.name),
@@ -45,19 +51,21 @@ export async function generateMetadata(props: PageProps<"/produto/[slug]">): Pro
 
 export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
   const { slug } = await props.params;
-  const found = getProduct(slug);
-  if (!found) {
-    // Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-preto"): o ID do começo do slug leva ao
-    // atual. Sem número, o próprio slug ("tags", que saiu do site e leva à Tag do grupo 180).
-    const moved = getProductMovedFrom(/^(\d+)-/.exec(slug)?.[1] ?? slug);
-    if (moved) permanentRedirect(`/produto/${moved.slug}`);
-    notFound();
+  // Produto ativo com os dados de agora. Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-
+  // preto") ou sem número ("tags", que leva à Tag do grupo 180): redireciona para o atual. Grupo que saiu de /grupos
+  // (inativo) e não foi juntado a outro: 404. Nome que mudou na API: o slug novo (redirecionamento temporário, porque o
+  // nome pode voltar).
+  const found = await produtoDaPagina(slug);
+  if (!found) notFound();
+  if ("redirect" in found) {
+    if (/^\d+-/.test(slug) && found.redirect.split("-")[0] === slug.split("-")[0]) redirect(`/produto/${found.redirect}`);
+    permanentRedirect(`/produto/${found.redirect}`);
   }
   // Fotos trocadas no admin (admin → Site → Imagens) no lugar das da API.
   const midia = await midiaDoSite();
-  const product = produtoComMidia(found, midia);
-  // "Veja também" da API primeiro; completa com a mesma categoria.
-  const related = produtosComMidia(getRelated(product).map(toSummary), midia);
+  const product = produtoComMidia(found.product, midia);
+  // "Veja também" da API primeiro; completa com a mesma categoria (só produtos ativos).
+  const related = produtosComMidia((await catalogoVivo()).getRelated(product).map(toSummary), midia);
   const keys = optionKeys(product.options);
   const prices = product.variations.map((v) => v.p).filter((p) => p > 0);
 

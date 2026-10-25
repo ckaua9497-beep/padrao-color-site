@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getProductByGroupId, getProducts, type CustomSize, type Product, type Variation } from "../catalog";
+import type { CustomSize, Product, Variation } from "../catalog";
+import { catalogoVivo, produtoDoGrupo } from "../catalogo-vivo";
 import type { LinePrices } from "../orders";
 import { NEON_MIN_AREA_M2 } from "../pricing";
 import { applyResellerDiscount, resellerDiscountRate, variationsFromApi, type ResellerAccount } from "../reseller";
@@ -41,8 +42,14 @@ const tables = new Map<string, { at: number; variations: Variation[] }>();
 /** Consultas em andamento por cliente e grupo (só o sucesso vai para `tables`; erro não fica em cache). */
 const flying = new Map<string, Promise<Variation[]>>();
 
-export function catalogProduct(groupId: number): Product | undefined {
-  return getProductByGroupId(groupId) ?? getProducts().find((product) => product.groupId === groupId);
+/**
+ * Produto ativo do grupo (catálogo em tempo real, src/lib/catalogo-vivo.ts): com as variações de agora (10 min), ou, nos
+ * cards (`listagem`), o que a visão do catálogo tem em cache, sem ir à API por grupo. undefined = inativo ou desconhecido.
+ */
+export async function catalogProduct(groupId: number, { listagem = false }: { listagem?: boolean } = {}): Promise<Product | undefined> {
+  if (!listagem) return produtoDoGrupo(groupId);
+  const catalogo = await catalogoVivo();
+  return catalogo.getProductByGroupId(groupId) ?? catalogo.getProducts().find((product) => product.groupId === groupId);
 }
 
 /** Limites de quantidade do produto (os mesmos que a página de produto aplica). */
@@ -87,10 +94,10 @@ async function resellerTable(groupId: number, account: PriceAccount, cacheOnly =
 
 /**
  * Preços do grupo para a conta: tabela de revenda (API) ou balcão (catálogo). null = grupo fora do catálogo.
- * `cacheOnly`: só o que já está no cache (API sem conexão); sem ele, ApiError 503.
+ * `cacheOnly`: só o que já está no cache (API sem conexão); sem ele, ApiError 503. `listagem`: cards (catalogProduct).
  */
-export async function groupPrices(groupId: number, account: PriceAccount | null, { cacheOnly = false } = {}): Promise<GroupPrices | null> {
-  const product = catalogProduct(groupId);
+export async function groupPrices(groupId: number, account: PriceAccount | null, { cacheOnly = false, listagem = false } = {}): Promise<GroupPrices | null> {
+  const product = await catalogProduct(groupId, { listagem });
   if (!product) return null;
   const base = { groupId, category: product.category, customSize: product.customSize ?? null, neon: product.neon ?? null, local: product.source === "site", ...quantityLimits(product), acabamentos: productFinishes(product) };
   // Produto novo (API própria): não existe na API da Padrão, então não há tabela de revenda para buscar.

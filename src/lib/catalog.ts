@@ -175,21 +175,133 @@ export const businessTypes = businessTypesData as unknown as BusinessType[];
 
 export { STORE } from "./store";
 
-export function getCategories(): Category[] {
-  return catalog.categories;
+/**
+ * Consultas sobre um catálogo: o do sync (as exportações abaixo, síncronas) ou o vivo, montado da API no servidor com
+ * cache curto (src/lib/catalogo-vivo.ts). Páginas e rotas que mostram produtos usam `await catalogoVivo()` e chamam as
+ * mesmas funções nele.
+ */
+export function catalogView(catalog: Pick<CatalogFile, "categories" | "products">) {
+  const bySlug = new Map(catalog.products.map((p) => [p.slug, p]));
+  const byId = new Map(catalog.products.map((p) => [p.id, p]));
+  // Produto pelo ID do grupo (o derivado que compartilha o grupo, como a antiga "tags", tem outro id).
+  const byGroup = new Map(catalog.products.filter((p) => p.id === String(p.groupId)).map((p) => [p.groupId, p]));
+
+  const getCategories = (): Category[] => catalog.categories;
+  const getCategory = (slug: string): Category | undefined => catalog.categories.find((c) => c.slug === slug);
+  const getProducts = (): Product[] => catalog.products;
+  const getProduct = (slug: string): Product | undefined => bySlug.get(slug);
+  /** Produto pelo ID do catálogo ("180") ou pelo slug ("180-tag"). */
+  const getProductById = (idOrSlug: string): Product | undefined => byId.get(idOrSlug) ?? bySlug.get(idOrSlug);
+  /** Produto atual de um ID de link antigo ("71", "tags"): o próprio grupo ou aquele em que a API o juntou. */
+  const getProductMovedFrom = (id: string): Product | undefined => {
+    // hasOwn: o ID vem da URL ("constructor" não pode cair no protótipo do objeto).
+    const targets = Object.hasOwn(GRUPOS_JUNTADOS, id) ? GRUPOS_JUNTADOS[id] : [];
+    return byId.get(id) ?? targets.map((to) => byId.get(to)).find(Boolean);
+  };
+  /** Produtos com gabarito (campo `gabarito` de GET /grupos), em ordem alfabética. */
+  const getTemplateProducts = (): Product[] => catalog.products.filter((p) => p.template).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  /** Produto pelo ID do grupo na API. */
+  const getProductByGroupId = (groupId: number): Product | undefined => byGroup.get(groupId);
+  const getProductsByCategory = (slug: string): Product[] => catalog.products.filter((p) => p.categorySlug === slug);
+  /** Produtos na ordem da lista de IDs de grupo (ignora os que não existem mais). */
+  const getProductsByGroupIds = (ids: number[]): Product[] => ids.map((id) => byGroup.get(id)).filter((p): p is Product => Boolean(p));
+  /** "Para o seu negócio" (GET /tiposnegocio), só os grupos que estão no catálogo e os tipos com algum. */
+  const getBusinessTypes = (): BusinessType[] =>
+    businessTypes.map((t) => ({ ...t, groupIds: t.groupIds.filter((id) => byGroup.has(id)) })).filter((t) => t.groupIds.length > 0);
+  const getBusinessType = (slug: string): BusinessType | undefined => getBusinessTypes().find((t) => t.slug === slug);
+  const getBusinessProducts = (type: BusinessType): Product[] => getProductsByGroupIds(type.groupIds);
+  /**
+   * Vitrine na ordem do padraocolor.com.br: "Destaques" e "Produtos mais Vendidos" da configuração do site
+   * (GET /configuracoes), depois os demais marcados como destaque, mais vendido ou lançamento.
+   */
+  const getFeatured = (): Product[] => {
+    const official = getProductsByGroupIds([...storefront.highlights, ...storefront.bestSellers]);
+    const flagged = catalog.products
+      .filter((p) => p.featured || p.bestSeller || p.isNew)
+      .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.bestSeller) - Number(a.bestSeller) || Number(b.isNew) - Number(a.isNew));
+    return [...new Set([...official, ...flagged])];
+  };
+  /** Categorias da home: as "Categorias em Destaque" do site oficial primeiro, na ordem de lá; depois as demais. */
+  const getShowcaseCategories = (): Category[] => {
+    const featured = storefront.featuredCategories.map((c) => getCategory(c.slug)).filter((c): c is Category => Boolean(c));
+    const fresh = catalog.categories.filter((c) => NEW_CATEGORY_SLUGS.has(c.slug));
+    return [...new Set([...featured, ...fresh, ...catalog.categories])];
+  };
+  /** "Veja também" da API; completa com a mesma categoria. */
+  const getRelated = (product: Product, limit = 10): Product[] => {
+    const fromApi = getProductsByGroupIds(product.related ?? []).filter((p) => p.slug !== product.slug);
+    const sameCategory = catalog.products.filter((p) => p.categorySlug === product.categorySlug && p.slug !== product.slug && !fromApi.includes(p));
+    return [...fromApi, ...sameCategory].slice(0, limit);
+  };
+  const searchProducts = (term: string): Product[] => {
+    const needle = normalize(term);
+    if (!needle) return catalog.products;
+    const words = needle.split(" ").filter(Boolean);
+    return catalog.products.filter((p) => {
+      const haystack = normalize(`${p.name} ${p.category} ${(p.tags ?? []).join(" ")}`);
+      return words.every((w) => haystack.includes(w));
+    });
+  };
+  const getSearchIndex = (): SearchEntry[] =>
+    catalog.products.map((p) => ({
+      s: p.slug,
+      n: p.name,
+      c: p.category,
+      i: p.image,
+      p: p.price,
+      q: p.priceQty,
+      ...(p.groupId ? { g: p.groupId } : {}),
+      ...(p.tags?.length ? { t: p.tags.join(" ") } : {}),
+      ...(p.customSize && !p.neon ? { m: 1 as const } : {}),
+    }));
+
+  return {
+    getCategories,
+    getCategory,
+    getProducts,
+    getProduct,
+    getProductById,
+    getProductMovedFrom,
+    getTemplateProducts,
+    getProductByGroupId,
+    getProductsByCategory,
+    getProductsByGroupIds,
+    getBusinessTypes,
+    getBusinessType,
+    getBusinessProducts,
+    getFeatured,
+    getShowcaseCategories,
+    getRelated,
+    searchProducts,
+    getSearchIndex,
+  };
 }
 
-export function getCategory(slug: string): Category | undefined {
-  return catalog.categories.find((c) => c.slug === slug);
-}
+export type CatalogView = ReturnType<typeof catalogView>;
 
-export function getProducts(): Product[] {
-  return catalog.products;
-}
+/** O catálogo do sync (catalog.json): a base do vivo e a reserva quando a API não responde ou o vivo está desligado. */
+export const catalogoEstatico: CatalogView = catalogView(catalog);
 
-export function getProduct(slug: string): Product | undefined {
-  return catalog.products.find((p) => p.slug === slug);
-}
+export const {
+  getCategories,
+  getCategory,
+  getProducts,
+  getProduct,
+  getProductById,
+  getProductMovedFrom,
+  getTemplateProducts,
+  getProductByGroupId,
+  getProductsByCategory,
+  getProductsByGroupIds,
+  getBusinessTypes,
+  getBusinessType,
+  getBusinessProducts,
+  getFeatured,
+  getShowcaseCategories,
+  getRelated,
+  searchProducts,
+  getSearchIndex,
+} = catalogoEstatico;
 
 /**
  * Produtos das páginas internas de QA (/design-system): o catálogo com os produtos novos da API própria, mesmo
@@ -201,11 +313,6 @@ export function getQaProducts(): Product[] {
 
 export function getQaProduct(slug: string): Product | undefined {
   return catalogComNovos.products.find((p) => p.slug === slug);
-}
-
-/** Produto pelo ID do catálogo ("180") ou pelo slug ("180-tag"). */
-export function getProductById(idOrSlug: string): Product | undefined {
-  return catalog.products.find((p) => p.id === idOrSlug) ?? getProduct(idOrSlug);
 }
 
 /**
@@ -233,31 +340,6 @@ const GRUPOS_JUNTADOS: Record<string, string[]> = {
   tags: ["180"],
 };
 
-/** Produto atual de um ID de link antigo ("71", "tags"): o próprio grupo ou aquele em que a API o juntou. */
-export function getProductMovedFrom(id: string): Product | undefined {
-  // hasOwn: o ID vem da URL ("constructor" não pode cair no protótipo do objeto).
-  const targets = Object.hasOwn(GRUPOS_JUNTADOS, id) ? GRUPOS_JUNTADOS[id] : [];
-  return catalog.products.find((p) => p.id === id) ?? targets.map((to) => catalog.products.find((p) => p.id === to)).find(Boolean);
-}
-
-/** Produtos com gabarito (campo `gabarito` de GET /grupos), em ordem alfabética. */
-export function getTemplateProducts(): Product[] {
-  return catalog.products.filter((p) => p.template).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-}
-
-/** "Para o seu negócio" (GET /tiposnegocio), só os tipos com produto no catálogo. */
-export function getBusinessTypes(): BusinessType[] {
-  return businessTypes.filter((t) => t.groupIds.length > 0);
-}
-
-export function getBusinessType(slug: string): BusinessType | undefined {
-  return getBusinessTypes().find((t) => t.slug === slug);
-}
-
-export function getBusinessProducts(type: BusinessType): Product[] {
-  return getProductsByGroupIds(type.groupIds);
-}
-
 /**
  * Título de SEO a partir do meta title da API. Quando ele já traz a marca ("… - Padrão Color"),
  * vale sozinho; senão entra no modelo "%s | Padrão Color" do layout.
@@ -265,56 +347,6 @@ export function getBusinessProducts(type: BusinessType): Product[] {
 export function seoTitle(metaTitle: string | undefined, fallback: string): Metadata["title"] {
   const title = (metaTitle || fallback).trim();
   return /padr[aã]o\s*color/i.test(title) ? { absolute: title } : title;
-}
-
-/** Produto pelo ID do grupo na API. */
-export function getProductByGroupId(groupId: number): Product | undefined {
-  return catalog.products.find((p) => p.groupId === groupId && p.id === String(groupId));
-}
-
-export function getProductsByCategory(slug: string): Product[] {
-  return catalog.products.filter((p) => p.categorySlug === slug);
-}
-
-/** Produtos na ordem da lista de IDs de grupo (ignora os que não existem mais). */
-export function getProductsByGroupIds(ids: number[]): Product[] {
-  return ids.map((id) => getProductByGroupId(id)).filter((p): p is Product => Boolean(p));
-}
-
-/**
- * Vitrine na ordem do padraocolor.com.br: "Destaques" e "Produtos mais Vendidos" da configuração do site
- * (GET /configuracoes), depois os demais marcados como destaque, mais vendido ou lançamento.
- */
-export function getFeatured(): Product[] {
-  const official = getProductsByGroupIds([...storefront.highlights, ...storefront.bestSellers]);
-  const flagged = catalog.products
-    .filter((p) => p.featured || p.bestSeller || p.isNew)
-    .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.bestSeller) - Number(a.bestSeller) || Number(b.isNew) - Number(a.isNew));
-  return [...new Set([...official, ...flagged])];
-}
-
-/** Categorias da home: as "Categorias em Destaque" do site oficial primeiro, na ordem de lá; depois as demais. */
-export function getShowcaseCategories(): Category[] {
-  const featured = storefront.featuredCategories.map((c) => getCategory(c.slug)).filter((c): c is Category => Boolean(c));
-  const fresh = catalog.categories.filter((c) => NEW_CATEGORY_SLUGS.has(c.slug));
-  return [...new Set([...featured, ...fresh, ...catalog.categories])];
-}
-
-/** "Veja também" da API; completa com a mesma categoria. */
-export function getRelated(product: Product, limit = 10): Product[] {
-  const fromApi = getProductsByGroupIds(product.related ?? []).filter((p) => p.slug !== product.slug);
-  const sameCategory = catalog.products.filter((p) => p.categorySlug === product.categorySlug && p.slug !== product.slug && !fromApi.includes(p));
-  return [...fromApi, ...sameCategory].slice(0, limit);
-}
-
-export function searchProducts(term: string): Product[] {
-  const needle = normalize(term);
-  if (!needle) return catalog.products;
-  const words = needle.split(" ").filter(Boolean);
-  return catalog.products.filter((p) => {
-    const haystack = normalize(`${p.name} ${p.category} ${(p.tags ?? []).join(" ")}`);
-    return words.every((w) => haystack.includes(w));
-  });
 }
 
 export function toSummary(p: Product): ProductSummary {
@@ -338,20 +370,6 @@ export function toSummary(p: Product): ProductSummary {
 
 /** Índice leve da busca do topo (servido em /produtos/indice.json). */
 export type SearchEntry = { s: string; n: string; c: string; i: string; p: number; q: number; g?: number; t?: string; m?: 1 };
-
-export function getSearchIndex(): SearchEntry[] {
-  return catalog.products.map((p) => ({
-    s: p.slug,
-    n: p.name,
-    c: p.category,
-    i: p.image,
-    p: p.price,
-    q: p.priceQty,
-    ...(p.groupId ? { g: p.groupId } : {}),
-    ...(p.tags?.length ? { t: p.tags.join(" ") } : {}),
-    ...(p.customSize && !p.neon ? { m: 1 as const } : {}),
-  }));
-}
 
 export function normalize(value: string): string {
   return value

@@ -9,7 +9,7 @@ import KitCard, { type KitCardData } from "@/components/party/KitCard";
 import { Button } from "@/components/ui/Button";
 import { PartyBoundary } from "@/components/party/PartyBoundary";
 import { PARTY_FAQ } from "@/components/party/party-faq";
-import { getProducts } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { spectrumAt } from "@/lib/format";
@@ -23,6 +23,9 @@ import { KITS, amountLabel, defaultConfig, getPalette, kitQuote, priceItem, reso
  * Crie Sua Festa. O valor é a soma dos itens, calculada item a item (sem desconto).
  */
 
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
+
 export const metadata: Metadata = {
   title: "Monte Seu Kit",
   description: `Monte um kit para a equipe, os clientes, um evento ou a sua loja com sugestões dentro do seu orçamento, ou escolha um dos ${KITS.length} kits de festa prontos. Valor calculado item a item.`,
@@ -35,7 +38,7 @@ const STEPS = [
 ];
 
 export default async function MonteSeuKitPage() {
-  const products = produtosComMidia(getProducts(), await midiaDoSite());
+  const products = produtosComMidia((await catalogoVivo()).getProducts(), await midiaDoSite());
   const kits: KitCardData[] = KITS.flatMap((kit) => {
     const items = resolveKitItems(kit, products);
     const cover = items.find((item) => item.id === kit.cover) ?? items[0];

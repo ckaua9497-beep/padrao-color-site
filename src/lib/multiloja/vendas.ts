@@ -4,7 +4,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { buildOrderPayload, extractOrderNumber, isLineError, priceLine, type LinePrices, type OrderItemInput, type PricedLine } from "../orders";
 import { productFacts } from "../order-facts";
 import { gerarPedido } from "../api/padrao";
-import { getProductById, type Product } from "../catalog";
+import type { Product } from "../catalog";
+import { catalogoVivo } from "../catalogo-vivo";
 import { orderCode, priceProduct, type PaymentKind } from "./core";
 import { cotarFretePadrao, freteApi } from "../frete-api";
 import { embalagemDe, nomeFrete, pacotesDoPedido, prazoFrete, type OpcaoFrete } from "../frete";
@@ -356,8 +357,9 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
   });
   if (!artes.ok) return artes;
   const lines: PricedLine[] = [];
+  const catalogo = await catalogoVivo();
   for (const [index, item] of itens.entries()) {
-    const product = getProductById(item.produtoId);
+    const product = catalogo.getProductById(item.produtoId);
     if (!product) return { ok: false, message: `Produto ${item.nome} não está mais no catálogo.` };
     const input: OrderItemInput = {
       key: String(item.id),

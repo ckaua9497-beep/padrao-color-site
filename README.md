@@ -199,6 +199,47 @@ npm test               # tipos de mockup, preços (m², expresso, grade) e token
 Depois de sincronizar, rode `npm test`: o teste de contagem por tipo de mockup (`src/lib/mockup.test.ts`) acusa produtos novos que
 caíram em outro tipo, e o teste de overrides acusa slugs que sumiram.
 
+### Catálogo em tempo real
+
+Pedido da revisão da Padrão de 25/10/2026: ativo/inativo, descrição, configuração e valores vindos da API. Liga com
+`PADRAO_CATALOGO_VIVO=true`, depois de liberar o IP do servidor no firewall da Padrão. Desligado, e sempre no `next build`,
+vale o `catalog.json` do sync, como antes.
+
+- **Ativo = está em `GET /grupos`.** A API não tem campo de status. O `/consultarstatusproduto` respondeu 406 para uma
+  variação em 25/10 e está nas perguntas à Padrão. O grupo que sai de lá some das listagens, do menu, da busca, dos
+  preços e das lojas da multiloja. A página dele:
+  - leva ao grupo em que ele foi juntado (`GRUPOS_JUNTADOS`), se houver;
+  - senão, dá 404.
+- **De onde vem cada dado** (`src/lib/catalogo-vivo.ts`, só no servidor):
+  - **Nome, textos, categoria, imagem e marcas:** de `/grupos`, com cache de 10 min.
+  - **Variações, preços e prazos:** de `/produtos?id_grupo=`, com o mesmo `mapGroup` do sync. A página do produto, o preço
+    do carrinho (`/api/precos`) e o pedido usam dados de até 10 min.
+  - **Listagens e cards:** usam o que está no cache e renovam em segundo plano o que passou de 30 min, 2 grupos por vez.
+    Assim o processo nunca dispara centenas de consultas de uma vez.
+- **Quando a API falha:** fica o último dado bom; sem nenhum, o do sync.
+- **Nome que mudou na API:** o slug muda junto, e o link antigo redireciona para o novo.
+- **Grupo novo** (em `/grupos` e fora do sync): a página abre pelo ID no começo do slug e o produto entra nas listagens quando
+  as variações dele chegam. Sem regra de 3D (tipo "fallback"), mostra só as fotos.
+- **Regras puras e testadas:** `src/lib/catalogo-grupos.ts` (`montarCatalogo`, `aplicarGrupo`, `categoriasDoCatalogo`).
+- **`catalogView`:** o `catalog.ts` virou uma fábrica de consultas sobre qualquer catálogo. As exportações síncronas são as do
+  sync, e `await catalogoVivo()` devolve as mesmas funções sobre o catálogo vivo. Páginas da loja, rotas de preço, pedido,
+  frete, kit e gabarito e a multiloja (`lojaItens`, `vendas.ts`) usam o vivo.
+- **Atualização das páginas:** as páginas da loja têm `revalidate = 600`, e a de produto também `dynamicParams`.
+- **Simulador:** `node scripts/padrao-mock.mjs` (ou "padrao-mock" no `.claude/launch.json`, porta 3194) serve `/grupos` e
+  `/produtos` a partir do catálogo e do retorno salvo de 23/10. Para testar, ponha no `.env.development.local`:
+  - `PADRAO_API_URL=http://127.0.0.1:3194`
+  - `PADRAO_CATALOGO_VIVO=true`
+  - `PADRAO_CATALOGO_VIVO_TTL=5`
+
+  O estado muda sem reiniciar, com `POST /_mock/estado`:
+  - `{"inativos":[41]}` deixa um grupo inativo;
+  - `{"novos":[{"id":999001,"base":269}]}` cria um grupo novo;
+  - `{"precos":{"269":10}}` sobe o preço;
+  - `{"nomes":{"180":"…"}}` troca o nome.
+
+  Conferido em 25/10: inativo dá 404 e some da categoria e da busca; o grupo novo abre e entra na listagem; o preço novo vale
+  na página e no `/api/precos`; o slug antigo redireciona; com o simulador desligado, tudo responde com o último dado.
+
 ### Produtos novos (API própria)
 
 Produtos que a Padrão Color ainda não tem na API dela (embalagens, sacolas, lacres, totem, cartela, identificador de

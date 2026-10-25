@@ -1,4 +1,4 @@
-import { getProductById } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 
 /*
  * Download do gabarito de um produto: GET /api/gabarito/[id] (id do catálogo, ex. "35" ou "tags", ou o slug).
@@ -48,7 +48,7 @@ function templateSource(template: string | null | undefined): URL | null {
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const product = getProductById(id);
+  const product = (await catalogoVivo()).getProductById(id);
   if (!product) return error(404, "Produto não encontrado.");
   const source = templateSource(product.template);
   if (!source) return error(404, "Este produto não tem gabarito para download.");
