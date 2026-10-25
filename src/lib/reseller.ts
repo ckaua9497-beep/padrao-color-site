@@ -1,5 +1,6 @@
 import type { ApiProduto } from "./api/types";
 import type { Variation } from "./catalog";
+import { normalizeOptionValues } from "./catalog-map.ts";
 
 /*
  * Preço de revendedor (checklist "Conta, pedidos e checkout"): com a conta logada, revendedor vê e compra
@@ -133,10 +134,13 @@ const num = (value: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Produto da API → variação no formato do catálogo (mesmo mapeamento do scripts/sync-catalog.mjs). */
+/**
+ * Produto da API → variação no formato do catálogo (mesmo mapeamento do src/lib/catalog-map.ts, com as grafias repetidas
+ * juntadas do mesmo jeito, para os rótulos baterem com as opções da página).
+ */
 export function variationsFromApi(rows: ApiProduto[] | null | undefined): Variation[] {
   if (!Array.isArray(rows)) return [];
-  return rows
+  return normalizeOptionValues(rows)
     .filter((row) => row && Number.isInteger(Number(row.id)) && Number(row.id) > 0)
     .map((row) => {
       const economico = num(row.preco?.economico);

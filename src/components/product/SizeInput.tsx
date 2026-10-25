@@ -5,17 +5,21 @@ import { TextField } from "@/components/ui/TextField";
 import { cx } from "@/components/ui/cx";
 import type { CustomSize } from "@/lib/catalog";
 import { formatBRL } from "@/lib/format";
-import { formatArea, limitsHint, parseMeasure, type AreaQuote } from "@/lib/pricing";
+import { formatArea, limitsHint, parseMeasure, type AreaQuote, type AreaRules } from "@/lib/pricing";
 
 export type SizeText = { width: string; height: string };
 
 type Props = {
   value: SizeText;
   onChange: (value: SizeText) => void;
-  /** Limites do produto em metros (0 = sem limite). */
+  /** Limites da variação escolhida, em metros (0 = sem limite). */
   limits: CustomSize;
+  /** Mínimos de cobrança (por peça e no item inteiro), para o resumo. */
+  rules?: Pick<AreaRules, "minPieceM2" | "minItemM2">;
+  /** Peças do item: o mínimo de 1 m² vale sobre todas elas. */
+  quantity?: number;
   presets: [number, number][];
-  /** Cálculo da medida atual (preço por peça = preço por m² × área cobrada). */
+  /** Cálculo da medida atual (total do item = preço por m² × área cobrada; preço por peça = total ÷ peças). */
   quote: AreaQuote;
   pricePerM2: number;
   /** Mostra os erros mesmo antes de a pessoa mexer (tentou comprar com medida inválida). */
@@ -33,14 +37,14 @@ function fieldError(cm: number, min: number, max: number, label: string): string
 }
 
 /** Medida livre (preço por m²): largura × altura em cm, medidas rápidas, área e preço por peça ao vivo. */
-export default function SizeInput({ value, onChange, limits, presets, quote, pricePerM2, showErrors = false }: Props) {
+export default function SizeInput({ value, onChange, limits, rules, quantity = 1, presets, quote, pricePerM2, showErrors = false }: Props) {
   const width = parseMeasure(value.width);
   const height = parseMeasure(value.height);
   const widthError = fieldError(width, limits.minWidth, limits.maxWidth, "largura");
   const heightError = fieldError(height, limits.minHeight, limits.maxHeight, "altura");
   // O erro de área (máxima) não pertence a um campo só: aparece no resumo.
   const areaError = !widthError && !heightError ? quote.error : null;
-  const hint = limitsHint(limits);
+  const hint = limitsHint(limits, rules);
   const current = presets.find(([w, h]) => w === width && h === height);
   // Campo vazio só acusa erro depois da tentativa de compra; com valor, os limites aparecem na hora.
   const visible = (error: string | null, text: string) => (showErrors || text.trim() !== "" ? error : null);
@@ -105,11 +109,16 @@ export default function SizeInput({ value, onChange, limits, presets, quote, pri
         ) : (
           <p aria-live="polite">
             Área <strong>{formatArea(quote.area)}</strong>
-            {quote.billedArea > quote.area && <span className="text-muted"> · cobrança mínima de {formatArea(quote.billedArea)}</span>}
+            {quote.billedArea > quote.area && <span className="text-muted"> · cobrança mínima de {formatArea(quote.billedArea)} por peça</span>}
             <span className="text-muted"> · {formatBRL(pricePerM2)} por m²</span>
             <span className="mt-0.5 block font-bold">
               {formatBRL(quote.price)} por peça de {value.width || 0} × {value.height || 0} cm
             </span>
+            {quote.itemMinimum && (
+              <span className="mt-0.5 block text-caption text-muted">
+                Cobrança mínima de {formatArea(quote.billedTotal)} no pedido{quantity > 1 ? `, dividida entre as ${quantity} peças` : ""}: {formatBRL(quote.total)}.
+              </span>
+            )}
           </p>
         )}
       </div>

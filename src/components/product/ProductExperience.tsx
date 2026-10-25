@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "r
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { DEFAULT_ART, artFamily, hasArtContent, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, artFamily, hasArtContent, neonTextBox, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { keepArtFiles, uploadedFileOf } from "./art-source";
@@ -20,7 +20,8 @@ import QtyStepper from "@/components/ui/QtyStepper";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
-import { anexosComplementares, customizacaoDa, recebeArte, type Customizacao } from "@/lib/customizacao";
+import { avisosDoProduto } from "@/lib/avisos-produto";
+import { ARQUIVO_UNICO, anexosDeProducao, customizacaoDa, recebeArte, type Customizacao } from "@/lib/customizacao";
 import { acabamentosDa, cotarAcabamentos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido } from "@/lib/acabamentos";
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
@@ -30,10 +31,12 @@ import { artArea, artAspect } from "@/lib/mockup-kinds";
 import { describePanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
 import {
   areaQuote,
+  areaRules,
   chooseOption,
   cleanOptionLabel,
   defaultSize,
   displayOrder,
+  fitsLimits,
   formatArea,
   hasExpress,
   optionKeys,
@@ -57,6 +60,7 @@ import DeliverySpeed from "./DeliverySpeed";
 import PreviewModal from "./PreviewModal";
 import SizeBreakdown from "./SizeBreakdown";
 import SizeInput, { type SizeText } from "./SizeInput";
+import NeonSizeStep from "./NeonSizeStep";
 import TemplateDownload from "./TemplateDownload";
 import { fitToTemplate, madeForTemplate, needsRefit, printFileName, printSheets, type Gabarito, type GabaritoSide } from "./gabarito/jobs";
 import { FotoProduto } from "@/components/FotoProduto";
@@ -84,6 +88,8 @@ export type ClientProduct = {
   sizeChart?: SizeChartRow[] | null;
   /** Medida livre: preço por m² (banner, adesivo, papel, lona, tecido). */
   customSize?: CustomSize | null;
+  /** LED Neon montado pelo cliente (Frase/Logotipo): cobrança mínima de 0,25 m² por peça. */
+  neon?: "frase" | "logo";
   template?: string | null;
   /** Gabarito oficial com as medidas (folhas, sangria, corte e segurança) para encaixar a arte. */
   printTemplate?: ProductTemplate | null;
@@ -155,6 +161,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const keys = useMemo(() => optionKeys(product.options), [product.options]);
   const [selection, setSelection] = useState<Selection>(() => initialSelection(product));
   const [size, setSize] = useState<SizeText>(() => initialSize(product));
+  // Frase em LED: largura escolhida (cm) e a caixa do texto medida no canvas (proporção e linhas de tubo).
+  const [neonWidth, setNeonWidth] = useState("60");
+  const [neonBox, setNeonBox] = useState<{ aspect: number; lines: number } | null>(null);
   // Lado da arte em edição (camisa, almofada, cama pet): o mockup 3D vira para ele.
   const [artSide, setArtSide] = useState<"front" | "back">("front");
   const [counts, setCounts] = useState<SizeCounts>(() => initialCounts(product));
@@ -165,7 +174,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const [artName, setArtName] = useState<string | null>(null);
   // Arquivo sem prévia (AI, CDR, PDF que o navegador não abre): vai para a produção como foi enviado.
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
-  // Arquivos complementares da variação (faca de corte, máscara de branco, verniz…), por tipo de anexo.
+  // Arquivos para a produção da variação, por tipo de anexo: o arquivo único ou os separados (frente, verso, verniz, faca…).
   const [extraFiles, setExtraFiles] = useState<Record<string, File>>({});
   // Acabamentos extras escolhidos (os que a variação atual não aceita ficam de fora no cálculo).
   const [finishing, setFinishing] = useState<AcabamentoEscolhido[]>([]);
@@ -195,31 +204,66 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const expressChosen = expressAvailable && speed === "expresso";
   const chosen = speedQuote(price, expressChosen ? "expresso" : "economico");
 
-  // Medida livre: preço por m² × área cobrada (a API não calcula m²; o valor vai no precoTotal do pedido).
-  const areaMode = usesArea(product.options, selection, product.customSize);
-  const widthCm = parseMeasure(size.width);
-  const heightCm = parseMeasure(size.height);
-  const area = areaMode && product.customSize ? areaQuote(chosen.price, widthCm, heightCm, product.customSize) : null;
+  // Variação do catálogo (limites próprios da medida, m² ou preço fixo): a da tabela de revenda tem o mesmo ID.
+  const catalogVariation = product.variations.find((v) => v.id === price.variation?.id) ?? price.variation;
+  // Medida livre: preço por m² × área cobrada (a API não calcula m²; o valor vai no precoTotal do pedido), com os limites
+  // da variação escolhida e o mínimo de 1 m² no item (0,25 m² por peça no LED).
+  const areaMode = usesArea(product.options, selection, product.customSize, catalogVariation);
+  // "Crie sua Frase em Led Neon" (290): a largura é escolhida e a altura sai da proporção do texto (neonTextBox), como no
+  // site atual; cobra área × preço do m² com o mínimo de 0,25 m² (revisão da Padrão de 25/10/2026).
+  const neonFrase = product.neon === "frase";
+  const neonAspect = neonBox?.aspect ?? 2.5;
+  const neonLines = neonBox?.lines ?? 1;
+  const neonWidthCm = neonFrase ? parseMeasure(neonWidth) : 0;
+  const measured = areaMode || neonFrase;
+  const rules = areaRules(product, catalogVariation, { lines: neonLines });
+  const widthCm = neonFrase ? neonWidthCm : parseMeasure(size.width);
+  const heightCm = neonFrase ? (neonWidthCm ? Math.round((neonWidthCm / neonAspect) * 10) / 10 : 0) : parseMeasure(size.height);
+
+  // Quantidade fora da grade: unidades (preço por unidade, com o mínimo da API) ou pacotes ("por 1.000 un.").
+  const perUnit = !measured && price.qty <= 1;
+  // A faixa da variação escolhida (Caderno "De 11 até 100" = 11 a 100) vale no lugar da do produto.
+  const tier = unitLimits(product, price.variation);
+  const minQty = perUnit ? tier.min : 1;
+  // A Frase em LED é um letreiro só (sem quantidade).
+  const maxQty = neonFrase ? 1 : perUnit ? Math.max(minQty, Math.min(tier.max || 999, 999)) : 99;
+  const quantity = Math.min(maxQty, Math.max(minQty, qty));
+
+  const area = (areaMode && product.customSize) || neonFrase ? areaQuote(chosen.price, widthCm, heightCm, rules, quantity) : null;
 
   // O 3D acompanha a medida (banner e papel de parede em escala), sem refazer o modelo a cada tecla.
   const modelWidth = useDeferredValue(widthCm);
   const modelHeight = useDeferredValue(heightCm);
   const baseSpec = useMemo(() => mockupSpec(product, selection), [product, selection]);
+  // Variação com outros limites de medida (PS "Até 15x21cm"): a medida que não cabe vai para a primeira medida rápida
+  // que cabe nos limites novos. Ajuste durante o render (estado derivado), só quando os limites mudam.
+  const limitsKey = areaMode ? JSON.stringify(rules.limits) : "";
+  const [sizedFor, setSizedFor] = useState(limitsKey);
+  if (sizedFor !== limitsKey) {
+    setSizedFor(limitsKey);
+    if (areaMode && !fitsLimits(widthCm, heightCm, rules.limits)) {
+      const [w, h] = defaultSize(baseSpec.kind, baseSpec.variant, rules.limits);
+      setSize({ width: String(w), height: String(h) });
+    }
+  }
   const spec = useMemo(() => {
-    if (!areaMode || !modelWidth || !modelHeight) return baseSpec;
+    if (!measured || !modelWidth || !modelHeight) return baseSpec;
     const w = Math.min(modelWidth, MAX_MODEL_CM);
     const h = Math.min(modelHeight, MAX_MODEL_CM);
     return { ...baseSpec, widthCm: w, heightCm: h, label: formatSize(w, h) };
-  }, [baseSpec, areaMode, modelWidth, modelHeight]);
+  }, [baseSpec, measured, modelWidth, modelHeight]);
   const family = artFamily(spec.kind);
 
   // Customização da variação escolhida: sem personalização e neon de modelo pronto não recebem arte (a do editor é
-  // só simulação); os arquivos complementares são os que a variação aceita além da arte.
-  const custom = customizacaoDa(product, product.variations.find((v) => v.id === price.variation?.id) ?? price.variation);
+  // só simulação); os arquivos para a produção são os tipos de anexo que a variação aceita (arquivo único ou separados).
+  const custom = customizacaoDa(product, catalogVariation);
   const modeloPronto = custom.modo === "neon-modelo" && !spec.blank;
   const semArte = spec.blank || !recebeArte(custom);
-  const complementares = semArte ? [] : anexosComplementares(custom);
-  const presets = areaMode ? sizePresets(baseSpec.kind, baseSpec.variant, product.customSize) : [];
+  const producao = semArte ? [] : anexosDeProducao(custom);
+  // Arquivos enviados no bloco de produção (só os tipos da variação atual).
+  const productionFiles = Object.fromEntries(Object.entries(extraFiles).filter(([tipo]) => producao.includes(tipo)));
+  const singleFile = productionFiles[ARQUIVO_UNICO] ?? null;
+  const presets = areaMode ? sizePresets(baseSpec.kind, baseSpec.variant, rules.limits) : [];
 
   // Vestuário com grade: quantidade por tamanho; o total respeita o mínimo/máximo do produto.
   const sizes = product.sizes ?? [];
@@ -292,6 +336,23 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     }
   }
 
+  // Frase em LED: mede a caixa do texto (no próximo quadro e de novo quando as fontes terminam de carregar).
+  useEffect(() => {
+    if (product.neon !== "frase") return;
+    let alive = true;
+    const measure = () => {
+      if (alive) setNeonBox(neonTextBox({ text: art.text, subtext: art.subtext, style: art.style, font: art.font }));
+    };
+    const frame = requestAnimationFrame(measure);
+    document.fonts?.ready.then(measure).catch(() => undefined);
+    document.fonts?.addEventListener?.("loadingdone", measure);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(frame);
+      document.fonts?.removeEventListener?.("loadingdone", measure);
+    };
+  }, [product.neon, art.text, art.subtext, art.style, art.font]);
+
   // As imagens da arte (frente e verso) ficam registradas enquanto estão em uso; a trocada é liberada.
   const owner = useId();
   useEffect(() => {
@@ -303,43 +364,36 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     track("produto_view", { p: product.slug, val: product.price });
   }, [product.slug, product.price]);
 
-  // Quantidade fora da grade: unidades (preço por unidade, com o mínimo da API) ou pacotes ("por 1.000 un.").
-  const perUnit = !areaMode && price.qty <= 1;
-  // A faixa da variação escolhida (Caderno "De 11 até 100" = 11 a 100) vale no lugar da do produto.
-  const tier = unitLimits(product, price.variation);
-  const minQty = perUnit ? tier.min : 1;
-  const maxQty = perUnit ? Math.max(minQty, Math.min(tier.max || 999, 999)) : 99;
-  const quantity = Math.min(maxQty, Math.max(minQty, qty));
-
   // Preço de uma peça (m²) ou de um conjunto da tabela; o total multiplica pela quantidade ou pelas peças da grade.
   const unitPrice = area ? area.price : chosen.price;
   // Acabamentos extras da variação: o preço segue as peças do item (milheiro, unidade ou fixo) e o prazo soma.
-  const finishes = acabamentosDa(product, product.variations.find((v) => v.id === price.variation?.id) ?? price.variation);
+  const finishes = acabamentosDa(product, catalogVariation);
   const pieces = apparel ? units : area || perUnit ? quantity : quantity * price.qty;
   const chosenFinishes = finishing.filter((f) => finishes.some((a) => a.id === f.id));
   const finishQuote = cotarAcabamentos(finishes, chosenFinishes, pieces) ?? { itens: [], total: 0, prazo: 0 };
   const leadDays = chosen.leadDays ? chosen.leadDays + finishQuote.prazo : chosen.leadDays;
-  const total = roundMoney(unitPrice * (apparel ? units : quantity) + finishQuote.total);
+  // Medida livre: o total do item vem pronto (o mínimo de 1 m² vale no item inteiro, não por peça).
+  const total = roundMoney((area ? area.total : unitPrice * (apparel ? units : quantity)) + finishQuote.total);
   const display =
     area && !area.error
-      ? { value: area.price, unit: "por peça" }
+      ? { value: area.price, unit: neonFrase ? "pelo letreiro" : "por peça" }
       : area
         ? { value: chosen.price, unit: "por m²" }
         : { value: chosen.price, unit: apparel ? "por peça" : quantityLabel(price.qty) };
   // Preço de cada ritmo na mesma unidade do preço exibido (peça na medida escolhida, m², peça ou conjunto).
-  const speedPrice = (value: number) => (area && !area.error ? areaQuote(value, widthCm, heightCm, product.customSize).price : value);
+  const speedPrice = (value: number) => (area && !area.error ? areaQuote(value, widthCm, heightCm, rules, quantity).price : value);
   const totalLabel = apparel
     ? `${units.toLocaleString("pt-BR")} ${units === 1 ? "peça" : "peças"}`
     : area
-      ? `${quantity > 1 ? `${quantity} × ` : ""}peça de ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm`
+      ? `${quantity > 1 ? `${quantity} × ` : ""}${neonFrase ? "letreiro" : "peça"} de ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm`
       : perUnit
         ? `${quantity.toLocaleString("pt-BR")} ${quantity === 1 ? "unidade" : "unidades"}`
         : `${quantity > 1 ? `${quantity} × ` : ""}${quantityLabel(price.qty).replace("por ", "")}`;
 
   // Passos numerados: opções, medida (m²), tamanhos (vestuário) e arte.
   const sizeStep = keys.length + 1;
-  const gridStep = keys.length + (areaMode ? 2 : 1);
-  const finishStep = keys.length + (areaMode ? 1 : 0) + (apparel ? 1 : 0) + 1;
+  const gridStep = keys.length + (measured ? 2 : 1);
+  const finishStep = keys.length + (measured ? 1 : 0) + (apparel ? 1 : 0) + 1;
   // Variação sem personalização não tem o passo da arte.
   const artStep = finishStep + (finishes.length ? 1 : 0);
   const totalSteps = semArte ? artStep - 1 : artStep;
@@ -356,11 +410,16 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     ...(finishQuote.itens.length ? [["Acabamentos", resumoAcabamentos(finishQuote.itens)] as [string, string]] : []),
     ...(expressAvailable ? [["Prazo", `${expressChosen ? "Expresso" : "Econômico"}${leadDays ? ` · ${daysText(leadDays)}` : ""}`] as [string, string]] : []),
   ];
-  const previewExtras: [string, string][] = [...extras, ...(area ? [["Área cobrada", formatArea(area.billedArea)] as [string, string]] : [])];
+  const avisos = avisosDoProduto(product.groupId);
+  const previewExtras: [string, string][] = [
+    ...extras,
+    ...(area ? [["Área cobrada", formatArea(area.billedArea)] as [string, string]] : []),
+    ...avisos.map((aviso) => ["Atenção", aviso] as [string, string]),
+  ];
 
   // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
-  const hasArt = semArte || artLater || Boolean(artName) || typedArt;
+  const hasArt = semArte || artLater || Boolean(artName) || typedArt || Object.keys(productionFiles).length > 0;
 
   // Escolher um valor ajusta os passos seguintes para uma combinação que existe na API.
   const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
@@ -459,7 +518,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     let printFile: { id: string; name: string } | null = null;
     // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado.
     const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back);
-    if (gabarito && !artLater && ownArt) {
+    if (gabarito && !artLater && ownArt && !singleFile) {
       try {
         const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
         const sheets = printSheets(gabarito, art);
@@ -472,17 +531,23 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         printFile = null;
       }
     }
-    // Arquivos que o cliente enviou (frente e verso): ficam no navegador até o checkout mandar para o Bunny.
-    const artFiles = semArte || artLater
-      ? []
-      : await keepArtFiles(
-          [
-            { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" },
-            { file: uploadedFileOf(art.back?.src), kind: "verso" },
-            ...complementares.map((tipo) => ({ file: extraFiles[tipo], kind: "extra" as const, tipo })),
-          ],
-          product.name,
-        );
+    // Arquivos que o cliente enviou: ficam no navegador até o checkout mandar para o Bunny. O arquivo único vai sozinho
+    // (no lugar da arte montada); senão, a frente e o verso do editor (ou os arquivos próprios deles) e os separados.
+    const manualFront = productionFiles["Impressão Frente"];
+    const manualBack = productionFiles["Impressão Verso"];
+    const artFiles =
+      semArte || artLater
+        ? []
+        : await keepArtFiles(
+            singleFile
+              ? [{ file: singleFile, kind: "extra" as const, tipo: ARQUIVO_UNICO }]
+              : [
+                  manualFront ? { file: manualFront, kind: "extra" as const, tipo: "Impressão Frente" } : { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" as const },
+                  manualBack ? { file: manualBack, kind: "extra" as const, tipo: "Impressão Verso" } : { file: uploadedFileOf(art.back?.src), kind: "verso" as const },
+                  ...producao.filter((tipo) => tipo !== ARQUIVO_UNICO && tipo !== "Impressão Frente" && tipo !== "Impressão Verso").map((tipo) => ({ file: productionFiles[tipo], kind: "extra" as const, tipo })),
+                ],
+            product.name,
+          );
     add({
       slug: product.slug,
       name: product.name,
@@ -509,7 +574,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       ...(area ? { widthCm, heightCm } : {}),
       express: expressChosen,
       // O carrinho mostra "Arte: …"; null = enviar depois (só multiloja).
-      artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
+      artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : singleFile ? `${singleFile.name} · arquivo único` : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : Object.keys(productionFiles).length ? "arquivos para a produção" : null)),
     });
     setAdding(false);
     setPreview(false);
@@ -578,6 +643,16 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             Mockup ilustrativo gerado com a sua arte{area && !area.error ? `, na medida ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm` : ""}. A cor impressa segue o arquivo enviado.
           </p>
         )}
+        {/* Gabarito logo abaixo da foto/3D, em destaque (revisão da Padrão de 25/10/2026). */}
+        {product.template && !semArte && (
+          <TemplateDownload
+            productId={product.id ?? product.slug}
+            template={product.template}
+            name={product.name}
+            facts={frontFacts ? [`Tamanho final ${frontFacts.final}`, frontFacts.bleed ? `sangria ${frontFacts.bleed}` : "sem sangria", frontFacts.safe ? `segurança ${frontFacts.safe}` : null].filter((f): f is string => Boolean(f)) : null}
+            className="mt-4 lg:mx-auto lg:w-(--lado)"
+          />
+        )}
       </div>
 
       <div>
@@ -597,6 +672,11 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             {expressChosen && <span className="text-muted">· expresso</span>}
           </p>
         )}
+        {avisos.map((aviso) => (
+          <p key={aviso} role="note" className="mt-3 max-w-xl rounded-control bg-coral-50 px-3 py-2 text-sm font-semibold text-coral-700">
+            {aviso}
+          </p>
+        ))}
         {product.source === "site" && <p className="mt-2 text-caption text-muted">Produto novo: monte a arte e o orçamento aqui; o pedido é fechado com o nosso atendimento.</p>}
 
         <ol className="mt-8 space-y-6">
@@ -616,10 +696,17 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             );
           })}
 
+          {area && neonFrase && (
+            <li id="passo-medida" className="scroll-mt-painel">
+              <StepTitle n={sizeStep} total={totalSteps} title="Tamanho do letreiro" />
+              <NeonSizeStep width={neonWidth} onWidth={setNeonWidth} heightCm={heightCm} aspect={neonAspect} lines={neonLines} limits={rules.limits ?? { minWidth: 0, maxWidth: 0, minHeight: 0, maxHeight: 0, minArea: 0, maxArea: 0 }} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
+            </li>
+          )}
+
           {area && product.customSize && (
             <li id="passo-medida" className="scroll-mt-painel">
               <StepTitle n={sizeStep} total={totalSteps} title="Medida (largura × altura)" />
-              <SizeInput value={size} onChange={setSize} limits={product.customSize} presets={presets} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
+              <SizeInput value={size} onChange={setSize} limits={rules.limits ?? product.customSize} rules={rules} quantity={quantity} presets={presets} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
             </li>
           )}
 
@@ -651,7 +738,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               family={family}
               spec={spec}
               onSide={setArtSide}
-              extraTypes={complementares}
+              extraTypes={producao}
               extraFiles={extraFiles}
               onExtraFile={(tipo, file) =>
                 setExtraFiles((files) => {
@@ -666,6 +753,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               onFile={onFile}
               uploadError={uploadError}
               uploading={uploading}
+              uploadOnly={product.neon === "logo"}
               {...(allowArtLater
                 ? {
                     artLater,
@@ -708,7 +796,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             </div>
             {/* Em telas estreitas o botão desce para a linha de baixo e ocupa a largura toda. */}
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              {!apparel && (
+              {!apparel && !neonFrase && (
                 <QtyStepper
                   value={quantity}
                   onChange={setQty}
@@ -729,16 +817,6 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             {adding ? "Adicionando…" : "Adicionar ao carrinho"}
           </Button>
         </div>
-
-        {product.template && !semArte && (
-          <TemplateDownload
-            productId={product.id ?? product.slug}
-            template={product.template}
-            name={product.name}
-            facts={frontFacts ? [`Tamanho final ${frontFacts.final}`, frontFacts.bleed ? `sangria ${frontFacts.bleed}` : "sem sangria", frontFacts.safe ? `segurança ${frontFacts.safe}` : null].filter((f): f is string => Boolean(f)) : null}
-            className="mt-4"
-          />
-        )}
 
         <CepLookup leadDays={leadDays} groupId={product.groupId} variationId={price.variation?.id} quantity={apparel ? units : quantity} />
       </div>

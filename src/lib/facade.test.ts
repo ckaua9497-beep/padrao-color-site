@@ -46,7 +46,7 @@ import {
   textureSide,
 } from "./facade.ts";
 import type { FacadeSource, Mat3, Point, Quad, Tri } from "./facade.ts";
-import { areaQuote, cleanOptionLabel, optionKeys, quote } from "./pricing.ts";
+import { areaQuote, cleanOptionLabel, optionKeys, plainAreaRules, quote } from "./pricing.ts";
 
 const catalog = JSON.parse(readFileSync(new URL("../data/catalog.json", import.meta.url), "utf8")) as { products: FacadeSource[] };
 
@@ -442,7 +442,7 @@ test("printSize: peça girada vai ao pedido no sentido do material e passa no ar
   const quoteFacade = facadeQuote(62.21, 400, 100, backlight);
   const print = printSize(400, 100, quoteFacade.rotated);
   assert.deepEqual(print, { widthCm: 100, heightCm: 400 });
-  const checkout = areaQuote(62.21, print.widthCm, print.heightCm, backlight);
+  const checkout = areaQuote(62.21, print.widthCm, print.heightCm, plainAreaRules(backlight));
   assert.equal(checkout.error, null);
   assert.equal(checkout.price, quoteFacade.price);
   assert.deepEqual(printSize(300, 100, false), { widthCm: 300, heightCm: 100 });

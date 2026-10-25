@@ -110,3 +110,27 @@ export const recebeArte = (c: Customizacao) => c.modo !== "nenhuma" && c.modo !=
 
 /** Arquivos que a variação aceita além da arte (faca de corte, máscara de branco, verniz, capa, miolo, posição do LED). */
 export const anexosComplementares = (c: Customizacao) => (recebeArte(c) ? c.anexos.filter((nome) => !ANEXOS_DA_ARTE.includes(nome)) : []);
+
+export const ARQUIVO_UNICO = "Arquivo Único";
+
+/**
+ * Campos de "Arquivos para a produção" da variação (revisão da Padrão de 25/10/2026, "Anexo de Arquivos"): o "Arquivo
+ * Único" (sempre, primeiro) e os separados que a API dispara em `tipos_anexo` (Impressão Frente/Verso, verniz, faca,
+ * máscara de branco, capa, miolo, posição do LED). Variação que só aceita o arquivo único não tem o bloco: a arte do
+ * editor já é ele.
+ */
+export function anexosDeProducao(c: Customizacao): string[] {
+  if (!recebeArte(c)) return [];
+  const separados = c.anexos.filter((nome) => nome !== ARQUIVO_UNICO);
+  return separados.length ? [ARQUIVO_UNICO, ...separados] : [];
+}
+
+/**
+ * Quais campos aparecem: enviar o arquivo único esconde os separados, e enviar qualquer separado esconde o arquivo único
+ * (como no site atual). Sem nada enviado, todos aparecem.
+ */
+export function camposVisiveis(tipos: readonly string[], enviados: Readonly<Record<string, unknown>>): string[] {
+  if (enviados[ARQUIVO_UNICO]) return tipos.filter((tipo) => tipo === ARQUIVO_UNICO);
+  if (tipos.some((tipo) => tipo !== ARQUIVO_UNICO && enviados[tipo])) return tipos.filter((tipo) => tipo !== ARQUIVO_UNICO);
+  return [...tipos];
+}

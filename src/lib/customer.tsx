@@ -127,6 +127,8 @@ export type GroupPrices = {
   groupId: number;
   category: string;
   customSize: CustomSize | null;
+  /** LED Neon montado pelo cliente (Frase/Logotipo): mínimo de 0,25 m² por peça. */
+  neon?: "frase" | "logo" | null;
   reseller: boolean;
   variations: Variation[];
   /** Acabamentos extras do produto (preço do catálogo): o carrinho soma os escolhidos. */

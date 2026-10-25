@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       try {
         const group = await groupPrices(id, session, { cacheOnly: offline });
         if (!group?.reseller) continue;
-        const price = fromPrice(linePricesFor(group, session).variations);
+        const price = fromPrice(linePricesFor(group, session).variations, { neon: Boolean(group.neon) });
         if (price) prices[id] = price;
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) expired = true;

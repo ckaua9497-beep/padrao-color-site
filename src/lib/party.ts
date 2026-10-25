@@ -1,6 +1,6 @@
 import type { CustomSize, Product, Variation } from "./catalog";
 import type { AreaQuote, Selection } from "./pricing.ts";
-import { areaQuote, cleanOptionLabel, optionKeys, quote, unitLimits } from "./pricing.ts";
+import { areaQuote, areaRules, cleanOptionLabel, optionKeys, quote, unitLimits } from "./pricing.ts";
 
 /*
  * Festas e kits (checklist "Festas e kits").
@@ -1223,15 +1223,16 @@ export function priceItem(item: Pick<PartyItem, "product" | "parts" | "preset" |
   const drafts = specs.map((spec) => {
     const selection = resolveSelection(product, spec.preset);
     const q = quote(product.variations, selection, fallback, keys.length);
-    const area = product.customSize ? areaQuote(q.price, width, height, product.customSize) : null;
-    return { spec, selection, q, area };
+    return { spec, selection, q };
   });
 
   const setQty = product.customSize ? 1 : (drafts[0]?.q.qty ?? 1);
   const limits = qtyLimits(product, setQty, ceiling, drafts[0]?.q.variation);
   const qty = clamp(Math.round(config.qty) || limits.min, limits.min, limits.max);
 
-  const lines: PricedLine[] = drafts.map(({ spec, selection, q, area }) => {
+  const lines: PricedLine[] = drafts.map(({ spec, selection, q }) => {
+    // Por m²: limites da variação e mínimo de 1 m² no item inteiro (as peças da festa), como no checkout.
+    const area = product.customSize ? areaQuote(q.price, width, height, areaRules(product, q.variation), qty) : null;
     const unitPrice = area ? area.price : q.price;
     return {
       label: spec.label,
@@ -1239,7 +1240,7 @@ export function priceItem(item: Pick<PartyItem, "product" | "parts" | "preset" |
       unitPrice,
       setQty: area ? 1 : q.qty,
       qty,
-      total: round2(unitPrice * qty),
+      total: area ? area.total : round2(unitPrice * qty),
       leadDays: q.leadDays,
       variationId: q.variation?.id,
       area,

@@ -187,7 +187,7 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
     mat: 3,
     mug: 12,
     neckpillow: 2,
-    neon: 33,
+    neon: 34,
     panel: 11,
     paperpack: 2,
     passport: 1,

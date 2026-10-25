@@ -4,7 +4,7 @@
  * `node --test`; o desenho em canvas fica em components/facade/canvas.ts.
  */
 import type { CustomSize, Variation } from "./catalog";
-import { areaQuote, cleanOptionLabel, optionKeys, type AreaQuote, type Selection } from "./pricing.ts";
+import { areaQuote, cleanOptionLabel, optionKeys, plainAreaRules, type AreaQuote, type Selection } from "./pricing.ts";
 
 export const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -635,9 +635,9 @@ export type FacadeQuote = AreaQuote & {
  * chapa). A área e o preço não mudam; a medida da fachada continua a mesma.
  */
 export function facadeQuote(pricePerM2: number, widthCm: number, heightCm: number, limits?: CustomSize | null): FacadeQuote {
-  const direct = areaQuote(pricePerM2, widthCm, heightCm, limits);
+  const direct = areaQuote(pricePerM2, widthCm, heightCm, plainAreaRules(limits));
   if (!direct.error || !(widthCm > 0) || !(heightCm > 0)) return { ...direct, rotated: false };
-  const turned = areaQuote(pricePerM2, heightCm, widthCm, limits);
+  const turned = areaQuote(pricePerM2, heightCm, widthCm, plainAreaRules(limits));
   return turned.error ? { ...direct, rotated: false } : { ...turned, rotated: true };
 }
 

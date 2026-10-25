@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { anexosComplementares, CUSTOMIZACAO_PADRAO, customizacaoDa, customizacaoDaLinha, perfisDeCustomizacao, recebeArte, semImpressaoPeloNome } from "./customizacao.ts";
+import { anexosComplementares, anexosDeProducao, camposVisiveis, CUSTOMIZACAO_PADRAO, customizacaoDa, customizacaoDaLinha, perfisDeCustomizacao, recebeArte, semImpressaoPeloNome } from "./customizacao.ts";
 
 const linha = (tipo: number, anexos: string[] | null, criacao: [number, string] = [1, "34.90"], extra: Record<string, unknown> = {}) => ({
   customizacao: { tipo, web2print: "Não", criacao_arte: { tipo: String(criacao[0]), preco: criacao[1] }, ...extra },
@@ -65,4 +65,16 @@ test("perfis: os distintos, o mais comum primeiro, com o índice de cada linha",
 
 test("linha sem customização (erro da API): arte do cliente em arquivo único", () => {
   assert.deepEqual(customizacaoDaLinha({}, "Caneca Personalizada com Glitter na Base"), { modo: "arquivo", anexos: ["Arquivo Único"], criacao: null, web2print: false });
+});
+
+test("arquivos para a produção: arquivo único ou separados, um escondendo o outro (revisão da Padrão de 25/10/2026)", () => {
+  const cartao = { ...CUSTOMIZACAO_PADRAO, anexos: ["Arquivo Único", "Impressão Frente", "Impressão Verso", "Verniz Local Frente"] };
+  assert.deepEqual(anexosDeProducao(cartao), ["Arquivo Único", "Impressão Frente", "Impressão Verso", "Verniz Local Frente"]);
+  assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, anexos: ["Arquivo Único"] }), [], "só o arquivo único: a arte do editor já é ele");
+  assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, anexos: ["Impressão Frente", "Impressão Verso"] }), ["Arquivo Único", "Impressão Frente", "Impressão Verso"], "o arquivo único sempre é opção");
+  assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, modo: "nenhuma", anexos: ["Arquivo Único", "Impressão Frente"] }), []);
+  const tipos = anexosDeProducao(cartao);
+  assert.deepEqual(camposVisiveis(tipos, {}), tipos);
+  assert.deepEqual(camposVisiveis(tipos, { "Arquivo Único": true }), ["Arquivo Único"]);
+  assert.deepEqual(camposVisiveis(tipos, { "Impressão Verso": true }), ["Impressão Frente", "Impressão Verso", "Verniz Local Frente"]);
 });

@@ -81,6 +81,7 @@ export default async function VitrineProduto(props: PageProps<"/vitrine/[host]/p
             sizes: product.sizes ?? null,
             sizeChart: product.sizeChart ?? null,
             customSize: product.customSize ?? null,
+            ...(product.neon ? { neon: product.neon } : {}),
             template: product.template ?? null,
             printTemplate: productTemplate(product.id),
             summary: product.summary,

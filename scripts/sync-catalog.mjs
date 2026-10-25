@@ -12,7 +12,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { classifyNetworkError, createTransport } from "../src/lib/api/transport.ts";
-import { buildCategories, mapGroup, num, parseImageSize, sim, slugify, variationRows } from "./lib/catalog-map.mjs";
+import { buildCategories, mapGroup, num, parseImageSize, sim, slugify, variationRows } from "../src/lib/catalog-map.ts";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

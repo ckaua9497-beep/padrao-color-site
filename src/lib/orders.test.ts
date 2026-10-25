@@ -85,9 +85,16 @@ test("medida livre: preço por m² × área cobrada (área mínima) e limites do
   const priced = line(item({ key: "b", groupId: 35, variationId: 35, widthCm: 100, heightCm: 80, quantity: 3 }), bannerPrices);
   assert.equal(priced.unitPrice, 40, "0,8 m² × R$ 50");
   assert.equal(priced.total, 120);
-  assert.deepEqual(priced.size, { widthCm: 100, heightCm: 80, areaM2: 0.8, billedAreaM2: 0.8 });
+  assert.deepEqual(priced.size, { widthCm: 100, heightCm: 80, areaM2: 0.8, billedAreaM2: 0.8, billedTotalM2: 2.4 });
+  assert.equal(priced.productTotal, 120);
+  // Uma peça pequena: a peça cobra 0,5 m² (área mínima da API) e o item, 1 m² (revisão da Padrão de 25/10/2026).
   const small = line(item({ key: "c", groupId: 35, variationId: 35, widthCm: 30, heightCm: 30, quantity: 1 }), bannerPrices);
-  assert.equal(small.unitPrice, 25, "cobra a área mínima de 0,5 m²");
+  assert.equal(small.unitPrice, 50, "mínimo de 1 m² no item");
+  assert.equal(small.size?.billedTotalM2, 1);
+  // Três peças pequenas: 3 × 0,5 m² = 1,5 m² passa do mínimo do item.
+  const three = line(item({ key: "d", groupId: 35, variationId: 35, widthCm: 30, heightCm: 30, quantity: 3 }), bannerPrices);
+  assert.equal(three.productTotal, 75);
+  assert.equal(three.unitPrice, 25);
   const tooWide = priceLine(item({ groupId: 35, variationId: 35, widthCm: 400, heightCm: 100 }), bannerPrices);
   assert.ok(isLineError(tooWide));
   assert.match(tooWide.error, /Largura máxima/);
@@ -149,8 +156,8 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
   assert.equal(payload.idCliente, 575);
   assert.equal(payload.tipo_compra, "Site");
   assert.equal(payload.nome_trabalho, "Padaria Pão Quente + 1 item");
-  assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 170.38, status: 0, forma: "pix", parcelas: 1 });
-  assert.equal(payload.precoTotal, 170.38, "130,38 + 40, sem desconto no PIX");
+  assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 180.38, status: 0, forma: "pix", parcelas: 1 });
+  assert.equal(payload.precoTotal, 180.38, "130,38 + 50 (banner de 0,8 m² cobra o mínimo de 1 m²), sem desconto no PIX");
   assert.deepEqual(payload.entrega, { tipo: "Retirada", endereco: null });
   assert.deepEqual(payload.produtos[0], {
     id: 22,

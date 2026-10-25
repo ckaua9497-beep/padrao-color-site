@@ -2,7 +2,7 @@ import type { ApiEndereco } from "./api/types";
 import type { CustomSize, Variation } from "./catalog";
 import { orderAttachments, parseUploadedFiles, type ArtAttachment, type UploadedArtFile } from "./art-files.ts";
 import { cotarAcabamentos, parseAcabamentosEscolhidos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido, type CotacaoAcabamentos } from "./acabamentos.ts";
-import { areaQuote, cleanOptionLabel } from "./pricing.ts";
+import { areaQuote, areaRules, cleanOptionLabel } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
 
 /*
@@ -28,6 +28,8 @@ import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
  * - entrega: o exemplo traz a loja de retirada ({id, nome}); o site manda {tipo, endereco} até a lista de lojas e o
  *   formato da entrega com endereço chegarem.
  * - Extras do site que o exemplo não tem: unidades (lotes × unidades do lote), largura/altura/area (m²) e kit.
+ * - Medida livre (m²): quantidade = peças, price = total ÷ peças e precoTotal = total do item, porque o mínimo de 1 m²
+ *   vale no item inteiro (revisão da Padrão de 25/10/2026); `area` é a área cobrada de uma peça.
  * - pagamento.status 0 = aguardando; forma e parcelas vão junto.
  * - tipo_compra = "Site"; nome_trabalho = texto da arte do primeiro item (ou o nome) + "+ N itens"; precoTotal =
  *   soma dos itens no preço do cliente (balcão ou revenda). Sem desconto no PIX (revisão da Padrão de 25/10/2026).
@@ -72,6 +74,8 @@ export type LinePrices = {
   groupId: number;
   variations: Variation[];
   customSize?: CustomSize | null;
+  /** LED Neon montado pelo cliente (Frase/Logotipo): cobrança mínima de 0,25 m² por peça, sem o mínimo do item. */
+  neon?: "frase" | "logo" | null;
   reseller: boolean;
   /** Mínimo/máximo de unidades do produto (qtde_minima/qtde_maxima), para produtos vendidos por unidade. */
   limits?: { minQty: number; maxQty: number } | null;
@@ -90,16 +94,22 @@ export type PricedLine = {
   express: boolean;
   /** Preço de um lote (já com área, prazo e desconto de revenda), sem os acabamentos extras. */
   unitPrice: number;
+  /**
+   * Só o produto, sem os acabamentos: unitPrice × lotes, ou o total da área (m²), em que o mínimo de 1 m² vale no item
+   * inteiro e o preço por peça é só a divisão.
+   */
+  productTotal: number;
   lotSize: number;
   lots: number;
   units: number;
-  /** Produto (unitPrice × lotes) mais os acabamentos extras. */
+  /** Produto (productTotal) mais os acabamentos extras. */
   total: number;
   /** Acabamentos extras escolhidos, com preço e prazo (vazio quando não há). */
   acabamentos: CotacaoAcabamentos;
   /** Prazo do produto mais o dos acabamentos. */
   leadDays: number | null;
-  size: { widthCm: number; heightCm: number; areaM2: number; billedAreaM2: number } | null;
+  /** Medida livre: área de uma peça, a cobrada de uma peça e a cobrada no item (com o mínimo de 1 m²). */
+  size: { widthCm: number; heightCm: number; areaM2: number; billedAreaM2: number; billedTotalM2: number } | null;
   reseller: boolean;
 };
 
@@ -152,12 +162,15 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
   if (!(base > 0)) return fail("Produto sem preço de tabela. Fale com o atendimento para orçar.");
 
   let unitPrice = base;
+  let productTotal: number | null = null;
   let size: PricedLine["size"] = null;
   if (input.widthCm !== undefined || input.heightCm !== undefined) {
-    const area = areaQuote(base, input.widthCm ?? 0, input.heightCm ?? 0, prices.customSize);
+    // Limites da variação e mínimos de cobrança (1 m² no item; 0,25 m² por peça no LED), como na página do produto.
+    const area = areaQuote(base, input.widthCm ?? 0, input.heightCm ?? 0, areaRules({ customSize: prices.customSize, neon: prices.neon ?? undefined }, variation, { lines: input.options.Subtexto ? 2 : 1 }), input.quantity);
     if (area.error) return fail(area.error);
     unitPrice = area.price;
-    size = { widthCm: input.widthCm ?? 0, heightCm: input.heightCm ?? 0, areaM2: area.area, billedAreaM2: area.billedArea };
+    productTotal = area.total;
+    size = { widthCm: input.widthCm ?? 0, heightCm: input.heightCm ?? 0, areaM2: area.area, billedAreaM2: area.billedArea, billedTotalM2: area.billedTotal };
   }
   unitPrice = round2(unitPrice);
   const lotSize = variation.q || 1;
@@ -184,10 +197,11 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
     input,
     express,
     unitPrice,
+    productTotal: productTotal ?? round2(unitPrice * input.quantity),
     lotSize,
     lots: input.quantity,
     units,
-    total: round2(unitPrice * input.quantity + acabamentos.total),
+    total: round2((productTotal ?? unitPrice * input.quantity) + acabamentos.total),
     acabamentos,
     leadDays: leadDays !== null && leadDays !== undefined ? leadDays + acabamentos.prazo : null,
     size,
@@ -430,7 +444,7 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     productType: 0,
     quantidade: line.lots,
     price: line.unitPrice,
-    precoTotal: round2(line.unitPrice * line.lots),
+    precoTotal: round2(line.productTotal),
     variations,
     descricao: "",
     nomeTrabalho: job,

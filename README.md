@@ -191,7 +191,7 @@ npm test               # tipos de mockup, preços (m², expresso, grade) e token
 
 | Arquivo                        | Conteúdo                                                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/data/catalog.json`        | Categorias (banner, banner de celular e SEO) e produtos. Produto = grupo da API (uma página, slug igual ao do site oficial); variação = produto da API (ID que vai no pedido, preço e prazo econômico/expresso, quantidade, faixa de quantidade `mn`/`mx` quando a variação tem a sua (Caderno "De 11 até 100" = 11 a 100 unidades) e embalagem `em`: peso em kg, largura, altura e comprimento em cm e lotes por caixa, para o frete; `ei` quando a Padrão cadastrou só parte dela). Traz resumo, descrição, blocos de informação, gabarito, tags, SEO, "veja também", grade de tamanhos, tabela de medidas, medida livre (m²), criação de arte, anexos e quantidade mínima/máxima. O produto "Tags" é derivado do grupo 180 (tag de presente). |
+| `src/data/catalog.json`        | Categorias (banner, banner de celular e SEO) e produtos. Produto = grupo da API (uma página, slug igual ao do site oficial); variação = produto da API (ID que vai no pedido, preço e prazo econômico/expresso, quantidade, faixa de quantidade `mn`/`mx` quando a variação tem a sua (Caderno "De 11 até 100" = 11 a 100 unidades) e embalagem `em`: peso em kg, largura, altura e comprimento em cm e lotes por caixa, para o frete; `ei` quando a Padrão cadastrou só parte dela). Traz resumo, descrição, blocos de informação, gabarito, tags, SEO, "veja também", grade de tamanhos, tabela de medidas, medida livre (m²), criação de arte, anexos e quantidade mínima/máxima. As grafias repetidas de uma opção ("250gr"/"250g", maiúsculas, "1008"/"1008 unidades") viram uma só (`normalizeOptionValues`, src/lib/catalog-map.ts). |
 | `src/data/storefront.json`     | A vitrine do padraocolor.com.br: banners (desktop e celular, com a medida real das artes), botões das linhas 1 e 2, categorias em destaque, "Nossos Destaques", mais vendidos, menu oficial, texto e faixa do topo. Links do site oficial viram rotas locais (`/produto/…`, `/categoria/…`).                                                                       |
 | `src/data/business-types.json` | "Para o seu negócio": tipos de negócio com banner, SEO e grupos (páginas `/negocios/[slug]`).                                                                                                                                                                                                                                                                    |
 | `src/data/finishes.json`       | Acabamentos (`GET /acabamentos`).                                                                                                                                                                                                                                                                                                                                |
@@ -223,7 +223,7 @@ npm test
   - pública e só de leitura, com CORS; com `NOVOS_API_TOKEN` definido, exige `Authorization: Bearer <token>`.
 - **IDs reservados**, que nunca podem bater com os da Padrão: categoria `900000`, grupos `900001+`, variações `9000001+`.
   `src/lib/catalog-merge.ts` derruba o build se um slug, grupo ou ID de variação colidir com o `catalog.json`.
-- **Sincronização:** `scripts/sync-novos.mjs` usa o mesmo mapeamento do `sync-catalog.mjs` (`scripts/lib/catalog-map.mjs`).
+- **Sincronização:** `scripts/sync-novos.mjs` usa o mesmo mapeamento do `sync-catalog.mjs` (`src/lib/catalog-map.ts`).
   `NOVOS_API_URL` aponta para outro endereço (padrão `http://localhost:3100/api/novos`); `--local` lê a fonte sem servidor.
 - **Fora do site desde 25/10/2026.** A revisão da Padrão ("Observações Site Novo") pede que o site mostre só produtos da API
   dela, então `PRODUTOS_NOVOS_NO_SITE` (`src/lib/catalog.ts`) está `false`: sem a categoria "Produtos Novos", sem a aba do menu
@@ -335,10 +335,23 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
 ### Preço por m², prazo e grade de tamanhos
 
 - **Medida livre (m²).** Produtos com `customSize` (36 na API: banners, lonas, adesivos, rótulos, papéis, tecidos, placas e o
-  LED neon de logotipo) pedem largura × altura em cm. Preço da peça = preço da variação (por m²) × área cobrada, respeitando a
-  área mínima e os limites da API (em metros); a quantidade multiplica. Quando o produto também vende formatos fixos (Faixa
-  "2,00x0,60m", PS "Até 15x21cm"), o m² só vale na opção "Personalize a sua Medida"/"Personalizado". A API não calcula m²: o
-  valor vai no `precoTotal` do pedido e a medida em `widthCm`/`heightCm` do item do carrinho. O mockup 3D usa a medida digitada.
+  LED neon de logotipo) pedem largura × altura em cm. Regras (revisão da Padrão de 25/10/2026), em `areaRules`/`areaQuote`
+  (pricing.ts), as mesmas na página, no carrinho, na festa, na fachada e no pedido (`priceLine`):
+  - total do item = preço da variação (por m²) × máx(peças × máx(área da peça, `tamanho_minimo` da API), **1 m²**): o mínimo de
+    1 m² vale uma vez no item, não por peça; o preço por peça exibido é o total ÷ peças;
+  - limites da **variação escolhida**: o catálogo guarda os próprios dela em `lm` quando diferem dos do produto (ex.: PS "Até
+    15x21cm", máximo 0,15 × 0,21 m) e marca com `a: 0` a variação de preço fixo de um grupo misto (Faixa "2,00x0,60m"); leia
+    com `sizeLimitsOf`/`usesArea(…, variation)`;
+  - no pedido, `quantidade` = peças, `price` = total ÷ peças e `precoTotal` = total do item.
+  A API não calcula m²: a medida vai em `widthCm`/`heightCm` do item do carrinho. O mockup 3D usa a medida digitada.
+- **LED Neon montado pelo cliente** (`Product.neon`): cobrança mínima de 0,25 m² por peça, sem o mínimo de 1 m²; o "a partir
+  de" da vitrine já é esse mínimo (R$ 560,50 na Frase, R$ 647,38 no Logotipo).
+  - *Crie sua Frase (290, `neon: "frase"`)*: o cliente escreve o texto e escolhe a largura; a altura sai da proporção do
+    texto medida no canvas (`neonTextBox`, art.ts), e o passo "Tamanho do letreiro" (`NeonSizeStep`) aplica as regras do site
+    atual (`NEON_FRASE`: largura de 15 a 198 cm, altura de 15 cm por linha +3 cm com mais de uma e abaixo de 98 cm, "Até
+    50cm"/"Acima de 50cm", aviso de retirada só em São João acima de 175 cm). O servidor refaz com as linhas pelo `Subtexto`.
+  - *Logotipo (289, `neon: "logo"`)*: m² com quantidade; a arte é só por arquivo (`ArtStep uploadOnly`), sem editor de texto.
+  - O Led Neon Número (298) vem com a mesma customização 4 da API, mas é peça de preço fixo: não é `neon`.
 - **Econômico × expresso.** Cada variação traz preço e prazo dos dois; a página oferece a escolha quando o expresso muda o
   preço ou o prazo (`express: true` no item do carrinho).
 - **Grade de vestuário.** Camisas com `sizes` pedem a quantidade por tamanho; o total respeita `minQty`/`maxQty` (lotes "de 11 a

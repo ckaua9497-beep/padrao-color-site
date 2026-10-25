@@ -106,6 +106,7 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
             sizes: product.sizes ?? null,
             sizeChart: product.sizeChart ?? null,
             customSize: product.customSize ?? null,
+            ...(product.neon ? { neon: product.neon } : {}),
             template: product.template ?? null,
             printTemplate: productTemplate(product.id),
             summary: product.summary,

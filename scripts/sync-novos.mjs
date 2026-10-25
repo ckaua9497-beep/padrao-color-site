@@ -5,14 +5,14 @@
 //   npm run sync:novos              lê NOVOS_API_URL (padrão http://localhost:3100/api/novos: suba o `npm run dev` antes)
 //   npm run sync:novos -- --local   sem servidor: monta as mesmas respostas direto de src/data/novos/fonte.json
 //
-// O mapeamento grupo/variação → produto é o mesmo do sync-catalog.mjs (scripts/lib/catalog-map.mjs).
+// O mapeamento grupo/variação → produto é o mesmo do sync-catalog.mjs (src/lib/catalog-map.ts).
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTransport, classifyNetworkError } from "../src/lib/api/transport.ts";
 import { novosCategorias, novosGrupos, novosProdutos } from "../src/lib/novos-api.ts";
-import { buildCategories, mapGroup, parseImageSize } from "./lib/catalog-map.mjs";
+import { buildCategories, mapGroup, parseImageSize } from "../src/lib/catalog-map.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const LOCAL = process.argv.includes("--local");

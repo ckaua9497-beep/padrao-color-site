@@ -48,6 +48,7 @@ import { fitToTemplate, madeForTemplate, type Gabarito } from "./gabarito/jobs";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { ART_ACCEPT } from "@/lib/image-prep";
 import { uploadProblem } from "@/lib/art-files";
+import { ARQUIVO_UNICO, camposVisiveis } from "@/lib/customizacao";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
@@ -61,7 +62,10 @@ type Props = {
   family: ArtFamily;
   /** Produto vendido sem impressão: a arte serve só para simular, não é exigida. */
   blank?: boolean;
-  /** Arquivos complementares que a variação aceita (faca de corte, máscara de branco, verniz…) e os já escolhidos. */
+  /**
+   * Campos de "Arquivos para a produção" da variação (anexosDeProducao: o arquivo único e os separados da API) e os já
+   * escolhidos, por tipo de anexo.
+   */
   extraTypes?: readonly string[];
   extraFiles?: Record<string, File>;
   onExtraFile?: (tipo: string, file: File | null) => void;
@@ -72,6 +76,11 @@ type Props = {
   onFile: (file: File | undefined, options?: { raw?: boolean }) => void;
   uploadError: string | null;
   uploading: boolean;
+  /**
+   * Só envio de arquivo, sem o editor de texto: LED Neon Logotipo (289), que é um desenho do cliente (regra do site
+   * atual: "não há simulador; o cliente envia o arquivo da arte").
+   */
+  uploadOnly?: boolean;
   /** "Enviar arte depois": só nas lojas da multiloja, que recebem a arte na página do pedido. Sem `onArtLater`, some. */
   artLater?: boolean;
   onArtLater?: (value: boolean) => void;
@@ -125,7 +134,7 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -142,7 +151,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
     if (back) onArt((a) => ({ ...a, back: { ...update(a.back ?? blankBack(a)), back: null } }));
     else onArt(update);
   };
-  const mode = modes[side === "back" && twoSided ? "back" : "front"];
+  const mode: Mode = uploadOnly ? "imagem" : modes[side === "back" && twoSided ? "back" : "front"];
   const setMode = (value: Mode) => setModes((m) => ({ ...m, [back ? "back" : "front"]: value }));
 
   const neon = family === "neon";
@@ -319,16 +328,19 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             ]}
           />
         )}
-        <SegmentedControl
-          label="Como montar a arte"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { value: "texto", label: "Escrever texto" },
-            { value: "imagem", label: "Enviar imagem" },
-          ]}
-        />
+        {!uploadOnly && (
+          <SegmentedControl
+            label="Como montar a arte"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "texto", label: "Escrever texto" },
+              { value: "imagem", label: "Enviar imagem" },
+            ]}
+          />
+        )}
       </div>
+      {uploadOnly && <p className="mt-2 text-caption text-muted">O logotipo é um desenho seu: envie o arquivo (de preferência em vetor: PDF, AI, CDR ou SVG). A prévia em 3D é ilustrativa.</p>}
       {back && (
         <p className="mt-2 text-caption text-muted">
           {pieceKind === "tshirt" ? "Logo ou texto nas costas" : "Arte do verso"}: vazio, o verso sai sem impressão.
@@ -502,7 +514,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
 
-      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ExtraFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} />}
+      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (backUpload.name ?? "imagem do verso") : null} />}
 
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
@@ -516,15 +528,23 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       )}
       {missing && (
         <p role="alert" className="mt-2 text-sm font-semibold text-coral-700">
-          {onArtLater ? "Escreva um texto, envie a arte ou marque “Enviar arte depois” para continuar." : "Escreva um texto ou envie a arte para continuar."}
+          {uploadOnly ? "Envie o arquivo do logotipo para continuar." : onArtLater ? "Escreva um texto, envie a arte ou marque “Enviar arte depois” para continuar." : "Escreva um texto ou envie a arte para continuar."}
         </p>
       )}
     </li>
   );
 }
 
-/** Arquivos complementares da variação (um campo por tipo de anexo): opcionais, vão junto da arte no pedido. */
-function ExtraFiles({ types, files, onFile }: { types: readonly string[]; files: Record<string, File>; onFile: (tipo: string, file: File | null) => void }) {
+/** Arquivos prontos para a produção: PDF, imagens, PSD, AI, CDR, EPS e SVG (o servidor confere a extensão e o tamanho). */
+const PRODUCTION_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.svg,.tif,.tiff,.psd,.ai,.eps,.cdr,.zip,.rar";
+
+/**
+ * "Arquivos para a produção" (revisão da Padrão de 25/10/2026, "Anexo de Arquivos"): para quem já tem a arte pronta.
+ * Um arquivo único com todas as páginas ou um arquivo por parte (frente, verso, verniz, faca…), conforme a variação
+ * aceita na API. Enviar o arquivo único esconde os separados e enviar um separado esconde o único (camposVisiveis). Sem
+ * arquivo próprio na frente ou no verso, vale a imagem enviada no editor acima.
+ */
+function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { types: readonly string[]; files: Record<string, File>; onFile: (tipo: string, file: File | null) => void; editorFront: string | null; editorBack: string | null }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const pick = (tipo: string, file: File | undefined) => {
     if (!file) return;
@@ -532,40 +552,52 @@ function ExtraFiles({ types, files, onFile }: { types: readonly string[]; files:
     setErrors((e) => ({ ...e, [tipo]: problem ?? "" }));
     if (!problem) onFile(tipo, file);
   };
+  const visible = camposVisiveis(types, files);
+  const single = visible.filter((tipo) => tipo === ARQUIVO_UNICO);
+  const separate = visible.filter((tipo) => tipo !== ARQUIVO_UNICO);
+  const fromEditor = (tipo: string) => (tipo === "Impressão Frente" ? editorFront : tipo === "Impressão Verso" ? editorBack : null);
+  const row = (tipo: string) => {
+    const file = files[tipo];
+    const editor = !file ? fromEditor(tipo) : null;
+    return (
+      <li key={tipo} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="min-w-36 text-sm font-semibold">{tipo === ARQUIVO_UNICO ? "Arquivo único" : tipo}</span>
+        {file ? (
+          <>
+            <span className="min-w-0 flex-1 truncate text-sm text-muted">{file.name}</span>
+            <Button variant="link" size="sm" onClick={() => onFile(tipo, null)}>
+              Remover
+            </Button>
+          </>
+        ) : (
+          <>
+            {editor && <span className="min-w-0 flex-1 truncate text-sm text-muted">a imagem enviada acima ({editor})</span>}
+            <label className="cursor-pointer text-sm font-bold text-coral-700 underline-offset-2 hover:underline">
+              {editor ? "Trocar" : "Enviar arquivo"}
+              <input type="file" accept={PRODUCTION_ACCEPT} className="sr-only" onChange={(event) => pick(tipo, event.target.files?.[0])} />
+            </label>
+          </>
+        )}
+        {errors[tipo] && (
+          <p role="alert" className="w-full text-caption font-semibold text-coral-700">
+            {errors[tipo]}
+          </p>
+        )}
+      </li>
+    );
+  };
   return (
     <div className="mt-4 rounded-card bg-white p-4 ring-1 ring-line">
       <p className="text-[15px] font-bold">
-        Arquivos complementares <span className="font-normal text-muted">· opcionais</span>
+        Arquivos para a produção <span className="font-normal text-muted">· opcionais</span>
       </p>
-      <p className="mt-1 text-caption text-muted">Esta opção aceita arquivos separados para a produção. Se não tiver, a equipe pede depois.</p>
-      <ul className="mt-3 grid gap-2">
-        {types.map((tipo) => {
-          const file = files[tipo];
-          return (
-            <li key={tipo} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="min-w-36 text-sm font-semibold">{tipo}</span>
-              {file ? (
-                <>
-                  <span className="min-w-0 flex-1 truncate text-sm text-muted">{file.name}</span>
-                  <Button variant="link" size="sm" onClick={() => onFile(tipo, null)}>
-                    Remover
-                  </Button>
-                </>
-              ) : (
-                <label className="cursor-pointer text-sm font-bold text-coral-700 underline-offset-2 hover:underline">
-                  Enviar arquivo
-                  <input type="file" className="sr-only" onChange={(event) => pick(tipo, event.target.files?.[0])} />
-                </label>
-              )}
-              {errors[tipo] && (
-                <p role="alert" className="w-full text-caption font-semibold text-coral-700">
-                  {errors[tipo]}
-                </p>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <p className="mt-1 text-caption text-muted">
+        Já tem a arte pronta? Envie um arquivo único com todas as páginas ou um arquivo para cada parte (PDF, JPG, PNG, PSD, AI, CDR, EPS ou SVG).
+        {files[ARQUIVO_UNICO] ? " O arquivo único vai para a produção no lugar da arte montada acima." : ""}
+      </p>
+      {single.length > 0 && <ul className="mt-3 grid gap-2">{single.map(row)}</ul>}
+      {single.length > 0 && separate.length > 0 && <p className="my-2 text-center text-sm font-bold text-coral-700">ou</p>}
+      {separate.length > 0 && <ul className={cx("grid gap-2", !single.length && "mt-3")}>{separate.map(row)}</ul>}
     </div>
   );
 }

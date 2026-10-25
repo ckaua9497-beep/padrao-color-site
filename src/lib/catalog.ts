@@ -40,6 +40,13 @@ export type Variation = {
   cz?: number;
   /** Acabamentos extras que a variação aceita: índices em `Product.acabamentos`. Ver acabamentosDa. */
   ac?: number[];
+  /**
+   * Limites próprios da medida livre (m²) da variação, quando diferem dos do produto: [largura mín., máx., altura mín.,
+   * máx., área mín., máx.] em metros (0 = sem limite). Ex.: Impressão em PS "Até 15x21cm". Ver sizeLimitsOf (pricing.ts).
+   */
+  lm?: [number, number, number, number, number, number];
+  /** 0 = variação de preço fixo num produto com medida livre (Faixa, grupo 37). Ver variationUsesArea (pricing.ts). */
+  a?: 0;
 };
 
 export type InfoBlock = { title: string; text: string };
@@ -83,6 +90,11 @@ export type Product = {
   /** Medidas por tamanho, lidas da "Tabela de Medidas" da API. */
   sizeChart?: SizeChartRow[] | null;
   customSize?: CustomSize | null;
+  /**
+   * LED Neon montado pelo cliente: "frase" (Crie sua Frase, medida pelo texto) ou "logo" (Logotipo, medida digitada).
+   * Cobrança mínima de 0,25 m² (NEON_MIN_AREA_M2); `price` já é esse mínimo. Ver neonQuote (pricing.ts).
+   */
+  neon?: "frase" | "logo";
   /** Perfis de customização das variações (modo da arte, anexos aceitos, criação de arte, web2print). */
   customizacoes?: Customizacao[];
   /** Acabamentos extras distintos das variações (serrilha, furo, laminação…), com preço e prazo. */
@@ -319,7 +331,8 @@ export function toSummary(p: Product): ProductSummary {
     leadDays: p.leadDays,
     isNew: p.isNew,
     bestSeller: p.bestSeller,
-    ...(p.customSize ? { perM2: true } : {}),
+    // LED: o "a partir de" já é o preço mínimo da peça (0,25 m²), não o do m².
+    ...(p.customSize && !p.neon ? { perM2: true } : {}),
   };
 }
 
@@ -336,7 +349,7 @@ export function getSearchIndex(): SearchEntry[] {
     q: p.priceQty,
     ...(p.groupId ? { g: p.groupId } : {}),
     ...(p.tags?.length ? { t: p.tags.join(" ") } : {}),
-    ...(p.customSize ? { m: 1 as const } : {}),
+    ...(p.customSize && !p.neon ? { m: 1 as const } : {}),
   }));
 }
 

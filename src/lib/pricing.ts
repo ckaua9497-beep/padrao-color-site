@@ -82,12 +82,95 @@ export function quote(
 
 // ---------------------------------------------------------------------------------- medida livre (m²)
 
+/** Opção que escolhe a medida ou o formato ("Formato", "Tamanho", "Medida"). */
+const FORMAT_KEY = /formato|tamanho|medida/i;
+
+/**
+ * Área mínima cobrada por item nos produtos por m² (revisão da Padrão de 25/10/2026: "Produtos por m² - Todos possuem
+ * o valor mínimo de 1m2"). Vale uma vez no item, sobre a área de todas as peças, e não por peça.
+ */
+export const AREA_MIN_ITEM_M2 = 1;
+/** LED Neon montado pelo cliente (Frase e Logotipo): cobrança mínima de 0,25 m² por peça, sem o mínimo de 1 m² do item. */
+export const NEON_MIN_AREA_M2 = 0.25;
+
+/** Limites (metros) e mínimos de cobrança de um item por m². */
+export type AreaRules = {
+  limits: CustomSize | null;
+  /** Área mínima cobrada por peça (tamanho_minimo da API; 0,25 m² no LED). */
+  minPieceM2: number;
+  /** Área mínima cobrada no item inteiro (1 m²; 0 no LED). */
+  minItemM2: number;
+};
+
+/** Limites da medida livre da variação: os próprios dela (`lm`, ex.: PS "Até 15x21cm") ou os do produto. */
+export function sizeLimitsOf(customSize: CustomSize | null | undefined, variation?: Pick<Variation, "lm"> | null): CustomSize | null {
+  if (!customSize) return null;
+  const lm = variation?.lm;
+  return lm ? { minWidth: lm[0], maxWidth: lm[1], minHeight: lm[2], maxHeight: lm[3], minArea: lm[4], maxArea: lm[5] } : customSize;
+}
+
+/**
+ * "Crie sua Frase em Led Neon" (290), regras de medida do site atual: largura de 15 a 198 cm; altura de pelo menos 15 cm
+ * por linha (+3 cm com mais de uma linha) e abaixo de 98 cm; a opção Formato "Até 50cm" vai até 50 cm de largura e
+ * "Acima de 50cm" começa nos 50 cm. Acima de 175 cm de largura, o letreiro só sai retirado na loja de São João de Meriti.
+ */
+export const NEON_FRASE = { minWidthCm: 15, maxWidthCm: 198, splitWidthCm: 50, lineHeightCm: 15, extraLinesCm: 3, maxHeightCm: 98, pickupOnlyAboveCm: 175 } as const;
+
+/** Altura mínima do letreiro: 15 cm por linha, mais 3 cm quando tem mais de uma. */
+export function neonFraseMinHeightCm(lines: number): number {
+  const n = Math.max(1, Math.round(lines) || 1);
+  return n * NEON_FRASE.lineHeightCm + (n > 1 ? NEON_FRASE.extraLinesCm : 0);
+}
+
+/** Valor da opção de formato/tamanho da variação ("Até 50cm", "Acima de 50cm"). */
+function formatOf(variation: Partial<Pick<Variation, "v">> | null | undefined): string {
+  const entry = Object.entries(variation?.v ?? {}).find(([key]) => FORMAT_KEY.test(cleanOptionLabel(key)));
+  return entry?.[1] ?? "";
+}
+
+/** Limites (metros) da Frase em LED para o formato escolhido e o número de linhas. */
+export function neonFraseLimits(format: string, lines = 1): CustomSize {
+  const upTo = /at[eé]\s*50/i.test(format);
+  const above = /acima\s*de\s*50/i.test(format);
+  return {
+    minWidth: (above ? NEON_FRASE.splitWidthCm : NEON_FRASE.minWidthCm) / 100,
+    maxWidth: (upTo ? NEON_FRASE.splitWidthCm : NEON_FRASE.maxWidthCm) / 100,
+    minHeight: neonFraseMinHeightCm(lines) / 100,
+    maxHeight: NEON_FRASE.maxHeightCm / 100,
+    minArea: 0,
+    maxArea: 0,
+  };
+}
+
+/**
+ * Regras de cobrança por m² do produto na variação escolhida (limites do SKU, mínimos da peça e do item). Na Frase em
+ * LED, os limites saem do formato e de `lines` (as linhas de tubo do texto).
+ */
+export function areaRules(product: { customSize?: CustomSize | null; neon?: "frase" | "logo" }, variation?: (Pick<Variation, "lm"> & Partial<Pick<Variation, "v">>) | null, { lines = 1 }: { lines?: number } = {}): AreaRules {
+  if (product.neon === "frase") return { limits: neonFraseLimits(formatOf(variation), lines), minPieceM2: NEON_MIN_AREA_M2, minItemM2: 0 };
+  const limits = sizeLimitsOf(product.customSize, variation);
+  if (product.neon) return { limits, minPieceM2: Math.max(limits?.minArea ?? 0, NEON_MIN_AREA_M2), minItemM2: 0 };
+  return { limits, minPieceM2: limits?.minArea ?? 0, minItemM2: AREA_MIN_ITEM_M2 };
+}
+
+/** Regras de um item por m² só com os limites (materiais da fachada, conferências): mínimo de 1 m² no item. */
+export function plainAreaRules(limits: CustomSize | null | undefined): AreaRules {
+  return { limits: limits ?? null, minPieceM2: limits?.minArea ?? 0, minItemM2: AREA_MIN_ITEM_M2 };
+}
+
 export type AreaQuote = {
-  /** Área pedida em m². */
+  /** Área pedida de uma peça, em m². */
   area: number;
-  /** Área cobrada (respeita a área mínima do produto). */
+  /** Área cobrada de uma peça (respeita a área mínima da peça). */
   billedArea: number;
+  /** Área cobrada no item inteiro: peças × área da peça, no mínimo a do item (1 m²). */
+  billedTotal: number;
+  /** Total do item (só o produto): preço do m² × área cobrada no item. */
+  total: number;
+  /** Preço de uma peça para exibir (total ÷ peças). */
   price: number;
+  /** O mínimo do item (1 m²) subiu o total. */
+  itemMinimum: boolean;
   /** Mensagem quando a medida sai dos limites do produto; null = medida válida. */
   error: string | null;
 };
@@ -95,10 +178,13 @@ export type AreaQuote = {
 const fmtM = (m: number) => `${m.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m`;
 
 /**
- * Preço de produto vendido por m² (banner, adesivo, papel, lona, tecido): preço da variação (formato 1x1)
- * × área. A API não calcula m²: o site calcula e manda o valor no `precoTotal` do pedido.
+ * Preço de produto vendido por m² (banner, adesivo, papel, lona, tecido, LED): preço da variação (formato 1x1) × área
+ * cobrada, com `qty` peças iguais. A peça cobra no mínimo `minPieceM2` e o item, no mínimo `minItemM2` (1 m² uma vez
+ * no item). A API não calcula m²: o site calcula e manda o valor no `precoTotal` do pedido.
  */
-export function areaQuote(pricePerM2: number, widthCm: number, heightCm: number, limits?: CustomSize | null): AreaQuote {
+export function areaQuote(pricePerM2: number, widthCm: number, heightCm: number, rules: AreaRules, qty = 1): AreaQuote {
+  const { limits } = rules;
+  const pieces = Math.max(1, Math.round(qty) || 1);
   const w = Math.max(0, widthCm) / 100;
   const h = Math.max(0, heightCm) / 100;
   const area = Math.round(w * h * 10_000) / 10_000;
@@ -111,8 +197,11 @@ export function areaQuote(pricePerM2: number, widthCm: number, heightCm: number,
     else if (limits.minHeight && h < limits.minHeight) error = `Altura mínima: ${fmtM(limits.minHeight)}.`;
     else if (limits.maxArea && area > limits.maxArea) error = `Área máxima: ${limits.maxArea.toLocaleString("pt-BR")} m².`;
   }
-  const billedArea = Math.max(area, limits?.minArea ?? 0);
-  return { area, billedArea, price: Math.round(pricePerM2 * billedArea * 100) / 100, error };
+  const billedArea = Math.max(area, rules.minPieceM2);
+  const pieceTotal = Math.round(billedArea * pieces * 10_000) / 10_000;
+  const billedTotal = Math.max(pieceTotal, rules.minItemM2);
+  const total = Math.round(pricePerM2 * billedTotal * 100) / 100;
+  return { area, billedArea, billedTotal, total, price: Math.round((total / pieces) * 100) / 100, itemMinimum: billedTotal > pieceTotal, error };
 }
 
 /** "1,5" ou "1.5" → 1,5; vazio ou inválido → 0. */
@@ -121,16 +210,16 @@ export function parseMeasure(text: string): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-const FORMAT_KEY = /formato|tamanho|medida/i;
 const CUSTOM_VALUE = /personaliz/i;
 
 /**
- * O preço da seleção é por m²? Vale para todo produto com medida livre, exceto quando ele também vende
- * formatos fixos com preço por peça (Faixa "2,00x0,60m", PS "Até 15x21cm") e um deles está escolhido:
- * aí o m² só vale na opção "Personalize a sua Medida"/"Personalizado".
+ * O preço da seleção é por m²? Com a variação escolhida, vale o que a API diz dela (`informa_medida`: a variação de
+ * preço fixo de um grupo misto, como a Faixa "2,00x0,60m", vem com `a: 0`). Sem variação, o critério antigo: num
+ * produto que também vende formatos fixos, o m² só vale na opção "Personalize a sua Medida"/"Personalizado".
  */
-export function usesArea(options: Record<string, string[]>, selection: Selection, customSize: CustomSize | null | undefined): boolean {
+export function usesArea(options: Record<string, string[]>, selection: Selection, customSize: CustomSize | null | undefined, variation?: Pick<Variation, "a"> | null): boolean {
   if (!customSize) return false;
+  if (variation) return variation.a !== 0;
   const key = Object.keys(options).find((k) => FORMAT_KEY.test(cleanOptionLabel(k)) && options[k].some((v) => CUSTOM_VALUE.test(v)));
   if (!key) return true;
   return CUSTOM_VALUE.test(selection[key] ?? "");
@@ -139,7 +228,7 @@ export function usesArea(options: Record<string, string[]>, selection: Selection
 /** Medida em cm dentro dos limites do produto (limites em metros; 0 = sem limite). */
 export function fitsLimits(widthCm: number, heightCm: number, limits: CustomSize | null | undefined): boolean {
   if (!limits) return widthCm > 0 && heightCm > 0;
-  return areaQuote(1, widthCm, heightCm, limits).error === null;
+  return areaQuote(1, widthCm, heightCm, plainAreaRules(limits)).error === null;
 }
 
 // Medidas rápidas por tipo de peça (cm). O subtipo vence o tipo ("strip" = faixa, "mini" = mini banner).
@@ -178,20 +267,25 @@ export function defaultSize(kind: string, variant: string | null, limits: Custom
 
 const fmtArea = (m2: number) => `${m2.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²`;
 
-/** Resumo dos limites para o cliente: "Largura até 2 m · altura até 50 m · cobrança mínima de 0,5 m²". */
-export function limitsHint(limits: CustomSize | null | undefined): string | null {
-  if (!limits) return null;
+/**
+ * Resumo dos limites para o cliente: "Largura até 2 m · altura até 50 m · cobrança mínima de 0,5 m² por peça · mínimo
+ * de 1 m² no pedido". Com as regras do item, inclui os mínimos de cobrança.
+ */
+export function limitsHint(limits: CustomSize | null | undefined, rules?: Pick<AreaRules, "minPieceM2" | "minItemM2">): string | null {
+  if (!limits && !rules) return null;
   const range = (label: string, min: number, max: number) => {
     if (min && max) return `${label} de ${fmtM(min)} a ${fmtM(max)}`;
     if (max) return `${label} até ${fmtM(max)}`;
     if (min) return `${label} a partir de ${fmtM(min)}`;
     return null;
   };
+  const minPiece = rules ? rules.minPieceM2 : (limits?.minArea ?? 0);
   const parts = [
-    range("largura", limits.minWidth, limits.maxWidth),
-    range("altura", limits.minHeight, limits.maxHeight),
-    limits.maxArea ? `área até ${fmtArea(limits.maxArea)}` : null,
-    limits.minArea ? `cobrança mínima de ${fmtArea(limits.minArea)}` : null,
+    limits ? range("largura", limits.minWidth, limits.maxWidth) : null,
+    limits ? range("altura", limits.minHeight, limits.maxHeight) : null,
+    limits?.maxArea ? `área até ${fmtArea(limits.maxArea)}` : null,
+    minPiece ? `cobrança mínima de ${fmtArea(minPiece)} por peça` : null,
+    rules?.minItemM2 ? `mínimo de ${fmtArea(rules.minItemM2)} no pedido` : null,
   ].filter(Boolean) as string[];
   if (!parts.length) return null;
   const text = parts.join(" · ");

@@ -2,6 +2,7 @@ import "server-only";
 
 import { getProductByGroupId, getProducts, type CustomSize, type Product, type Variation } from "../catalog";
 import type { LinePrices } from "../orders";
+import { NEON_MIN_AREA_M2 } from "../pricing";
 import { applyResellerDiscount, resellerDiscountRate, variationsFromApi, type ResellerAccount } from "../reseller";
 import { ApiError } from "./client";
 import { getProdutos } from "./padrao";
@@ -21,6 +22,8 @@ export type GroupPrices = {
   /** Categoria do catálogo (define o segmento do desconto de revenda). */
   category: string;
   customSize: CustomSize | null;
+  /** LED Neon montado pelo cliente (Frase/Logotipo), cobrado por m² com mínimo de 0,25 m² por peça. */
+  neon: "frase" | "logo" | null;
   reseller: boolean;
   /** Produto novo da API própria (/api/novos): a Padrão ainda não tem; sem tabela de revenda nem pedido direto. */
   local: boolean;
@@ -89,20 +92,30 @@ async function resellerTable(groupId: number, account: PriceAccount, cacheOnly =
 export async function groupPrices(groupId: number, account: PriceAccount | null, { cacheOnly = false } = {}): Promise<GroupPrices | null> {
   const product = catalogProduct(groupId);
   if (!product) return null;
-  const base = { groupId, category: product.category, customSize: product.customSize ?? null, local: product.source === "site", ...quantityLimits(product), acabamentos: productFinishes(product) };
+  const base = { groupId, category: product.category, customSize: product.customSize ?? null, neon: product.neon ?? null, local: product.source === "site", ...quantityLimits(product), acabamentos: productFinishes(product) };
   // Produto novo (API própria): não existe na API da Padrão, então não há tabela de revenda para buscar.
   if (!account?.reseller || base.local) return { ...base, reseller: false, variations: product.variations };
   const variations = await resellerTable(groupId, account, cacheOnly);
   // Grupo sem tabela de revenda na API: fica no preço de balcão.
   if (!variations.some((variation) => variation.p > 0)) return { ...base, reseller: false, variations: product.variations };
-  return { ...base, reseller: true, variations };
+  // A tabela de revenda vem crua da API: os limites próprios da medida e a marca de preço fixo saem do catálogo (mesmo ID).
+  const own = new Map(product.variations.map((v) => [v.id, v]));
+  const withSize = variations.map((v) => {
+    const mine = v.id !== undefined ? own.get(v.id) : undefined;
+    return mine && (mine.lm || mine.a === 0) ? { ...v, ...(mine.lm ? { lm: mine.lm } : {}), ...(mine.a === 0 ? { a: 0 as const } : {}) } : v;
+  });
+  return { ...base, reseller: true, variations: withSize };
 }
 
-/** "A partir de" do card: a variação mais barata com preço (mesmo critério do scripts/sync-catalog.mjs). */
-export function fromPrice(variations: Variation[]): { p: number; q: number } | null {
+/**
+ * "A partir de" do card: a variação mais barata com preço (mesmo critério do src/lib/catalog-map.ts). No LED montado pelo
+ * cliente (`neon`), o preço da variação é o do m²: o "a partir de" é a área mínima (0,25 m²) nele, por peça.
+ */
+export function fromPrice(variations: Variation[], { neon = false }: { neon?: boolean } = {}): { p: number; q: number } | null {
   let best: Variation | null = null;
   for (const variation of variations) if (variation.p > 0 && (!best || variation.p < best.p)) best = variation;
-  return best ? { p: best.p, q: best.q } : null;
+  if (!best) return null;
+  return neon ? { p: Math.round(best.p * NEON_MIN_AREA_M2 * 100) / 100, q: 1 } : { p: best.p, q: best.q };
 }
 
 /**
@@ -116,6 +129,7 @@ export function linePricesFor(prices: GroupPrices, account: ResellerAccount | nu
     groupId: prices.groupId,
     variations: applyResellerDiscount(prices.variations, rate),
     customSize: prices.customSize,
+    neon: prices.neon,
     reseller: prices.reseller,
     limits: { minQty: prices.minQty, maxQty: prices.maxQty },
     acabamentos: prices.acabamentos,

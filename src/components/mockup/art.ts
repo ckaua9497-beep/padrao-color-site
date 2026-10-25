@@ -2427,6 +2427,51 @@ function neonStroke(ctx: CanvasRenderingContext2D, draw: () => void, color: stri
   draw();
 }
 
+/**
+ * Caixa natural do letreiro de neon com o texto do cliente (a mesma tipografia, subtexto, extras e folga do tubo que o
+ * drawNeon usa): `aspect` = largura ÷ altura e `lines` = linhas de tubo (texto + subtexto). O "Crie sua Frase em Led
+ * Neon" (290) é medido assim, como no site atual, em que o sistema mede a caixa do texto: o cliente escolhe a largura e a
+ * altura sai da proporção. Só no navegador (mede no canvas); sem document, devolve 2:1.
+ */
+export function neonTextBox(art: Pick<ArtSettings, "text" | "subtext" | "style" | "font">): { aspect: number; lines: number } {
+  const fallback = { aspect: 2, lines: 1 };
+  if (typeof document === "undefined") return fallback;
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return fallback;
+  const look = NEON_LOOK[styleOf(art.style)];
+  const typed = art.text.trim();
+  const typedSub = (art.subtext ?? "").trim();
+  const text = typed || typedSub || SAMPLE_TEXT.neon;
+  const subText = typed ? typedSub : "";
+  const font: ArtFont = art.font === "figtree" ? look.font : art.font;
+  const type: Type = { font, weight: font === look.font ? look.weight : undefined, caps: look.caps, tracking: look.tracking, lineHeight: 1.12 };
+  const size = 100;
+  const caps = (value: string, t: Type) => (t.caps && !isScriptFont(t.font) ? value.toLocaleUpperCase("pt-BR") : value);
+  setType(ctx, type, size);
+  const mainW = widest(ctx, [caps(text, type)]) - trackingPx(type, size);
+  const mainH = size * 0.92;
+  const subType: Type = { font: "neon", caps: true, tracking: 0.18 };
+  const subSize = size * 0.4;
+  let subW = 0;
+  if (subText) {
+    setType(ctx, subType, subSize);
+    subW = widest(ctx, [caps(subText, subType)]) - trackingPx(subType, subSize);
+  }
+  const subH = subText ? subSize * 0.92 : 0;
+  const gap = size * 0.32;
+  const total = mainH + (subH ? gap + subH : 0);
+  let halfW = Math.max(mainW, subW) / 2;
+  let extent = total;
+  if (look.extra === "frame") {
+    halfW = Math.max(halfW, (mainW + size * 0.9) / 2);
+    extent = Math.max(total, total + size * 0.7);
+  } else if (look.extra && !subH) extent = mainH + gap * 0.5 + size * 0.45;
+  const pad = size * look.tube + size * 0.04;
+  const bw = halfW * 2 + pad * 2 + (look.extra === "double" ? size * 0.06 : 0);
+  const bh = extent + pad * 2;
+  return { aspect: bw > 0 && bh > 0 ? bw / bh : fallback.aspect, lines: subText ? 2 : 1 };
+}
+
 function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HTMLImageElement | null, art: ArtRender, info: PaintInfo) {
   ctx.clearRect(0, 0, w, h);
   const unit = Math.min(w, h);

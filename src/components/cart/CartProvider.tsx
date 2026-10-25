@@ -348,6 +348,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           groupId: entry.data.groupId,
           variations: customerVariations({ category, priceTable }, entry.data),
           customSize: entry.data.customSize,
+          neon: entry.data.neon,
           reseller: entry.data.reseller,
           acabamentos: entry.data.acabamentos ?? null,
         });

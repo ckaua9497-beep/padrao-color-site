@@ -15,6 +15,9 @@ export const ART_UPLOAD_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
+  // BMP e JFIF abrem na página do produto (image-prep.ts); sem eles aqui, o checkout recusava o arquivo.
+  jfif: "image/jpeg",
+  bmp: "image/bmp",
   webp: "image/webp",
   avif: "image/avif",
   gif: "image/gif",
