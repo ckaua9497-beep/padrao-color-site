@@ -43,6 +43,12 @@ The Padrão Color API (`PADRAO_API_URL`; the lab host answers only over HTTPS) i
 2. `src/lib/catalog.ts` exposes that data.
 3. Pages are generated from it. Product = API group; variation = API product, whose ID goes into the order.
 
+**Live catalog** (`PADRAO_CATALOGO_VIVO=true`, never during `next build`; README "Catálogo em tempo real").
+- `src/lib/catalogo-vivo.ts` reads `GET /grupos` (active groups and group fields) and `GET /produtos?id_grupo=` (variations, built with the same `mapGroup`), with in-memory caches and `catalog.json` as the fallback.
+- `catalog.ts` exports `catalogView(file)`. The sync exports stay synchronous; `await catalogoVivo()` returns the same functions over the live data.
+- New pages or routes that show or price products must use `catalogoVivo()` (listings, menu, search index) or `produtoDoGrupo()`/`produtoDaPagina()` (product page, cart, order), and the page needs `revalidate = 600`.
+- Pure rules live in `src/lib/catalogo-grupos.ts`. Local simulator: `scripts/padrao-mock.mjs` (port 3194, use `127.0.0.1`).
+
 At runtime, only account, order, price and template routes call the API:
 - They live in `src/app/api/*` and use `src/lib/api/client.ts` and `padrao.ts`. Both are `server-only`, so the integration token and customer tokens never reach the browser.
 - The API host does not send the Let's Encrypt intermediate certificate, so Node's `fetch` rejects it (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) and every call (login, signup, prices, orders) fails. The transport in `src/lib/api/transport.ts` (used by `client.ts` and `sync-catalog.mjs`) therefore uses `node:https` with the chain in `src/lib/api/tls-chain.ts`. `tls-chain.test.ts` fails 60 days before those certificates expire; refresh them from `http://<name>.i.lencr.org/`.

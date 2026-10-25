@@ -449,7 +449,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const totalSteps = semArte ? artStep - 1 : artStep;
   // Variação sem personalização (produto liso, neon pronto): só as fotos, sem o 3D. A peça é vendida como na foto
   // (revisão da Padrão de 25/10/2026, "Mockups 3d para produtos sem personalização: recomendo não exibir").
-  const show3d = !semArte;
+  // Grupo novo da API sem modelo 3D (o tipo caiu no "fallback": nem nome nem categoria conhecidos) também fica só nas
+  // fotos até ganhar um modelo.
+  const show3d = !semArte && spec.source !== "fallback";
   const view = show3d ? tab : "fotos";
 
   // Linhas extras do carrinho. "Medida" segue o formato das páginas de festa e kit ("200 × 150 cm"), para o

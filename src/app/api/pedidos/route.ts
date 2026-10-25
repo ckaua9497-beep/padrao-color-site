@@ -6,7 +6,8 @@ import { gerarPedido, getCliente } from "@/lib/api/padrao";
 import { groupPrices, linePricesFor, type PriceAccount } from "@/lib/api/prices";
 import type { ApiCliente } from "@/lib/api/types";
 import { artBase } from "@/lib/bunny";
-import { getProduct } from "@/lib/catalog";
+import { getProduct, type Product } from "@/lib/catalog";
+import { produtoDoGrupo } from "@/lib/catalogo-vivo";
 import { productFacts } from "@/lib/order-facts";
 import {
   addressFromApi,
@@ -45,10 +46,10 @@ function rememberOrder(key: string, value: { order: number | null } | { pending:
   recentOrders.set(key, { at: now, ...value });
 }
 
-/** Item antigo sem grupo: acha pelo slug do produto. */
+/** Item antigo sem grupo: acha pelo slug do produto (ou pelo ID do grupo no começo dele, num produto novo da API). */
 function withGroup(item: OrderItemInput): OrderItemInput {
   if (item.groupId) return item;
-  const groupId = getProduct(item.slug)?.groupId;
+  const groupId = getProduct(item.slug)?.groupId ?? (Number(/^(\d+)-/.exec(item.slug)?.[1]) || undefined);
   return groupId ? { ...item, groupId } : item;
 }
 
@@ -109,7 +110,10 @@ export async function POST(request: Request) {
   const deliveryInfo = orderDelivery(delivery, registered);
   if (!deliveryInfo) return fail(400, "Seu cadastro não tem endereço de entrega completo. Informe outro endereço ou escolha a retirada.");
 
-  const payload = buildOrderPayload({ customerId: session.id, lines, method: payment, delivery: deliveryInfo, facts: productFacts });
+  // Foto, categoria, embalagem e anexos do produto que precificou cada linha (catálogo em tempo real; já em cache).
+  const vivos = new Map<number, Product | undefined>();
+  await Promise.all([...new Set(lines.map((line) => line.groupId))].map(async (groupId) => vivos.set(groupId, await produtoDoGrupo(groupId))));
+  const payload = buildOrderPayload({ customerId: session.id, lines, method: payment, delivery: deliveryInfo, facts: (line) => productFacts(line, vivos.get(line.groupId)) });
   // Rastreamento (site da Padrão = loja 0): pedido e itens, ligados à sessão anônima de quem comprou.
   const visitante = request.headers.get("x-pc-visitante");
   const sessaoRastreio = request.headers.get("x-pc-sessao");

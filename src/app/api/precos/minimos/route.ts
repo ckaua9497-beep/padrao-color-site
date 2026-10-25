@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session?.reseller) return json({ customerId: session?.id ?? null, reseller: false, prices: {}, failed: [] });
 
-  const groups = ids.filter((id) => catalogProduct(id));
+  // Cards: o produto da visão do catálogo em cache (sem ir à API por grupo); inativo fica fora.
+  const found = await Promise.all(ids.map((id) => catalogProduct(id, { listagem: true })));
+  const groups = ids.filter((_, i) => found[i]);
   const prices: Record<string, { p: number; q: number }> = {};
   const failed: number[] = [];
   let expired = false;
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
     while (next < groups.length && !expired) {
       const id = groups[next++];
       try {
-        const group = await groupPrices(id, session, { cacheOnly: offline });
+        const group = await groupPrices(id, session, { cacheOnly: offline, listagem: true });
         if (!group?.reseller) continue;
         const price = fromPrice(linePricesFor(group, session).variations, { neon: Boolean(group.neon) });
         if (price) prices[id] = price;

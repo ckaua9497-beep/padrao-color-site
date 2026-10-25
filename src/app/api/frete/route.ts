@@ -1,5 +1,5 @@
 import { clientIp, fail, json, limits, overLimit, readJsonBody } from "@/lib/api/guard";
-import { getProductByGroupId } from "@/lib/catalog";
+import { produtoDoGrupo } from "@/lib/catalogo-vivo";
 import { embalagemDe, pacotesDoPedido } from "@/lib/frete";
 import { cotarFretePadrao, freteApi } from "@/lib/frete-api";
 
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   const cep = typeof raw.cep === "string" ? raw.cep.replace(/\D/g, "") : "";
   if (cep.length !== 8) return fail(400, "Digite os 8 números do CEP.");
   if (!isInt(raw.groupId, 1e9)) return fail(400, "Produto inválido.");
-  const product = getProductByGroupId(raw.groupId as number);
+  const product = await produtoDoGrupo(raw.groupId as number);
   if (!product) return fail(404, "Produto não encontrado.");
   const variationId = isInt(raw.variationId, 1e9) ? (raw.variationId as number) : null;
   const lots = isInt(raw.quantity, 100_000) ? (raw.quantity as number) : 1;

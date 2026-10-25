@@ -3,10 +3,13 @@ import Image from "next/image";
 import Link from "next/link";
 import ListingBanner from "@/components/listing/ListingBanner";
 import { IconArrow } from "@/components/icons";
-import { getBusinessProducts, getBusinessTypes } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { imageUrl } from "@/lib/format";
+
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
 
 export const metadata: Metadata = {
   title: "Para o seu negócio",
@@ -14,8 +17,9 @@ export const metadata: Metadata = {
 };
 
 export default async function BusinessIndexPage() {
-  const types = getBusinessTypes();
-  const images = produtosComMidia(getBusinessProducts(types[0]).slice(0, 3), await midiaDoSite()).map((p) => p.image);
+  const catalogo = await catalogoVivo();
+  const types = catalogo.getBusinessTypes();
+  const images = produtosComMidia(catalogo.getBusinessProducts(types[0]).slice(0, 3), await midiaDoSite()).map((p) => p.image);
 
   return (
     <div className="container-site pb-20">

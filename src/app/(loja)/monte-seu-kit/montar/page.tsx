@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import KitBuilder from "@/components/kit/KitBuilder";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { getProducts } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { resolveKitCatalog } from "@/lib/kit-builder";
@@ -12,6 +12,9 @@ import { resolveKitCatalog } from "@/lib/kit-builder";
  * montado, com o valor por kit e o total calculados item a item. `?objetivo=boas-vindas` começa na segunda
  * pergunta (os cards da página do Monte Seu Kit levam para cá).
  */
+
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
 
 export const metadata: Metadata = {
   title: "Monte o seu kit",
@@ -39,7 +42,7 @@ function BuilderSkeleton() {
 }
 
 export default async function MontarKitPage() {
-  const catalog = resolveKitCatalog(produtosComMidia(getProducts(), await midiaDoSite()));
+  const catalog = resolveKitCatalog(produtosComMidia((await catalogoVivo()).getProducts(), await midiaDoSite()));
   return (
     <div className="container-site pb-20 pt-8">
       <Breadcrumb
