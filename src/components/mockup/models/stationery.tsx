@@ -6,7 +6,6 @@
 
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MockupSpec } from "@/lib/mockup";
 import { KIND_INFO } from "@/lib/mockup-kinds";
 import { canvasFor, fontFamily } from "../art";
@@ -22,8 +21,10 @@ import {
   type MaskPath,
   type ModelProps,
   useBackTexture,
+  useFaceTexture,
   backKindOf,
 } from "./shared";
+import { useSceneMode } from "../viewer-hooks";
 
 const CORAL = "#c4241b";
 const CREAM = "#f1ead9";
@@ -86,27 +87,6 @@ function pageLinesTexture(vertical: boolean, repeat: number) {
       }
     },
     vertical ? [repeat, 1] : [1, repeat],
-  );
-}
-
-/** Granulado de couro sintético para bumpMap. */
-function grainTexture(repeat: [number, number]) {
-  return paintTexture(
-    128,
-    128,
-    (ctx, w, h) => {
-      const rand = seeded(29);
-      ctx.fillStyle = "#808080";
-      ctx.fillRect(0, 0, w, h);
-      for (let i = 0; i < 900; i += 1) {
-        const v = Math.round(90 + rand() * 90);
-        ctx.fillStyle = `rgba(${v},${v},${v},0.55)`;
-        ctx.beginPath();
-        ctx.arc(rand() * w, rand() * h, 1 + rand() * 2.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    },
-    repeat,
   );
 }
 
@@ -268,31 +248,6 @@ function useCaseGeometry(W: number, H: number, gap: number, t: number, r: number
   useGeometryCleanup(geo.face);
   useGeometryCleanup(geo.faceBack);
   return geo;
-}
-
-/** Pontos de costura ao longo do contorno do painel, recuados `inset` da borda (cápsulas mescladas). */
-function useStitches(W: number, H: number, r: number, inset: number, radius: number, spacing: number) {
-  const geometry = useMemo(() => {
-    const path = panelShape(W - 2 * inset, H - 2 * inset, r - inset);
-    const count = Math.max(8, Math.floor(path.getLength() / spacing));
-    const points = path.getSpacedPoints(count);
-    const parts: THREE.BufferGeometry[] = [];
-    for (let i = 0; i + 1 < points.length; i += 2) {
-      const a = points[i];
-      const c = points[i + 1];
-      const len = a.distanceTo(c);
-      if (len < 1e-4) continue;
-      const g = new THREE.CapsuleGeometry(radius, Math.max(0.001, len * 0.72), 2, 6);
-      g.rotateZ(Math.atan2(c.y - a.y, c.x - a.x) - Math.PI / 2);
-      g.translate((a.x + c.x) / 2 + W / 2, (a.y + c.y) / 2, 0);
-      parts.push(g);
-    }
-    const merged = parts.length ? mergeGeometries(parts) : new THREE.BufferGeometry();
-    parts.forEach((g) => g.dispose());
-    return merged ?? new THREE.BufferGeometry();
-  }, [W, H, r, inset, radius, spacing]);
-  useGeometryCleanup(geometry);
-  return geometry;
 }
 
 /* ------------------------------------------------------------------ */
@@ -827,181 +782,138 @@ export function WallCalendarModel({ spec, art, label, showDims }: ModelProps) {
 /* Porta-passaporte                                                    */
 /* ------------------------------------------------------------------ */
 
-/** Cartão de embarque (adereço): cabeçalho azul, rota, dados do voo e código de barras. */
-function boardingPassTexture() {
-  const canvas = canvasFor(8 / 15.5, 1024);
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const W = canvas.width;
-    const H = canvas.height;
-    const font = fontFamily();
-    const u = W / 100;
-    ctx.fillStyle = "#fbfbf7";
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#13294b";
-    ctx.fillRect(0, 0, W, H * 0.12);
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.font = `600 ${u * 5}px ${font}`;
-    ctx.fillText("CARTÃO DE EMBARQUE", u * 7, H * 0.04);
-    ctx.font = `800 ${u * 8}px ${font}`;
-    ctx.fillText("BOARDING PASS", u * 7, H * 0.085);
-
-    ctx.fillStyle = "#13294b";
-    ctx.font = `800 ${u * 17}px ${font}`;
-    ctx.fillText("GRU", u * 7, H * 0.19);
-    ctx.textAlign = "right";
-    ctx.fillText("LIS", W - u * 7, H * 0.19);
-    ctx.textAlign = "center";
-    ctx.fillStyle = CORAL;
-    ctx.font = `700 ${u * 9}px ${font}`;
-    ctx.fillText("→", W / 2, H * 0.19);
-    ctx.fillStyle = "#777777";
-    ctx.font = `500 ${u * 4.2}px ${font}`;
-    ctx.textAlign = "left";
-    ctx.fillText("São Paulo", u * 7, H * 0.235);
-    ctx.textAlign = "right";
-    ctx.fillText("Lisboa", W - u * 7, H * 0.235);
-
-    const rows: [string, string][] = [
-      ["VOO", "PC 2027"],
-      ["ASSENTO", "12A"],
-      ["PORTÃO", "7"],
-      ["EMBARQUE", "21:40"],
-    ];
-    rows.forEach(([k, v], i) => {
-      const x = i % 2 === 0 ? u * 7 : W / 2 + u * 3;
-      const y = H * 0.3 + Math.floor(i / 2) * H * 0.075;
-      ctx.textAlign = "left";
-      ctx.fillStyle = "#8a8a8a";
-      ctx.font = `600 ${u * 3.6}px ${font}`;
-      ctx.fillText(k, x, y);
-      ctx.fillStyle = "#151515";
-      ctx.font = `800 ${u * 6.5}px ${font}`;
-      ctx.fillText(v, x, y + H * 0.032);
-    });
-    ctx.setLineDash([u * 2, u * 1.6]);
-    ctx.strokeStyle = "#bdbdbd";
-    ctx.lineWidth = u * 0.5;
-    ctx.beginPath();
-    ctx.moveTo(0, H * 0.5);
-    ctx.lineTo(W, H * 0.5);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    const rand = seeded(17);
-    let x = u * 8;
-    ctx.fillStyle = "#111111";
-    while (x < W - u * 8) {
-      const bw = u * (0.4 + rand() * 1.4);
-      ctx.fillRect(x, H * 0.56, bw, H * 0.1);
-      x += bw + u * (0.4 + rand() * 1.2);
-    }
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
+/** Trama do Print Wall (papel com textura de tela, impressão UV): relevo fino em bumpMap, em cm de repetição. */
+function printWallTexture(repeat: [number, number]) {
+  return paintTexture(
+    64,
+    64,
+    (ctx, w, h) => {
+      const rand = seeded(41);
+      ctx.fillStyle = "#808080";
+      ctx.fillRect(0, 0, w, h);
+      for (let y = 0; y < h; y += 4) {
+        for (let x = 0; x < w; x += 4) {
+          const over = ((x >> 2) + (y >> 2)) % 2 === 0;
+          const v = Math.round((over ? 150 : 105) + rand() * 30);
+          ctx.fillStyle = `rgb(${v},${v},${v})`;
+          ctx.fillRect(x + (over ? 0 : 1), y + (over ? 1 : 0), over ? 4 : 2, over ? 2 : 4);
+        }
+      }
+    },
+    repeat,
+  );
 }
 
-function isLight(color: string) {
-  const c = new THREE.Color(color);
-  return c.r * 0.299 + c.g * 0.587 + c.b * 0.114 > 0.6;
-}
-
+/** Porta-passaporte no gabarito: capa de 20,6 × 16 cm aberta (10,3 cm por lado) com abas de 7 cm dobradas para dentro. */
+const PASSPORT = { panel: 10.3, flap: 7, gap: 0.5, t: 0.06, radius: 0.45 };
 const PASS_CM = 0.16;
 
 /**
- * Porta-passaporte fechado e de leve em ângulo: capa de couro sintético (lombada em meia-cana +
- * painéis chanfrados, granulado em bumpMap) com a arte na frente, pesponto em cápsulas finas,
- * caderno do passaporte por dentro e um cartão de embarque saindo pelo topo.
+ * Porta-passaporte em Print Wall (impressão UV), como na foto do produto: a capa fechada deitada, com a arte da frente
+ * e da contracapa (verso) sangrando até a borda e o caderno do passaporte por dentro. Com uma aba em edição, a capa abre
+ * deitada mostrando o lado de dentro: a aba direita (dobrada sobre a capa da frente) à esquerda e a esquerda à direita,
+ * cada uma com a sua arte. No verso ("Ver verso"), a capa fechada vira e mostra a contracapa.
  */
 export function PassportModel({ spec, art, label }: ModelProps) {
-  const coverW = Math.max(4, spec.widthCm / 2);
-  const H = Math.max(6, spec.heightCm * 0.875);
-  const t = 0.16;
-  const gap = 0.6;
-  const ro = gap / 2 + t;
-  const W = coverW - ro;
-  const r = 0.7;
-  const shell = useCaseGeometry(W, H, gap, t, r);
+  const W = PASSPORT.panel;
+  const H = Math.max(8, spec.heightCm);
+  const { t, gap, radius } = PASSPORT;
+  const shell = useCaseGeometry(W, H, gap, t, radius);
   const aspect = shell.faceW / shell.faceH;
   const front = useArtTexture(aspect, "front", art, label);
-  const backKind = backKindOf(spec, art);
-  const back = useBackTexture(aspect, spec, art, label);
-  const stitches = useStitches(W, H, r, 0.42, 0.035, 0.32);
-
-  const maps = useMemo(
-    () => ({
-      face: grainTexture([shell.faceW / 1.2, shell.faceH / 1.2]),
-      body: grainTexture([1 / 1.2, 1 / 1.2]),
-      pass: boardingPassTexture(),
-    }),
-    [shell.faceW, shell.faceH],
-  );
-  useTextureCleanup(maps.face);
-  useTextureCleanup(maps.body);
-  useTextureCleanup(maps.pass);
-
-  const cover = spec.baseColor.toLowerCase() === "#ffffff" ? "#f3f1ec" : spec.baseColor;
-  const thread = spec.accentColor ?? (isLight(cover) ? "#c9c1b3" : "#efe8dc");
-  const bookletW = Math.min(8.8, W - 0.5);
-  const bookletH = Math.min(12.5, H - 1.2);
-  const bookletX = 0.12 + bookletW / 2;
-  const passW = Math.min(8, W - 1.4);
-  const passH = 15.5;
-  const passY = H / 2 + 3.6 - passH / 2;
+  const back = useBackTexture(aspect, spec, art, label, undefined, "blank");
+  const { face, back: showBack } = useSceneMode();
+  const open = face === "aba-esquerda" || face === "aba-direita";
+  // A face impressa tem UV de 0 a 1; o corpo da capa, UV em cm.
+  const bump = useMemo(() => printWallTexture([W / 0.6, H / 0.6]), [W, H]);
+  const bodyBump = useMemo(() => printWallTexture([1 / 0.6, 1 / 0.6]), []);
+  useTextureCleanup(bump);
+  useTextureCleanup(bodyBump);
+  const bookletW = Math.min(8.8, W - 0.6);
+  const bookletH = Math.min(12.5, H - 1.4);
   const front0 = gap / 2 + t;
+  const print = (map: THREE.Texture) => <meshPhysicalMaterial map={map} roughness={0.78} clearcoat={0.15} clearcoatRoughness={0.6} bumpMap={bump} bumpScale={0.35} />;
+  const plain = <meshStandardMaterial color="#f1efe9" roughness={0.9} bumpMap={bodyBump} bumpScale={0.3} />;
+
+  if (open) return <PassportOpen art={art} label={label} W={W} H={H} bump={bodyBump} />;
 
   return (
-    <group rotation={[0, -0.38, 0]}>
-      <group scale={PASS_CM} position-x={(-(W - ro) / 2) * PASS_CM}>
-        {/* Lombada e painéis */}
-        <mesh geometry={shell.spine}>
-          <meshPhysicalMaterial color={cover} roughness={0.6} clearcoat={0.3} clearcoatRoughness={0.45} bumpMap={maps.body} bumpScale={0.4} />
-        </mesh>
-        <mesh geometry={shell.panel} position-z={gap / 2}>
-          <meshPhysicalMaterial color={cover} roughness={0.6} clearcoat={0.3} clearcoatRoughness={0.45} bumpMap={maps.body} bumpScale={0.4} />
-        </mesh>
-        <mesh geometry={shell.panel} position-z={-gap / 2 - t}>
-          <meshPhysicalMaterial color={cover} roughness={0.6} clearcoat={0.3} clearcoatRoughness={0.45} bumpMap={maps.body} bumpScale={0.4} />
-        </mesh>
-        <mesh geometry={shell.face} position-z={front0 + 0.004}>
-          <meshPhysicalMaterial map={front} roughness={0.5} clearcoat={0.35} clearcoatRoughness={0.35} bumpMap={maps.face} bumpScale={0.4} />
-        </mesh>
-        <mesh geometry={shell.faceBack} position-z={-front0 - 0.004}>
-          {backKind === "blank" ? (
-            <meshPhysicalMaterial color={cover} roughness={0.55} clearcoat={0.3} clearcoatRoughness={0.45} bumpMap={maps.face} bumpScale={0.4} />
-          ) : (
-            <meshPhysicalMaterial map={back} roughness={0.5} clearcoat={0.35} clearcoatRoughness={0.35} bumpMap={maps.face} bumpScale={0.4} />
-          )}
-        </mesh>
-        {/* Pesponto nas duas capas */}
-        <mesh geometry={stitches} position-z={front0 + 0.02}>
-          <meshStandardMaterial color={thread} roughness={0.85} />
-        </mesh>
-        <mesh geometry={stitches} position-z={-front0 - 0.02}>
-          <meshStandardMaterial color={thread} roughness={0.85} />
-        </mesh>
-        {/* Caderno do passaporte por dentro */}
-        <PageBlock sx={bookletW - 0.1} sy={bookletH - 0.2} sz={0.4} position={[bookletX - 0.05, 0, 0]} />
-        {[1, -1].map((side) => (
-          <mesh key={side} position={[bookletX, 0, side * 0.225]}>
-            <boxGeometry args={[bookletW, bookletH, 0.04]} />
-            <meshStandardMaterial color="#5b1626" roughness={0.7} />
+    <group rotation={[-Math.PI / 2, 0, 0.32]} userData={{ view: { elevation: 0.85 } }}>
+      {/* Verso: a capa fechada vira (meia volta em x; com o giro do TurnGroup fica no lugar, contracapa para cima). */}
+      <group rotation-x={showBack ? Math.PI : 0}>
+        <group scale={PASS_CM} position-x={(-(W - front0) / 2) * PASS_CM}>
+          <mesh geometry={shell.spine}>{plain}</mesh>
+          <mesh geometry={shell.panel} position-z={gap / 2}>
+            {plain}
+          </mesh>
+          <mesh geometry={shell.panel} position-z={-gap / 2 - t}>
+            {plain}
+          </mesh>
+          <mesh geometry={shell.face} position-z={front0 + 0.004}>
+            {print(front)}
+          </mesh>
+          <mesh geometry={shell.faceBack} position-z={-front0 - 0.004}>
+            {print(back)}
+          </mesh>
+          {/* Caderno do passaporte por dentro, encaixado nas abas. */}
+          <PageBlock sx={bookletW - 0.1} sy={bookletH - 0.2} sz={gap - 0.14} position={[0.15 + bookletW / 2, 0, 0]} />
+          {[1, -1].map((side) => (
+            <mesh key={side} position={[0.15 + bookletW / 2, 0, side * (gap / 2 - 0.05)]}>
+              <boxGeometry args={[bookletW, bookletH, 0.04]} />
+              <meshStandardMaterial color="#1d2a4f" roughness={0.7} />
+            </mesh>
+          ))}
+        </group>
+      </group>
+    </group>
+  );
+}
+
+/** Capa aberta deitada, lado de dentro para cima: as abas dobradas sobre as capas, com a arte de cada uma. */
+function PassportOpen({ art, label, W, H, bump }: { art: ModelProps["art"]; label: string; W: number; H: number; bump: THREE.Texture }) {
+  // `bump` repete por cm (UV do corpo); a face da aba tem UV de 0 a 1.
+  const flapBump = useMemo(() => printWallTexture([PASSPORT.flap / 0.6, H / 0.6]), [H]);
+  useTextureCleanup(flapBump);
+  const { flap, t, gap, radius } = PASSPORT;
+  const right = useFaceTexture(flap / H, art, "aba-direita", label, "blank");
+  const left = useFaceTexture(flap / H, art, "aba-esquerda", label, "blank");
+  const geo = useMemo(() => {
+    const total = 2 * W + gap;
+    const sheet = makeShape("rect", total, H, radius);
+    const body = new THREE.ExtrudeGeometry(sheet, { depth: t, bevelEnabled: false, curveSegments: 12 });
+    body.translate(0, 0, -t);
+    const flapShape = makeShape("rect", flap, H, 0.2);
+    const flapBody = new THREE.ExtrudeGeometry(flapShape, { depth: t, bevelEnabled: false, curveSegments: 12 });
+    return { body, flapBody, flapFace: faceGeometry(flapShape, flap, H) };
+  }, [W, H, gap, t, radius, flap]);
+  useGeometryCleanup(geo.body);
+  useGeometryCleanup(geo.flapBody);
+  useGeometryCleanup(geo.flapFace);
+  const edgeX = W + gap / 2;
+  const plain = <meshStandardMaterial color="#f1efe9" roughness={0.9} bumpMap={bump} bumpScale={0.3} />;
+  return (
+    <group rotation={[-Math.PI / 2, 0, 0.18]} userData={{ view: { elevation: 0.95 } }}>
+      <group scale={PASS_CM}>
+        <mesh geometry={geo.body}>{plain}</mesh>
+        {/* Vinco da lombada. */}
+        {[-1, 1].map((s) => (
+          <mesh key={s} position={[(s * gap) / 2, 0, 0.003]}>
+            <planeGeometry args={[0.05, H - 0.2]} />
+            <meshStandardMaterial color="#000000" transparent opacity={0.12} depthWrite={false} />
           </mesh>
         ))}
-        {/* Cartão de embarque saindo pelo topo */}
-        <group position={[bookletX + 0.5, passY, 0.272]} rotation-z={-0.07}>
-          <mesh>
-            <planeGeometry args={[passW, passH]} />
-            <meshStandardMaterial map={maps.pass} roughness={0.85} />
-          </mesh>
-          <mesh rotation-y={Math.PI} position-z={-0.004}>
-            <planeGeometry args={[passW, passH]} />
-            <meshStandardMaterial color="#f6f5f0" roughness={0.85} />
-          </mesh>
-        </group>
+        {/* À esquerda, a capa da frente com a aba direita; à direita, a contracapa com a aba esquerda. */}
+        {[
+          { x: -edgeX + flap / 2, map: right },
+          { x: edgeX - flap / 2, map: left },
+        ].map(({ x, map }) => (
+          <group key={x} position={[x, 0, 0]}>
+            <mesh geometry={geo.flapBody}>{plain}</mesh>
+            <mesh geometry={geo.flapFace} position-z={t + 0.004}>
+              <meshPhysicalMaterial map={map} roughness={0.78} clearcoat={0.15} clearcoatRoughness={0.6} bumpMap={flapBump} bumpScale={0.35} />
+            </mesh>
+          </group>
+        ))}
       </group>
     </group>
   );

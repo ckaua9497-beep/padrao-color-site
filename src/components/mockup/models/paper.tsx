@@ -21,6 +21,7 @@ import {
   metalColor,
   sizeLabels,
   useArtTexture,
+  useFaceTexture,
   useGeometryCleanup,
   type ModelProps,
   useBackTexture,
@@ -793,13 +794,14 @@ function BusinessCards({ spec, art, label, showDims }: ModelProps) {
   const pvc = spec.variant === "pvc";
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
-  const back = useBackTexture(aspect, spec, art, label);
+  // O cartão do verso mostra a arte do passo "Verso"; sem ela, o verso liso (não repete a frente).
+  const back = useBackTexture(aspect, spec, art, label, undefined, "blank");
   return (
     <CardScene
       spec={spec}
       front={front}
       back={back}
-      showBack={spec.back !== "blank"}
+      showBack={printsBack(spec, art)}
       showDims={showDims && KIND_INFO[spec.kind].dims}
       pvc={pvc}
       // PVC CR80: cantos de 3 mm. Papel: canto vivo (só um chanfro mínimo).
@@ -840,31 +842,49 @@ function SheetDims({ spec, w, h, t, show }: { spec: MockupSpec; w: number; h: nu
   return <Dimensions w={w} h={h} z={t / 2 + 0.01} labelW={lw} labelH={lh} />;
 }
 
-/** Flyer, folheto, filipeta, encarte: leque de 4 folhas, a de cima com a ponta levantando. */
+/** A peça imprime o verso (cor x/1, x/4 ou o cliente montou um)? */
+function printsBack(spec: MockupSpec, art: ModelProps["art"]) {
+  return spec.back !== "blank" || hasArtContent(art.back);
+}
+
+/**
+ * Flyer, folheto, filipeta, encarte: leque de folhas, a de cima com a ponta levantando. Com verso impresso, uma folha
+ * virada ao lado do leque mostra o verso (a arte do passo "Verso"; sem ela, o verso liso, sem repetir a frente).
+ */
 function FlyerStack({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale } = fitFlat(spec, 2.4);
   const t = sheetT(paperCm(spec, 0.01), scale);
   const aspect = artAspect(spec);
   const front = useArtTexture(aspect, "front", art, label);
-  const back = useBackTexture(aspect, spec, art, label);
+  const back = useBackTexture(aspect, spec, art, label, undefined, "blank");
   const short = Math.min(w, h);
   const long = Math.max(w, h) / short > 2.6;
-  const angles = long ? [0.3, 0.2, 0.1, 0] : [0.5, 0.33, 0.16, 0];
+  const verso = printsBack(spec, art);
+  const angles = verso ? (long ? [0.2, 0.1, 0] : [0.33, 0.16, 0]) : long ? [0.3, 0.2, 0.1, 0] : [0.5, 0.33, 0.16, 0];
   const curl = sheetForm({ bow: short * 0.015, lift: short * 0.07 });
-  const flipBottom = spec.back !== "blank";
+  // Com verso, o leque vai para a esquerda e a folha virada fica à direita, sem cobrir a frente.
+  const shift = verso ? -w * 0.42 : 0;
+  const sheet = (form: SheetForm, dims: boolean) => (
+    <PaperSheet w={w} h={h} t={t} form={form} front={<PrintMaterial map={front} spec={spec} />} back={<PrintMaterial map={back} spec={spec} />}>
+      {dims && <SheetDims spec={spec} w={w} h={h} t={t} show={showDims} />}
+    </PaperSheet>
+  );
   return (
     <group userData={FLAT_LAY}>
       {angles.map((a, i) => {
         const [x, z] = aroundPivot(-w / 2, h / 2, a, w, h);
         const top = i === angles.length - 1;
         return (
-          <Lay key={a} x={x} z={z} y={t / 2 + i * (t * 1.15 + STACK_GAP)} rot={a} flip={flipBottom && i === 0}>
-            <PaperSheet w={w} h={h} t={t} form={top ? curl : FLAT} front={<PrintMaterial map={front} spec={spec} />} back={<PrintMaterial map={back} spec={spec} />}>
-              {top && <SheetDims spec={spec} w={w} h={h} t={t} show={showDims} />}
-            </PaperSheet>
+          <Lay key={a} x={x + shift} z={z} y={t / 2 + i * (t * 1.15 + STACK_GAP)} rot={a}>
+            {sheet(top ? curl : FLAT, top)}
           </Lay>
         );
       })}
+      {verso && (
+        <Lay x={w * 0.62} z={h * 0.06} y={t / 2} rot={-0.14} flip>
+          {sheet(FLAT, false)}
+        </Lay>
+      )}
     </group>
   );
 }
@@ -989,11 +1009,16 @@ function OfficePrint({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Cartaz preso numa parede com fita crepe nos cantos de cima; a base descola levemente da parede. */
+/**
+ * Cartaz preso numa parede com fita crepe nos cantos de cima; a base descola levemente da parede. Frente e verso: outro
+ * cartaz deitado no chão, virado, mostra o verso (a arte do passo "Verso"; sem ela, o verso liso).
+ */
 function PosterOnWall({ spec, art, label, showDims }: ModelProps) {
   const { w, h, scale } = fitFlat(spec, 2.2);
   const t = sheetT(paperCm(spec, 0.013), scale);
   const front = useArtTexture(artAspect(spec), "front", art, label);
+  const back = useBackTexture(artAspect(spec), spec, art, label, undefined, "blank");
+  const verso = printsBack(spec, art);
   const m = Math.max(w, h) * 0.15;
   const wallW = w + 2 * m;
   const wallH = h + m * 2.6;
@@ -1022,6 +1047,11 @@ function PosterOnWall({ spec, art, label, showDims }: ModelProps) {
           <SheetDims spec={spec} w={w} h={h} t={t} show={showDims} />
         </PaperSheet>
       </group>
+      {verso && (
+        <Lay x={w * 0.42} z={h * 0.62} y={t / 2} rot={-0.3} flip>
+          <PaperSheet w={w} h={h} t={t} form={sheetForm({ lift: short * 0.05 })} seg={28} front={<PrintMaterial map={front} spec={spec} />} back={<PrintMaterial map={back} spec={spec} />} />
+        </Lay>
+      )}
     </group>
   );
 }
@@ -1268,6 +1298,25 @@ function Leaflet({ spec, art, label, standing }: ModelProps & { standing: boolea
   // Tiras muito compridas (10×45) são sanfonas de 3 painéis mesmo sem "2 dobras" no nome.
   const panels = Math.min(3, Math.max(2, spec.folds + 1, !standing && long / short >= 3.5 ? 3 : 0));
   const crease = Math.max(t * 1.6, 0.004);
+  if (standing) {
+    // Cardápio em pé como na foto do produto: as dobras fecham para dentro (o lado interno, o verso, fica côncavo) e
+    // o lado externo fica para a câmera, com a contracapa no meio e a capa à direita (gabarito: 3 | 2 Verso | 1 Frente).
+    // Mesma folha girada meia volta, com as faces trocadas: o verso espelhado da folha lê certo visto daqui.
+    return (
+      <group userData={{ view: { elevation: 0.2 } }} rotation-y={0.3}>
+        <group rotation-y={Math.PI}>
+          <PaperSheet
+            w={w}
+            h={h}
+            t={t}
+            form={leafletForm(axis, panels, standing, crease)}
+            front={<PrintMaterial map={back} spec={spec} />}
+            back={<PrintMaterial map={front} spec={spec} />}
+          />
+        </group>
+      </group>
+    );
+  }
   const sheet = (
     <PaperSheet
       w={w}
@@ -1278,7 +1327,6 @@ function Leaflet({ spec, art, label, standing }: ModelProps & { standing: boolea
       back={<PrintMaterial map={back} spec={spec} />}
     />
   );
-  if (standing) return <group userData={{ view: { elevation: 0.2 } }}>{sheet}</group>;
   return (
     <group userData={FLAT_LAY}>
       <Lay>{sheet}</Lay>
@@ -1286,96 +1334,114 @@ function Leaflet({ spec, art, label, standing }: ModelProps & { standing: boolea
   );
 }
 
-/** Bolsa interna da pasta: borda superior em curva, mais alta junto à lombada. */
-function pocketShape(pw: number, ph: number) {
-  const x0 = -pw / 2 + pw * 0.015;
-  const x1 = pw / 2 - pw * 0.02;
-  const yb = -ph / 2 + ph * 0.004;
-  const hiL = -ph / 2 + ph * 0.36;
-  const hiR = -ph / 2 + ph * 0.26;
+/** Altura da bolsa em fração da capa (gabarito: 9 cm numa capa de 31). */
+const POCKET = 0.3;
+
+/** Bolsa interna da pasta, centrada, com o canto de fora cortado em diagonal. */
+function pocketShape(pw: number, hp: number) {
+  const x0 = -pw / 2 + pw * 0.012;
+  const x1 = pw / 2 - pw * 0.012;
+  const yb = -hp / 2;
+  const top = hp / 2;
+  const cut = pw * 0.12;
   const shape = new THREE.Shape();
   shape.moveTo(x0, yb);
   shape.lineTo(x1, yb);
-  shape.lineTo(x1, hiR);
-  shape.bezierCurveTo(x1 - pw * 0.35, hiR, x0 + pw * 0.3, hiL, x0, hiL);
+  shape.lineTo(x1, top - cut * 0.6);
+  shape.lineTo(x1 - cut, top);
+  shape.lineTo(x0, top);
   shape.lineTo(x0, yb);
   return shape;
 }
 
+/** Inclinação de cada capa a partir da lombada (a pasta aberta não fica chapada na mesa). */
+const FOLDER_TILT = 0.04;
+
 /**
- * Pasta com bolsa, vista de cima: a pasta fechada mostra a capa e, ao lado, outra aberta com a bolsa
- * (que é a face impressa dobrada para dentro) segurando um documento.
+ * Pastas (com bolsa, com orelha, simples e plastificada), deitadas e vistas de cima, como os gabaritos: só o lado de
+ * fora é impresso. Na frente, a pasta aberta por fora mostra o verso à esquerda e a frente à direita (a contracapa com
+ * a arte do passo "Verso"; sem ela, lisa); atrás, outra aberta por dentro, branca, com um documento e, nas "c/ Bolsa",
+ * a bolsa com a arte dela dobrada sobre o verso.
  */
 function PocketFolder({ spec, art, label }: ModelProps) {
-  // Formato aberto (largura > altura) vira capa de meia largura; o que sobra na altura é a aba da bolsa.
+  // Formato aberto (largura > altura) vira capa de meia largura.
   const landscape = spec.widthCm > spec.heightCm * 1.05;
   const pwCm = Math.max(1, landscape ? spec.widthCm / 2 : spec.widthCm);
   const phCm = Math.max(1, landscape ? Math.min(spec.heightCm, pwCm * 1.42) : spec.heightCm);
-  const scale = 2.6 / Math.max(pwCm * 2, phCm);
+  const scale = 2.6 / Math.max(pwCm * 3.5, phCm * 1.8);
   const pw = pwCm * scale;
   const ph = phCm * scale;
   const t = sheetT(paperCm(spec, 0.03), scale);
-  const tc = t * 2.3;
-  const docW = pw * 0.88;
+  const withPocket = spec.variant === "folder-pocket";
+  const front = useArtTexture(pw / ph, "front", art, label);
+  const back = useBackTexture(pw / ph, spec, art, label, undefined, "blank");
+  const docW = pw * 0.86;
   const docH = Math.min(ph * 0.9, docW * 1.414);
   const docT = sheetT(0.011, scale);
-  const cover = useArtTexture(pw / ph, "front", art, label);
   const doc = usePaintedTexture(docW / docH, paintLines, "doc");
   const pocket = useMemo(() => {
-    const shape = pocketShape(pw, ph);
-    const body = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false, curveSegments: 24 });
+    const hp = ph * POCKET;
+    const shape = pocketShape(pw, hp);
+    const body = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false, curveSegments: 4 });
     body.translate(0, 0, -t / 2);
-    return { body, face: faceGeometry(shape, pw, ph) };
+    return { body, face: faceGeometry(shape, pw, hp), aspect: pw / hp, y: -ph / 2 + hp / 2 + ph * 0.006 };
   }, [pw, ph, t]);
   useGeometryCleanup(pocket.body);
   useGeometryCleanup(pocket.face);
-  const spine = 0.006;
-  const rightX = pw / 2 + spine / 2;
   const plain = <meshStandardMaterial color={PAPER} roughness={0.9} />;
-  const pocketZ = t + docT + 0.002 + t / 2;
+  // Uma capa da pasta (frente = lado de fora), girada na lombada (x = 0) para o lado `side`.
+  const cover = (side: 1 | -1, outside: ReactNode, children?: ReactNode) => (
+    <group rotation-y={side * FOLDER_TILT}>
+      <group position-x={(side * pw) / 2}>
+        <PaperSheet w={pw} h={ph} t={t} front={outside} back={plain}>
+          {children}
+        </PaperSheet>
+      </group>
+    </group>
+  );
+  const spineLift = pw * Math.sin(FOLDER_TILT);
   return (
-    <group userData={{ view: { elevation: 0.95 } }}>
-      <Lay>
-        <group position={[pw * 0.45, ph * 0.06, 0]}>
-          <group position={[-rightX, 0, t / 2]}>
-            <PaperSheet w={pw} h={ph} t={t} front={plain} back={plain} />
-          </group>
-          <group position={[rightX, 0, t / 2]}>
-            <PaperSheet w={pw} h={ph} t={t} front={plain} back={plain} />
-          </group>
-          <mesh position={[0, 0, t * 0.4]}>
-            <cylinderGeometry args={[t * 0.9, t * 0.9, ph, 10]} />
-            <meshStandardMaterial color={EDGE} roughness={0.9} />
-          </mesh>
-          <group position={[rightX, ph / 2 - docH / 2 - ph * 0.035, t + docT / 2 + 0.0008]}>
-            <PaperSheet w={docW} h={docH} t={docT} front={plain} back={plain}>
-              <mesh position-z={docT / 2 + 0.0006}>
-                <planeGeometry args={[docW, docH]} />
-                <meshStandardMaterial map={doc} transparent depthWrite={false} roughness={0.9} polygonOffset polygonOffsetFactor={-2} />
-              </mesh>
-            </PaperSheet>
-          </group>
-          <group position={[rightX, 0, pocketZ]}>
-            <mesh geometry={pocket.body}>
-              <meshStandardMaterial color={EDGE} roughness={0.9} />
-            </mesh>
-            <mesh geometry={pocket.face} position-z={t / 2 + 0.0006}>
-              <PrintMaterial map={cover} spec={spec} />
-            </mesh>
-          </group>
-          <mesh position={[rightX, -ph / 2 + ph * 0.004, (t + pocketZ) / 2]} rotation-z={Math.PI / 2}>
-            <cylinderGeometry args={[(pocketZ - t / 2) / 2 + t / 2, (pocketZ - t / 2) / 2 + t / 2, pw * 0.96, 12]} />
-            <meshStandardMaterial color={EDGE} roughness={0.9} />
-          </mesh>
-        </group>
-        <group position={[-pw * 0.55, -ph * 0.04, t + tc / 2 + 0.0015]} rotation-z={0.1}>
-          <PaperSheet w={pw} h={ph} t={tc} front={<PrintMaterial map={cover} spec={spec} />} back={plain} />
-          <mesh position={[-pw / 2, 0, 0]}>
-            <cylinderGeometry args={[tc / 2, tc / 2, ph, 12]} />
-            <meshStandardMaterial color={EDGE} roughness={0.9} />
-          </mesh>
-        </group>
+    <group userData={{ view: { elevation: 0.9 } }}>
+      {/* Atrás: aberta por dentro (virada), com o documento e a bolsa sobre o verso (que, por dentro, fica à direita). */}
+      <Lay x={pw * 0.85} z={-ph * 0.5} y={spineLift + t} rot={-0.16} flip>
+        {cover(1, <PrintMaterial map={front} spec={spec} />)}
+        {cover(
+          -1,
+          <PrintMaterial map={back} spec={spec} />,
+          <group position-z={-t / 2}>
+            <group position={[0, ph / 2 - docH / 2 - ph * 0.06, -docT / 2 - 0.0006]} rotation-y={Math.PI}>
+              <PaperSheet w={docW} h={docH} t={docT} front={plain} back={plain}>
+                <mesh position-z={docT / 2 + 0.0006}>
+                  <planeGeometry args={[docW, docH]} />
+                  <meshStandardMaterial map={doc} transparent depthWrite={false} roughness={0.9} polygonOffset polygonOffsetFactor={-2} />
+                </mesh>
+              </PaperSheet>
+            </group>
+            {withPocket && <FolderPocket geometry={pocket} z={-docT - t / 2 - 0.0016} t={t} art={art} label={label} spec={spec} />}
+          </group>,
+        )}
       </Lay>
+      {/* Na frente: aberta por fora, verso à esquerda e frente à direita. */}
+      <Lay x={-pw * 0.55} z={ph * 0.25} y={spineLift + t * 4 + 0.004} rot={0.08}>
+        {cover(1, <PrintMaterial map={front} spec={spec} />)}
+        {cover(-1, <PrintMaterial map={back} spec={spec} />)}
+      </Lay>
+    </group>
+  );
+}
+
+/** Bolsa colada no verso, por dentro da pasta: a face impressa (arte da superfície "bolsa") fica para quem abre. */
+function FolderPocket({ geometry, z, t, art, label, spec }: { geometry: { body: THREE.BufferGeometry; face: THREE.BufferGeometry; aspect: number; y: number }; z: number; t: number; art: ModelProps["art"]; label: string; spec: MockupSpec }) {
+  // Sem arte própria, a bolsa segue a arte da capa (ela sai da mesma folha impressa, como na foto do produto).
+  const map = useFaceTexture(geometry.aspect, art, "bolsa", label, "front");
+  return (
+    <group position={[0, geometry.y, z]} rotation-y={Math.PI}>
+      <mesh geometry={geometry.body}>
+        <meshStandardMaterial color={EDGE} roughness={0.9} />
+      </mesh>
+      <mesh geometry={geometry.face} position-z={t / 2 + 0.0008}>
+        <PrintMaterial map={map} spec={spec} />
+      </mesh>
     </group>
   );
 }
@@ -1384,10 +1450,10 @@ function PocketFolder({ spec, art, label }: ModelProps) {
  * Folder, cardápio dobrado e pasta. A folha é uma superfície contínua dobrada por um caminho com vincos
  * arredondados (a arte aberta corre por todos os painéis; o verso, espelhado, lê certo por trás).
  * {menu}: em pé, abrindo em V (1 dobra) ou U (2 dobras). Padrão: deitado, painéis relaxados.
- * {folder-pocket}: pasta fechada com a capa + pasta aberta com bolsa e documento.
+ * {folder}/{folder-pocket}: pasta aberta por fora (verso e frente) + outra por dentro com documento (e a bolsa).
  */
 export function FoldedModel(props: ModelProps) {
-  if (props.spec.variant === "folder-pocket") return <PocketFolder {...props} />;
+  if (props.spec.variant === "folder-pocket" || props.spec.variant === "folder") return <PocketFolder {...props} />;
   return <Leaflet {...props} standing={props.spec.variant === "menu"} />;
 }
 

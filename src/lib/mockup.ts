@@ -309,7 +309,9 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
   ],
   tent: [[/\bcalendario\b/, "calendar"]],
   folded: [
-    [/^pasta\b/, "folder-pocket"],
+    // Só as pastas "c/ Bolsa" têm a bolsa por dentro (revisão da Padrão de 25/10/2026).
+    [/^pasta\b.*\bbolsa\b/, "folder-pocket"],
+    [/^pasta\b/, "folder"],
     [/\bcardapio\b/, "menu"],
   ],
   banner: [

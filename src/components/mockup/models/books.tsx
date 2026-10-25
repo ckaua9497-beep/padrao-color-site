@@ -12,7 +12,7 @@ import { KIND_INFO } from "@/lib/mockup-kinds";
 import { hasArtContent } from "../art";
 import { useSceneMode } from "../viewer-hooks";
 import { Fabric } from "./fabric";
-import { Dimensions, PrintMaterial, faceGeometry, makeShape, metalColor, sizeLabels, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { Dimensions, PrintMaterial, faceArtOf, faceGeometry, makeShape, metalColor, sizeLabels, useArtTexture, useBackTexture, useFaceTexture, useGeometryCleanup, type ModelProps } from "./shared";
 
 /** Unidades de cena por centímetro. */
 const UNIT = 0.11;
@@ -356,6 +356,152 @@ function hardcoverLook(spec: MockupSpec): HardcoverLook {
 }
 
 /**
+ * Superfície do miolo em edição que abre o livro (ids de src/lib/superficies.ts): as lâminas do photobook
+ * ("lamina-paginas-…" ou "miolo") e as páginas ímpar/par da agenda e do planner. null = livro fechado.
+ */
+function openFaceOf(spec: MockupSpec, face: string | null): string | null {
+  if (!face) return null;
+  if (spec.variant === "photobook") return /^lamina-|^miolo$/.test(face) ? face : null;
+  if (spec.variant === "agenda" || spec.variant === "planner") return /^pagina-/.test(face) ? face : null;
+  return null;
+}
+
+/**
+ * Página aberta: plano subdividido que afunda de leve na dobra (a lombada em x = 0; `side` +1 abre para a direita, −1
+ * para a esquerda). `u` = trecho da textura que ela mostra (metade da lâmina dupla, ou a página inteira).
+ */
+function openPageGeometry(w: number, h: number, side: 1 | -1, dip: number, gutter: number, u: [number, number]) {
+  const g = new THREE.PlaneGeometry(w, h, 36, 2);
+  g.translate((side * w) / 2, 0, 0);
+  const pos = g.getAttribute("position");
+  const uv = g.getAttribute("uv");
+  for (let i = 0; i < pos.count; i += 1) {
+    const t = Math.max(0, 1 - Math.abs(pos.getX(i)) / gutter);
+    pos.setZ(i, -dip * t * t);
+    uv.setX(i, u[0] + uv.getX(i) * (u[1] - u[0]));
+  }
+  uv.needsUpdate = true;
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Anéis do wire-o no livro aberto: cada par sai do furo da página da esquerda e entra no da direita. */
+function openWireGeometry(h: number, t: number, holeX: number) {
+  const { ys, pairGap } = wireLayout(h, t);
+  const base = new THREE.TorusGeometry(holeX, 0.055, 6, 32, Math.PI);
+  base.rotateX(Math.PI / 2);
+  const parts = ys.flatMap((y) => [-1, 1].map((s) => base.clone().translate(0, y + (s * pairGap) / 2, 0)));
+  const merged = mergeGeometries(parts);
+  parts.forEach((p) => p.dispose());
+  base.dispose();
+  return merged;
+}
+
+type OpenBookProps = {
+  spec: MockupSpec;
+  art: ModelProps["art"];
+  label: string;
+  face: string;
+  look: HardcoverLook;
+  w: number;
+  h: number;
+  coverSpec: MockupSpec;
+  front: THREE.Texture;
+  back: THREE.Texture;
+};
+
+/** Ângulo de cada metade do livro aberto em direção à câmera (rad). */
+const OPEN_TILT = 0.2;
+
+/**
+ * Livro aberto em pé, como num expositor, na superfície do miolo em edição: no photobook, a lâmina dupla escolhida
+ * correndo pelas duas páginas; na agenda e no planner, a página par à esquerda e a ímpar à direita, com o wire-o no
+ * meio. As capas por fora (vistas por trás) seguem com a arte da capa e da contracapa.
+ */
+function OpenBook({ spec, art, label, face, look, w, h, coverSpec, front, back }: OpenBookProps) {
+  const spread = spec.variant === "photobook";
+  const wire = look.binding === "wire";
+  // Agenda/planner: a página do lado oposto é a outra superfície do miolo (par ↔ ímpar), se o cliente montou.
+  const odd = /^pagina-impar/.test(face);
+  const otherId = Object.keys(art.faces ?? {}).find((id) => id !== face && /^pagina-/.test(id) && /^pagina-impar/.test(id) !== odd) ?? "";
+  const rightId = spread || odd ? face : otherId;
+  const leftId = spread ? face : odd ? otherId : face;
+  const pageW = w - 0.3;
+  const pageH = h - 0.6;
+  const right = useFaceTexture(spread ? (2 * pageW) / pageH : pageW / pageH, art, rightId, label, "blank");
+  const left = useFaceTexture(pageW / pageH, art, leftId, label, "blank");
+  const bt = look.board;
+  const tb = Math.max(0.3, (look.thick - 2 * bt) / 2);
+  const holeX = 0.62;
+  const geo = useMemo(() => {
+    // Lâminas do photobook abrem planas (lay-flat): só um vinco na dobra, sem afundar atrás do bloco de folhas.
+    const dip = wire ? 0.05 : 0.04;
+    const gutter = wire ? 0.4 : 0.8;
+    return {
+      right: openPageGeometry(pageW, pageH, 1, dip, gutter, spread ? [0.5, 1] : [0, 1]),
+      left: openPageGeometry(pageW, pageH, -1, dip, gutter, spread ? [0, 0.5] : [0, 1]),
+      block: pageBlockGeometry(pageW, pageH, tb, 0.06, 0),
+      frontBoard: planarUV(softBox(w, h, bt, look.radius, 0.05), w, h),
+      backBoard: planarUV(softBox(w, h, bt, look.radius, 0.05), w, h, true),
+      endpaper: faceGeometry(makeShape("rect", w - 0.2, h - 0.2, Math.max(look.radius - 0.1, 0.05)), w - 0.2, h - 0.2),
+      wire: wire ? openWireGeometry(pageH, look.thick, holeX) : null,
+      holes: wire ? holesGeometry(pageH, look.thick, holeX) : null,
+    };
+  }, [pageW, pageH, tb, w, h, bt, look.radius, look.thick, wire, spread]);
+  useGeometryCleanup(geo.right);
+  useGeometryCleanup(geo.left);
+  useGeometryCleanup(geo.block);
+  useGeometryCleanup(geo.frontBoard);
+  useGeometryCleanup(geo.backBoard);
+  useGeometryCleanup(geo.endpaper);
+  useGeometryCleanup(geo.wire);
+  useGeometryCleanup(geo.holes);
+  const edge = useMemo(() => pageEdgeTexture(look.paper, look.sheet, []), [look.paper, look.sheet]);
+  useEffect(() => () => edge.dispose(), [edge]);
+  const pageSpec = useMemo<MockupSpec>(() => (spread ? { ...spec, finish: "satin", clearcoat: 0.25, spotVarnish: false } : { ...spec, finish: "matte", clearcoat: 0, spotVarnish: false }), [spec, spread]);
+  // Metade do livro: capa (por fora, atrás), guarda, bloco de folhas e a página impressa por cima.
+  const half = (side: 1 | -1) => (
+    <group rotation-y={side * -OPEN_TILT}>
+      <mesh geometry={side > 0 ? geo.frontBoard : geo.backBoard} position={[(side * w) / 2, 0, -tb - bt / 2 - 0.02]} rotation-y={side > 0 ? Math.PI : 0}>
+        <PrintMaterial map={side > 0 ? front : back} spec={coverSpec} />
+      </mesh>
+      <mesh geometry={geo.endpaper} position={[(side * w) / 2, 0, -tb - 0.015]}>
+        <meshStandardMaterial color={ENDPAPER} roughness={0.92} />
+      </mesh>
+      <mesh geometry={geo.block} position={[(side * pageW) / 2, 0, -tb / 2 - 0.06]}>
+        <meshStandardMaterial map={edge} roughness={0.95} />
+      </mesh>
+      <mesh geometry={side > 0 ? geo.right : geo.left}>
+        <PrintMaterial map={side > 0 ? right : left} spec={pageSpec} />
+      </mesh>
+      {geo.holes && (
+        <mesh geometry={geo.holes} position={[side * holeX - holeX, 0, 0.004]}>
+          <meshStandardMaterial color="#2a2826" roughness={0.85} />
+        </mesh>
+      )}
+    </group>
+  );
+  return (
+    <group rotation-y={0.18} userData={{ view: { elevation: 0.22 } }}>
+      <group scale={UNIT}>
+        {half(-1)}
+        {half(1)}
+        {/* Lombada atrás da dobra. */}
+        <mesh position={[0, 0, -tb - bt - 0.05]}>
+          <boxGeometry args={[Math.max(0.6, look.thick * 0.5), h, 0.1]} />
+          <PrintMaterial map={front} spec={coverSpec} />
+        </mesh>
+        {geo.wire && (
+          <mesh geometry={geo.wire} position-z={0.02}>
+            <meshStandardMaterial color={look.wireColor} metalness={look.wireMetalness} roughness={look.wireRoughness} />
+          </mesh>
+        )}
+      </group>
+    </group>
+  );
+}
+
+/**
  * Photobook, agenda, planner e caderno de capa dura, em pé e girado 3/4 para mostrar a arte e a espessura.
  * Capas = papelão chanfrado com a arte em UV planar (dobra sobre as bordas) e guardas por dentro; miolo com
  * linhas de folha. Costurado: lombada redonda, miolo arqueado, cabeceados e vinco da dobradiça. Wire-o: anéis
@@ -421,6 +567,11 @@ function HardcoverModel({ spec, art, label, showDims }: ModelProps) {
   useGeometryCleanup(ribbon);
   useGeometryCleanup(tab);
   useEffect(() => () => edge.dispose(), [edge]);
+
+  // Lâmina do photobook ou página da agenda em edição: o livro abre nela.
+  const { face } = useSceneMode();
+  const openFace = openFaceOf(spec, face);
+  if (openFace) return <OpenBook spec={spec} art={art} label={label} face={openFace} look={look} w={w} h={h} coverSpec={coverSpec} front={front} back={back} />;
 
   const tabCount = hasTabs ? Math.max(0, Math.min(12, Math.floor((hp - 1.2) / 1.55))) : 0;
   const strap = spec.accentColor ?? "#161616";
@@ -522,8 +673,10 @@ function sheetKindOf(label: string): SheetKind {
   return "lined";
 }
 
+/** Folha do miolo personalizado: a arte do miolo (superfície "miolo"), impressa 1/0 em tons de cinza; sem ela, a da capa. */
 function PadArtSheet({ w, h, z, art, label }: { w: number; h: number; z: number; art: ModelProps["art"]; label: string }) {
-  const map = useArtTexture(w / h, "gray", art, label);
+  const miolo = useMemo(() => faceArtOf(art, "miolo"), [art]);
+  const map = useArtTexture(w / h, "gray", miolo ?? art, label);
   return (
     <mesh position-z={z}>
       <planeGeometry args={[w, h]} />
@@ -583,12 +736,14 @@ function PadModel({ spec, art, label, showDims }: ModelProps) {
   const front = useArtTexture(w / h, "front", art, label);
   // Verso do cliente: impresso no papelão do fundo, na mesma área da capa.
   const backArt = useBackTexture(w / h, spec, art, label, undefined, "blank");
-  const { back: showBack } = useSceneMode();
+  const { back: showBack, face } = useSceneMode();
   // Deitado, o giro de 180° do TurnGroup só mostra a capa de outro lado: com verso do cliente o bloco também
   // vira de barriga para cima (π em x local; somado ao giro do TurnGroup dá o bloco desvirado no lugar), apoiado
   // no chão e com a capa plana embaixo. Sem verso do cliente, nada muda.
   const flipped = showBack && hasArtContent(art.back);
   const sheetKind = sheetKindOf(label);
+  // Editando o miolo: a capa sai de cima e a primeira folha aparece inteira.
+  const showMiolo = sheetKind === "art" && face === "miolo" && !flipped;
   const top = PAD_CHIP + PAD_STACK;
   const total = top + 0.04;
   /** Altura do bloco até o topo da blocagem: o bloco virado apoia nela. */
@@ -633,14 +788,16 @@ function PadModel({ spec, art, label, showDims }: ModelProps) {
           ) : (
             <PadPaperSheet w={w} h={h} z={top + 0.008} ruled={sheetKind === "lined"} />
           )}
-          <group position-z={top + 0.03}>
-            <mesh geometry={flipped ? flatCover : cover}>
-              <PrintMaterial map={front} spec={spec} />
-            </mesh>
-            <mesh geometry={flipped ? flatCover : cover}>
-              <meshStandardMaterial color="#f3f1ec" roughness={0.9} side={THREE.BackSide} />
-            </mesh>
-          </group>
+          {!showMiolo && (
+            <group position-z={top + 0.03}>
+              <mesh geometry={flipped ? flatCover : cover}>
+                <PrintMaterial map={front} spec={spec} />
+              </mesh>
+              <mesh geometry={flipped ? flatCover : cover}>
+                <meshStandardMaterial color="#f3f1ec" roughness={0.9} side={THREE.BackSide} />
+              </mesh>
+            </group>
+          )}
           {/* Blocagem: cola no topo segurando capa, folhas e papelão. */}
           <mesh geometry={bead} position={[0, h / 2 + 0.02, stackTop / 2]}>
             <meshPhysicalMaterial color={spec.accentColor ?? "#a8322b"} roughness={0.5} clearcoat={0.4} clearcoatRoughness={0.3} />

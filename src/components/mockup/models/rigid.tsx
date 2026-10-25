@@ -8,7 +8,7 @@ import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
 import { fontFamily } from "../art";
 import { useSceneMode } from "../viewer-hooks";
-import { AcrylicMaterials, Dimensions, PrintMaterial, fitFlat, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { AcrylicMaterials, Dimensions, PrintMaterial, faceArtOf, fitFlat, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
 import { DoorHook } from "./door-hook";
 import { cutShape } from "./cut-path";
 
@@ -353,8 +353,10 @@ function createWeaveTexture(repeatU: number, repeatV: number) {
   return texture;
 }
 
-/** Grade do mês na folha do calendário (janeiro de 2027 começa numa sexta). */
-function createMonthTexture(aspect: number) {
+const MONTH_NAMES = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+
+/** Folha de um mês de 2027 sem arte própria: nome, iniciais da semana e os dias (domingos em vermelho). */
+function createMonthTexture(aspect: number, month: number) {
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
   canvas.height = Math.max(128, Math.round(1024 / aspect));
@@ -365,12 +367,12 @@ function createMonthTexture(aspect: number) {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, w, h);
     const headH = h * 0.2;
-    const x0 = w * 0.02;
+    const x0 = w * 0.06;
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
     ctx.fillStyle = "#121212";
     ctx.font = `800 ${Math.round(headH * 0.62)}px ${family}`;
-    ctx.fillText("JANEIRO", x0, headH * 0.55);
+    ctx.fillText(MONTH_NAMES[month] ?? MONTH_NAMES[0], x0, headH * 0.55);
     ctx.textAlign = "right";
     ctx.fillStyle = "#9a9a9a";
     ctx.font = `600 ${Math.round(headH * 0.45)}px ${family}`;
@@ -378,7 +380,7 @@ function createMonthTexture(aspect: number) {
     ctx.fillStyle = "#e4e4e4";
     ctx.fillRect(x0, headH, w - x0 * 2, Math.max(2, h * 0.008));
     const gridTop = headH + h * 0.03;
-    const rowH = (h - gridTop) / 7;
+    const rowH = (h * 0.96 - gridTop) / 7;
     const colW = (w - x0 * 2) / 7;
     ctx.textAlign = "center";
     ["D", "S", "T", "Q", "Q", "S", "S"].forEach((day, i) => {
@@ -387,8 +389,10 @@ function createMonthTexture(aspect: number) {
       ctx.fillText(day, x0 + colW * (i + 0.5), gridTop + rowH * 0.5);
     });
     ctx.font = `500 ${Math.round(rowH * 0.55)}px ${family}`;
-    for (let day = 1; day <= 31; day += 1) {
-      const index = 5 + day - 1;
+    const first = new Date(Date.UTC(2027, month, 1)).getUTCDay();
+    const days = new Date(Date.UTC(2027, month + 1, 0)).getUTCDate();
+    for (let day = 1; day <= days; day += 1) {
+      const index = first + day - 1;
       const col = index % 7;
       ctx.fillStyle = col === 0 ? "#e02018" : "#222222";
       ctx.fillText(String(day), x0 + colW * (col + 0.5), gridTop + rowH * (Math.floor(index / 7) + 1.5));
@@ -1172,91 +1176,92 @@ function AcrylicDesk({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-const CAL_PHOTO: [number, number] = [21.5, 16];
+/** Folha do calendário no gabarito: 21,5 × 16 cm, em paisagem. */
+const CAL_PAGE: [number, number] = [21.5, 16];
+const CAL_MONTH_IDS = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+/** Folhas do bloco: capa + 12 meses. */
+const CAL_SHEETS = 13;
+/** Inclinação de cada chapa do cavalete (rad, a partir da vertical). */
+const CAL_LEAN = 0.24;
 
-/** Calendário de mesa: bloco de acrílico com rasgo, chapa inclinada e o bloco de folhas em wire-o na frente. */
-function AcrylicCalendar({ spec, art, label, showDims }: ModelProps) {
-  // Medidas em cm; o grupo escala para a cena.
-  const bw = Math.max(spec.widthCm, 10);
-  const bh = Math.max(spec.heightCm, 12);
+/**
+ * Calendário de mesa com base de acrílico, como na foto do produto: cavalete de duas chapas de acrílico de 3 mm
+ * (em pé, em A) unidas no alto pelas duas argolas (douradas ou prateadas, pela opção), que prendem as 13 folhas de
+ * 21,5 × 16 cm deitadas na chapa da frente. Na frente fica a capa (a arte principal); com um mês em edição, a folha
+ * daquele mês (a arte dele; sem arte, a grade do mês).
+ */
+function AcrylicCalendar({ spec, art, label }: ModelProps) {
+  // Medidas em cm; o grupo escala para a cena. A chapa é um pouco maior que a folha (margem de 0,75 cm dos lados).
+  const [pageW, pageH] = CAL_PAGE;
+  const bw = pageW + 1.5;
+  const bh = pageH + 4.5;
   const t = Math.max(spec.depthCm, 0.3);
-  const U = 2.6 / bh;
-  const eps = 0.0012 / U;
-  const pw = bw - 1.5;
-  const ph = bh * 0.9;
-  const stack = 0.25;
-  const photoH = Math.min(pw * (CAL_PHOTO[1] / CAL_PHOTO[0]), ph * 0.62);
-  const gridTop = bh - 1.3 - photoH - 0.5;
-  const gridBottom = bh - ph + 0.7;
-  const gridW = pw - 1.6;
-  const gridH = Math.max(gridTop - gridBottom, 1);
-  const block = { w: bw + 2, d: 6, h: 2.6 };
-  const sink = 1.2;
-  const lean = -0.16;
-  const pageZ = t / 2 + 0.02 + stack / 2;
-  const faceZ = t / 2 + 0.02 + stack + eps;
-  const ring = { r: 0.55, wire: 0.06, pitch: 0.847 };
-  const ringZ = (-t / 2 + t / 2 + 0.02 + stack) / 2;
-
-  const photo = useArtTexture(pw / photoH, "front", art, label);
-  const month = useMemo(() => createMonthTexture(gridW / gridH), [gridW, gridH]);
-  useDisposable(month);
-  const board = useMemo(() => extrudeBody(roundedRect(bw - t * 0.44, bh - t * 0.44, 0.6), t, t * 0.22), [bw, bh, t]);
-  const base = useMemo(() => extrudeBody(roundedRect(block.w - 0.6, block.h - 0.6, 0.4), block.d, 0.3), [block.w, block.h, block.d]);
+  const U = 2.6 / bw;
+  const { face } = useSceneMode();
+  const monthIndex = face ? CAL_MONTH_IDS.indexOf(face) : -1;
+  const monthArt = useMemo(() => (monthIndex >= 0 ? faceArtOf(art, CAL_MONTH_IDS[monthIndex]) : null), [art, monthIndex]);
+  const cover = useArtTexture(pageW / pageH, "front", monthArt ?? art, label);
+  const grid = useMemo(() => (monthIndex >= 0 && !monthArt ? createMonthTexture(pageW / pageH, monthIndex) : null), [pageW, pageH, monthIndex, monthArt]);
+  useEffect(() => () => grid?.dispose(), [grid]);
+  const board = useMemo(() => extrudeBody(roundedRect(bw - t * 0.44, bh - t * 0.44, 1.2), t, t * 0.22), [bw, bh, t]);
   useGeometryCleanup(board);
-  useGeometryCleanup(base);
-  const loop = useMemo(() => new THREE.TorusGeometry(ring.r, ring.wire, 8, 28), [ring.r, ring.wire]);
-  useGeometryCleanup(loop);
-  const loops = useMemo(() => {
-    const span = pw - 1.2;
-    const pairs = Math.max(1, Math.floor(span / ring.pitch));
-    const turn = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0));
-    const one = new THREE.Vector3(1, 1, 1);
-    const list: THREE.Matrix4[] = [];
-    for (let i = 0; i < pairs; i += 1) {
-      const x = -((pairs - 1) * ring.pitch) / 2 + i * ring.pitch;
-      // Cada laço passa pelo furo (0,5 cm abaixo do topo) e contorna a borda de cima da chapa e das folhas.
-      for (const dx of [-0.12, 0.12]) list.push(new THREE.Matrix4().compose(new THREE.Vector3(x + dx, bh - 0.5 + ring.r, ringZ), turn, one));
-    }
-    return list;
-  }, [pw, bh, ringZ, ring.pitch, ring.r]);
-  const [lw, lh] = sizeLabels(spec);
-  const metal = metalColor(spec.metal);
+  const ring = useMemo(() => new THREE.TorusGeometry(1.25, 0.09, 10, 48), []);
+  useGeometryCleanup(ring);
+  const sheet = 0.026;
+  const stack = sheet * CAL_SHEETS;
+  const ringX = pageW * 0.27;
+  const holeY = -0.9;
+  const pageTop = holeY + 0.7;
+  const details = spec.details ?? "";
+  const metal = metalColor(/\bprat/.test(details) ? "silver" : /\bdourad/.test(details) ? "gold" : spec.metal === "none" ? "gold" : spec.metal);
+  const apexY = bh * Math.cos(CAL_LEAN);
+  // Argola de raio R passando pelos furos das duas chapas (±zh, na altura do furo) e por cima do vértice.
+  const ringR = 1.25;
+  const zh = -holeY * Math.sin(CAL_LEAN) + t + stack / 2;
+  const ringY = apexY + holeY * Math.cos(CAL_LEAN) + Math.sqrt(Math.max(ringR * ringR - zh * zh, 0));
   const pose = usePose([0, 0.36, 0]);
   return (
     <group rotation={pose} userData={{ unitsPerCm: U }}>
       <group scale={U}>
-        <mesh geometry={base} position={[0, block.h / 2, 0]} renderOrder={2}>
-          <AcrylicMaterials />
-        </mesh>
-        <group position={[0, block.h - sink, -block.d * 0.12]} rotation-x={lean}>
-          <mesh geometry={board} position-y={bh / 2} renderOrder={1}>
-            <AcrylicMaterials />
-          </mesh>
-          {/* Bloco de folhas (couchê) apoiado na chapa. */}
-          <SoftBox size={[pw, ph, stack]} radius={0.25} bevel={0.04} position={[0, bh - ph / 2, pageZ]}>
-            <meshStandardMaterial color="#f6f5f1" roughness={0.9} />
-          </SoftBox>
-          <mesh position={[0, bh - 1.3 - photoH / 2, faceZ]}>
-            <planeGeometry args={[pw, photoH]} />
-            <PrintMaterial map={photo} spec={spec} />
-          </mesh>
-          <mesh position={[0, (gridTop + gridBottom) / 2, faceZ]}>
-            <planeGeometry args={[gridW, gridH]} />
-            <meshStandardMaterial map={month} roughness={0.85} />
-          </mesh>
-          <Instances geometry={loop} matrices={loops}>
-            <meshStandardMaterial color={metal} metalness={1} roughness={0.22} />
-          </Instances>
-        </group>
-      </group>
-      {showDims && (
-        <group position={[0, (block.h - sink) * U, -block.d * 0.12 * U]} rotation-x={lean}>
-          <group position-y={(bh / 2) * U}>
-            <Dimensions w={bw * U} h={bh * U} z={(t / 2 + stack + 0.3) * U} labelW={lw} labelH={lh} />
+        {/* Chapa da frente (com as folhas) e a de trás, articuladas no alto pelas argolas. */}
+        {[1, -1].map((side) => (
+          <group key={side} position-y={apexY} rotation-x={-side * CAL_LEAN}>
+            <mesh geometry={board} position={[0, -bh / 2, (side * t) / 2]} renderOrder={1}>
+              <AcrylicMaterials />
+            </mesh>
+            {[-1, 1].map((s) => (
+              <mesh key={s} position={[s * ringX, holeY, side * t + 0.002 * side]} rotation-y={side > 0 ? 0 : Math.PI}>
+                <circleGeometry args={[0.32, 20]} />
+                <meshStandardMaterial color="#9fb9b3" transparent opacity={0.5} depthWrite={false} />
+              </mesh>
+            ))}
+            {side > 0 && (
+              <group position-z={t}>
+                {/* Bloco de folhas de couchê e a folha da frente impressa. */}
+                <SoftBox size={[pageW, pageH, stack]} radius={0.15} bevel={0.01} position={[0, pageTop - pageH / 2, stack / 2 + 0.01]}>
+                  <meshStandardMaterial color="#f7f6f2" roughness={0.88} />
+                </SoftBox>
+                <mesh position={[0, pageTop - pageH / 2, stack + 0.016]}>
+                  <planeGeometry args={[pageW, pageH]} />
+                  {grid ? <meshStandardMaterial map={grid} roughness={0.85} /> : <PrintMaterial map={cover} spec={spec} />}
+                </mesh>
+                {[-1, 1].map((s) => (
+                  <mesh key={s} position={[s * ringX, holeY, stack + 0.02]}>
+                    <circleGeometry args={[0.28, 20]} />
+                    <meshStandardMaterial color="#3a3a3c" roughness={0.8} />
+                  </mesh>
+                ))}
+              </group>
+            )}
           </group>
-        </group>
-      )}
+        ))}
+        {/* Argolas: passam pelos furos das duas chapas e das folhas, por cima do vértice. */}
+        {[-1, 1].map((s) => (
+          <mesh key={s} geometry={ring} position={[s * ringX, ringY, 0]} rotation-y={Math.PI / 2}>
+            <meshStandardMaterial color={metal} metalness={1} roughness={0.2} />
+          </mesh>
+        ))}
+      </group>
     </group>
   );
 }
