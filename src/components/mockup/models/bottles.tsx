@@ -9,7 +9,7 @@ import type { MockupSpec } from "@/lib/mockup";
 import { THERMAL_SHARE, artArea, artAspect } from "@/lib/mockup-kinds";
 import { THERMAL_WINDOW } from "../art";
 import { bandGeometry, makeShape, metalColor, useArtTexture, type MaskPath, type ModelProps } from "./shared";
-import { lathe, radiusOnProfile, smoothProfile, type Pt } from "./vessel";
+import { lathe, radiusOnProfile, smoothProfile, useStudioReflection, type Pt } from "./vessel";
 
 /*
  * Escala: 1 cm = 0,12 unidade (uma garrafa de 25 cm fica com 3 unidades). Cada peça é um perfil 2D
@@ -277,7 +277,7 @@ function printLook(spec: MockupSpec, finish: Finish): Look {
   return finish.roughness > 0.4 && finish.metalness < 0.5 ? "satin" : "gloss";
 }
 
-function FinishMaterial({ finish, map = null }: { finish: Finish; map?: THREE.Texture | null }) {
+function FinishMaterial({ finish, map = null, env = null }: { finish: Finish; map?: THREE.Texture | null; env?: THREE.Texture | null }) {
   return (
     <meshPhysicalMaterial
       color={map ? "#ffffff" : finish.color}
@@ -286,12 +286,14 @@ function FinishMaterial({ finish, map = null }: { finish: Finish; map?: THREE.Te
       roughness={finish.roughness}
       clearcoat={finish.clearcoat}
       clearcoatRoughness={finish.clearcoatRoughness}
+      envMap={env}
     />
   );
 }
 
-function SteelMaterial({ roughness = 0.16 }: { roughness?: number }) {
-  return <meshStandardMaterial color={STEEL} metalness={1} roughness={roughness} />;
+/** Inox polido; com `env` (useStudioReflection) reflete o estúdio claro em vez do fundo escuro do visualizador. */
+function SteelMaterial({ roughness = 0.16, env = null }: { roughness?: number; env?: THREE.Texture | null }) {
+  return <meshStandardMaterial color={STEEL} metalness={1} roughness={roughness} envMap={env} />;
 }
 
 // ---------------------------------------------------------------------------- arte
@@ -576,6 +578,192 @@ function SteelTumbler({ spec, art, label, travel }: ModelProps & { travel: boole
   );
 }
 
+/**
+ * Copo térmico inox de 500 ml (cm): corpo cônico com pintura eletrostática entre o fundo de inox (base) e o aro de
+ * inox polido da boca (rim), tampa preta embutida. Medidas das fotos do produto (186).
+ */
+const THERMAL_CUP_CM = { bottom: 3.42, top: 4.4, height: 17.2, base: 1.9, rim: 1.7, gap: 0.07 };
+
+/** Raio do cone do copo térmico numa altura (cena). */
+function thermalCupWall(y: number) {
+  const c = THERMAL_CUP_CM;
+  return taper(y, 0, c.bottom * U, c.height * U, c.top * U);
+}
+
+/*
+ * Gravação a laser na pintura do copo: o laser queima a tinta e revela o inox por baixo (a cor da arte não importa,
+ * é uma cor só). Como a produção prepara o arquivo: na arte montada no editor grava o que se destaca do fundo
+ * (texto, ícones, logo); na imagem enviada grava o que é escuro (o fundo claro ou transparente não grava). O resto
+ * da faixa é descartado (alphaTest) e a pintura do corpo aparece.
+ */
+function engraveChunk(background: THREE.Color | null) {
+  const burn = background
+    ? `smoothstep( 0.1, 0.22, distance( sampledDiffuseColor.rgb, vec3( ${background.r.toFixed(4)}, ${background.g.toFixed(4)}, ${background.b.toFixed(4)} ) ) )`
+    : "1.0 - smoothstep( 0.42, 0.62, dot( sampledDiffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) ) )";
+  return /* glsl */ `
+#ifdef USE_MAP
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+  diffuseColor.a *= ( ${burn} ) * sampledDiffuseColor.a;
+#endif
+`;
+}
+
+/** Cor (hex) do fundo da arte montada no editor, ou null para imagem enviada ou fundo que não é cor sólida. */
+function engraveBackground(art: Art): string | null {
+  if (art.src || !/^#[0-9a-f]{3,8}$/i.test(art.background)) return null;
+  return art.background.slice(0, 7);
+}
+
+/** Inox revelado pelo laser: acetinado (a queima deixa o metal fosco), refletindo o estúdio. */
+function EngravedSteel({ geometry, map, y, env, background }: { geometry: THREE.BufferGeometry; map: THREE.Texture; y: number; env: THREE.Texture; background: string | null }) {
+  const program = useMemo(() => {
+    // A textura da arte é sRGB e o shader lê a cor já linear: compara com o fundo também linear.
+    const color = background ? new THREE.Color(background) : null;
+    return {
+      onBeforeCompile: (shader: { fragmentShader: string }) => {
+        shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", engraveChunk(color));
+      },
+      key: () => `bottles-engrave-${color ? color.getHexString() : "tom"}`,
+    };
+  }, [background]);
+  return (
+    <mesh geometry={geometry} position-y={y}>
+      <meshPhysicalMaterial
+        key={background ?? "tom"}
+        color="#d3d6da"
+        metalness={1}
+        roughness={0.34}
+        envMap={env}
+        map={map}
+        alphaTest={0.5}
+        polygonOffset
+        polygonOffsetFactor={-2}
+        polygonOffsetUnits={-2}
+        onBeforeCompile={program.onBeforeCompile}
+        customProgramCacheKey={program.key}
+      />
+    </mesh>
+  );
+}
+
+/**
+ * Copo térmico 500 ml (186): fundo e aro de inox polido, corpo pintado (preto, rosa, branco, azul) e tampa preta
+ * embutida no aro, com abertura de beber na frente e trava deslizante atrás. Com "laser" nas opções a arte é
+ * gravada (o inox aparece onde a arte é escura); sem laser, faixa impressa.
+ */
+function ThermalCup({ spec, art, label }: ModelProps) {
+  const c = THERMAL_CUP_CM;
+  const H = c.height * U;
+  const baseTop = c.base * U;
+  const rimBottom = H - c.rim * U;
+  const geo = useMemo(() => {
+    const h = THERMAL_CUP_CM.height * U;
+    const bTop = THERMAL_CUP_CM.base * U;
+    const rBottom = h - THERMAL_CUP_CM.rim * U;
+    const g = THERMAL_CUP_CM.gap * U;
+    const wall = thermalCupWall;
+    const r0 = wall(0) - 0.07 * U;
+    // Lábio do aro: a tampa encaixa por dentro, 0,4 cm abaixo da borda.
+    const lip = wall(h) - 0.02 * U;
+    const lidR = lip - 0.24 * U;
+    return {
+      base: lathe(
+        filleted([
+          [0, 0.3 * U],
+          [r0 - 0.55 * U, 0.3 * U, 0.2 * U],
+          [r0 - 0.35 * U, 0, 0.12 * U],
+          [r0 - 0.05 * U, 0, 0.3 * U],
+          [wall(bTop) - 0.07 * U, bTop, 0.03 * U],
+          [0, bTop],
+        ]),
+        128,
+      ),
+      body: lathe(
+        filleted([
+          [0, bTop + g],
+          [wall(bTop + g) - 0.05 * U, bTop + g, 0.03 * U],
+          [wall(bTop + g + 0.12 * U), bTop + g + 0.12 * U, 0.06 * U],
+          [wall(rBottom - g - 0.12 * U), rBottom - g - 0.12 * U, 0.06 * U],
+          [wall(rBottom - g) - 0.05 * U, rBottom - g, 0.03 * U],
+          [0, rBottom - g],
+        ]),
+        128,
+      ),
+      rim: lathe(
+        filleted([
+          [0, rBottom - 0.2 * U],
+          [wall(rBottom) - 0.04 * U, rBottom - 0.2 * U],
+          [wall(rBottom) - 0.01 * U, rBottom + 0.05 * U, 0.03 * U],
+          [lip, h - 0.18 * U, 0.12 * U],
+          [lip - 0.1 * U, h, 0.08 * U],
+          [lidR, h - 0.04 * U, 0.04 * U],
+          [lidR, h - 0.6 * U],
+          [0, h - 0.6 * U],
+        ]),
+        128,
+      ),
+      lid: lathe(
+        filleted([
+          [0, h + 0.3 * U],
+          [lidR - 0.5 * U, h + 0.3 * U, 0.4 * U],
+          [lidR - 0.12 * U, h + 0.18 * U, 0.14 * U],
+          [lidR - 0.02 * U, h - 0.3 * U],
+          [0, h - 0.3 * U],
+        ]),
+        96,
+      ),
+      slider: roundedSlab(2.3 * U, 1.0 * U, 0.2 * U, 0.42 * U),
+      lever: roundedSlab(0.9 * U, 0.55 * U, 0.5 * U, 0.2 * U),
+      slot: new THREE.ShapeGeometry(makeShape("rect", 1.7 * U, 0.5 * U, 0.25 * U), 8),
+      lidR,
+    };
+  }, []);
+  useDispose({ base: geo.base, body: geo.body, rim: geo.rim, lid: geo.lid, slider: geo.slider, lever: geo.lever, slot: geo.slot });
+  const studio = useStudioReflection();
+
+  const finish = coatFinish(spec);
+  const laser = /\blaser\b/.test(spec.details ?? "");
+  const map = useDecalArt(spec, art, label);
+  const zone0 = baseTop + 0.55 * U;
+  const zone1 = rimBottom - 0.55 * U;
+  const fit = fitBand(spec, thermalCupWall(zone0), zone1 - zone0, Math.PI * 1.1);
+  const center = (zone0 + zone1) / 2;
+  const band = useMemo(
+    () => bandGeometry({ radiusTop: 0, radiusBottom: 0, height: fit.h, width: fit.w, segments: 128, rows: 12, radiusAt: (y) => thermalCupWall(center + y) + LIFT }),
+    [fit.w, fit.h, center],
+  );
+  useDisposeOne(band);
+  const lidFinish: Finish = { color: spec.accentColor ?? INK, metalness: 0, roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.22 };
+  const lidTop = H + 0.3 * U;
+  return (
+    <group>
+      <mesh geometry={geo.base}>
+        <SteelMaterial env={studio} roughness={0.2} />
+      </mesh>
+      <mesh geometry={geo.body}>
+        <FinishMaterial finish={finish} />
+      </mesh>
+      <mesh geometry={geo.rim}>
+        <SteelMaterial env={studio} roughness={0.12} />
+      </mesh>
+      {laser ? <EngravedSteel geometry={band} map={map} y={center} env={studio} background={engraveBackground(art)} /> : <ArtBand geometry={band} map={map} y={center} look={printLook(spec, finish)} />}
+      <mesh geometry={geo.lid}>
+        <FinishMaterial finish={lidFinish} />
+      </mesh>
+      {/* Abertura de beber na frente e trava deslizante atrás, com a alavanca saindo pela lateral. */}
+      <mesh geometry={geo.slot} position={[0, lidTop + 0.004 * U, geo.lidR - 1.05 * U]} rotation-x={-Math.PI / 2}>
+        <meshStandardMaterial color="#050506" roughness={0.9} polygonOffset polygonOffsetFactor={-2} />
+      </mesh>
+      <mesh geometry={geo.slider} position={[0, lidTop - 0.06 * U, -(geo.lidR - 1.3 * U)]}>
+        <FinishMaterial finish={{ ...lidFinish, roughness: 0.3 }} />
+      </mesh>
+      <mesh geometry={geo.lever} position={[geo.lidR + 0.05 * U, H - 0.15 * U, -1.1 * U]} rotation-y={Math.PI / 2 - 0.25}>
+        <FinishMaterial finish={{ ...lidFinish, roughness: 0.32 }} />
+      </mesh>
+    </group>
+  );
+}
+
 const GLASS_CM = { radius: 3.5, height: 14.5, neck: 0.4, wall: 0.26 };
 
 /** Copo de vidro jateado formato lata, tampa de bambu com furo e canudo de vidro. */
@@ -682,7 +870,8 @@ function GlassCan({ spec, art, label }: ModelProps) {
 export function TumblerModel(props: ModelProps) {
   const { spec } = props;
   if (spec.variant === "glass" || spec.glass) return <GlassCan {...props} />;
-  return <SteelTumbler {...props} travel={spec.variant === "travel" || spec.handle} />;
+  if (spec.variant === "travel" || spec.handle) return <SteelTumbler {...props} travel />;
+  return <ThermalCup {...props} />;
 }
 
 // ---------------------------------------------------------------------------- garrafas: bichinhos
@@ -891,7 +1080,7 @@ function colaProfile(): Pt[] {
   );
 }
 
-type ThermalStyle = "classic" | "bamboo" | "cola" | "bunny" | "dog";
+type ThermalStyle = "bamboo" | "cola" | "bunny" | "dog";
 
 const THERMAL = {
   classic: { r: 3.5, h: 21, neck: 2.3, shoulder: 2.6 },
@@ -900,8 +1089,9 @@ const THERMAL = {
 };
 
 /**
- * Garrafa térmica inox: clássica com tampa de rosca e anel polido, tampa de bambu, contorno "cola"
- * com tampinha serrilhada, ou infantil com tampa de bichinho (coelhinho em degradê, cachorro maluco).
+ * Garrafa térmica inox de ombro arredondado: tampa de bambu com anel polido, contorno "cola" com tampinha
+ * serrilhada, ou infantil com tampa de bichinho (coelhinho em degradê, cachorro maluco). A térmica reta com
+ * sensor de temperatura é a SensorBottle.
  */
 function ThermalBottle({ spec, art, label, style }: ModelProps & { style: ThermalStyle }) {
   const kid = style === "bunny" || style === "dog";
@@ -924,26 +1114,7 @@ function ThermalBottle({ spec, art, label, style }: ModelProps & { style: Therma
         ]),
         96,
       ),
-      cap:
-        style === "classic"
-          ? lathe(
-              filleted([
-                [0, 0],
-                [capR, 0, 0.06 * U],
-                [capR, 0.5 * U, 0.03 * U],
-                [capR - 0.06 * U, 0.58 * U, 0.03 * U],
-                [capR - 0.06 * U, 0.72 * U, 0.03 * U],
-                [capR, 0.8 * U, 0.03 * U],
-                [capR, 4.4 * U, 0.75 * U],
-                [0, 4.4 * U],
-              ]),
-              96,
-            )
-          : style === "bamboo"
-            ? discGeometry(capR, 4.2 * U, 0.5 * U)
-            : style === "cola"
-              ? ribbedRing(1.8 * U, 2.0 * U, 56, 0.06 * U)
-              : null,
+      cap: style === "bamboo" ? discGeometry(capR, 4.2 * U, 0.5 * U) : style === "cola" ? ribbedRing(1.8 * U, 2.0 * U, 56, 0.06 * U) : null,
       capTop:
         style === "cola"
           ? lathe(
@@ -1006,11 +1177,6 @@ function ThermalBottle({ spec, art, label, style }: ModelProps & { style: Therma
           <SteelMaterial />
         </mesh>
       )}
-      {style === "classic" && geo.cap && (
-        <mesh geometry={geo.cap} position-y={H - 0.5 * U}>
-          <FinishMaterial finish={capFinish} />
-        </mesh>
-      )}
       {style === "bamboo" && geo.cap && (
         <mesh geometry={geo.cap} position-y={H - 0.5 * U}>
           <meshStandardMaterial map={textures.grain} roughness={0.62} />
@@ -1029,6 +1195,164 @@ function ThermalBottle({ spec, art, label, style }: ModelProps & { style: Therma
           <CritterHead radius={r - 0.02 * U} band={1.5 * U} dome={2.3 * U} critter={critter} />
         </group>
       )}
+    </group>
+  );
+}
+
+// ---------------------------------------------------------------------------- garrafa térmica com sensor
+
+/**
+ * Garrafa térmica de 500 ml com sensor de temperatura (cm, das fotos da 396): cilindro reto pintado, gargalo de inox
+ * polido e tampa do mesmo diâmetro com o visor de LED no topo (vidro preto).
+ */
+const SENSOR_CM = { r: 3.4, body: 19, neckR: 2.75, neckIn: 2.38, neckTop: 20.4, cap: 4.3, glass: 2.85 };
+
+/** Sete segmentos de cada dígito do visor (a, b, c, d, e, f, g). */
+const SEGMENTS: Record<string, string> = { "2": "abged", "8": "abcdefg", C: "afed" };
+
+/** Visor da tampa: "28°C" em LED de sete segmentos sobre fundo transparente (a temperatura das fotos do produto). */
+function displayTexture() {
+  const w = 512;
+  const h = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return texture;
+  ctx.strokeStyle = "#e9f8ff";
+  ctx.lineCap = "round";
+  ctx.shadowColor = "rgba(120,215,255,0.9)";
+  ctx.shadowBlur = 14;
+  const digit = (char: string, x: number, y: number, dw: number, dh: number, t: number) => {
+    const half = dh / 2;
+    const ends: Record<string, [number, number, number, number]> = {
+      a: [x, y, x + dw, y],
+      b: [x + dw, y, x + dw, y + half],
+      c: [x + dw, y + half, x + dw, y + dh],
+      d: [x, y + dh, x + dw, y + dh],
+      e: [x, y + half, x, y + dh],
+      f: [x, y, x, y + half],
+      g: [x, y + half, x + dw, y + half],
+    };
+    ctx.lineWidth = t;
+    for (const s of SEGMENTS[char] ?? "") {
+      const [x0, y0, x1, y1] = ends[s];
+      // Segmentos separados por um respiro nas pontas, como no LED de verdade.
+      const gap = t * 0.75;
+      const len = Math.hypot(x1 - x0, y1 - y0);
+      const ux = (x1 - x0) / len;
+      const uy = (y1 - y0) / len;
+      ctx.beginPath();
+      ctx.moveTo(x0 + ux * gap, y0 + uy * gap);
+      ctx.lineTo(x1 - ux * gap, y1 - uy * gap);
+      ctx.stroke();
+    }
+  };
+  digit("2", 118, 66, 70, 124, 15);
+  digit("8", 230, 66, 70, 124, 15);
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.arc(338, 76, 9, 0, Math.PI * 2);
+  ctx.stroke();
+  digit("C", 362, 120, 36, 66, 9);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * Garrafa térmica com sensor (396): cilindro reto pintado (preta, branca, dourada) com o adesivo DTF U.V. na frente,
+ * aberta como nas fotos do produto: gargalo de inox polido à mostra e a tampa deitada ao lado, com o visor de
+ * temperatura virado para a câmera.
+ */
+function SensorBottle({ spec, art, label }: ModelProps) {
+  const s = SENSOR_CM;
+  const geo = useMemo(() => {
+    const c = SENSOR_CM;
+    const R = c.r * U;
+    const top = c.body * U;
+    const n = c.neckR * U;
+    return {
+      body: lathe(
+        filleted([
+          [0, 0.3 * U],
+          [R - 0.55 * U, 0.3 * U, 0.2 * U],
+          [R - 0.38 * U, 0, 0.12 * U],
+          [R - 0.05 * U, 0, 0.35 * U],
+          [R, 0.5 * U],
+          [R, top, 0.32 * U],
+          [n + 0.08 * U, top, 0.06 * U],
+          [n + 0.08 * U, top - 0.2 * U],
+          [0, top - 0.2 * U],
+        ]),
+        128,
+      ),
+      neck: lathe(
+        filleted([
+          [n - 0.02 * U, top - 0.3 * U],
+          [n, top - 0.2 * U],
+          [n, c.neckTop * U, 0.12 * U],
+          [c.neckIn * U, c.neckTop * U, 0.12 * U],
+          [c.neckIn * U, c.neckTop * U - 2.2 * U, 0.3 * U],
+          [0, c.neckTop * U - 2.3 * U],
+        ]),
+        128,
+      ),
+      // Tampa em pé no próprio eixo (topo em y = cap); deitada no render.
+      cap: lathe(
+        filleted([
+          [0, 0.4 * U],
+          [R - 0.3 * U, 0.4 * U, 0.1 * U],
+          [R - 0.3 * U, 0, 0.08 * U],
+          [R, 0, 0.1 * U],
+          [R, c.cap * U, 0.55 * U],
+          [c.glass * U + 0.1 * U, c.cap * U, 0.05 * U],
+          [c.glass * U + 0.1 * U, c.cap * U - 0.05 * U],
+          [0, c.cap * U - 0.05 * U],
+        ]),
+        96,
+      ),
+      glass: new THREE.CircleGeometry(c.glass * U, 64),
+    };
+  }, []);
+  useDispose(geo);
+  const display = useMemo(() => displayTexture(), []);
+  useDisposeOne(display);
+  const studio = useStudioReflection();
+
+  const finish = coatFinish(spec);
+  const env = spec.metal !== "none" ? studio : null;
+  const map = useDecalArt(spec, art, label);
+  const R = s.r * U;
+  const zone0 = 3 * U;
+  const zone1 = (s.body - 1.2) * U;
+  const fit = spec.thermal ? thermalBand(spec, R, zone1 - zone0) : fitBand(spec, R, zone1 - zone0);
+  const center = (zone0 + zone1) / 2;
+  const band = useMemo(() => bandGeometry({ radiusTop: R + LIFT, radiusBottom: R + LIFT, height: fit.h, width: fit.w, segments: 128, rows: 4 }), [R, fit.w, fit.h]);
+  useDisposeOne(band);
+  const capH = s.cap * U;
+  return (
+    <group>
+      <mesh geometry={geo.body}>
+        <FinishMaterial finish={finish} env={env} />
+      </mesh>
+      <mesh geometry={geo.neck}>
+        <SteelMaterial env={studio} roughness={0.1} />
+      </mesh>
+      <ArtBand geometry={band} map={map} y={center} look="gloss" />
+      {/* Tampa deitada à direita, eixo para a câmera: o visor fica de frente. */}
+      <group position={[R * 2 + 0.7 * U, R, 0.4 * U - capH / 2]} rotation-x={Math.PI / 2}>
+        <mesh geometry={geo.cap}>
+          <FinishMaterial finish={finish} env={env} />
+        </mesh>
+        <mesh geometry={geo.glass} position-y={capH - 0.04 * U} rotation-x={-Math.PI / 2}>
+          <meshPhysicalMaterial color="#07080a" roughness={0.06} clearcoat={1} clearcoatRoughness={0.03} envMap={studio} envMapIntensity={0.6} />
+        </mesh>
+        <mesh geometry={geo.glass} position-y={capH - 0.035 * U} rotation-x={-Math.PI / 2} scale={0.62}>
+          <meshBasicMaterial map={display} transparent depthWrite={false} toneMapped={false} />
+        </mesh>
+      </group>
     </group>
   );
 }
@@ -1367,7 +1691,7 @@ export function BottleModel(props: ModelProps) {
     const cap: SportCap = spec.carabiner ? "loop" : variant === "sports-ball" ? "ball" : variant === "sports-spout" ? "spout" : "push";
     return <SportsBottle {...props} cap={cap} />;
   }
-  const style: ThermalStyle =
-    variant === "bunny" ? "bunny" : variant === "dog" ? "dog" : variant === "cola" ? "cola" : spec.accentColor === BAMBOO || variant === "bamboo" ? "bamboo" : "classic";
-  return <ThermalBottle {...props} style={style} />;
+  const style: ThermalStyle | null =
+    variant === "bunny" ? "bunny" : variant === "dog" ? "dog" : variant === "cola" ? "cola" : spec.accentColor === BAMBOO || variant === "bamboo" ? "bamboo" : null;
+  return style ? <ThermalBottle {...props} style={style} /> : <SensorBottle {...props} />;
 }

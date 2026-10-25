@@ -2,6 +2,7 @@
 
 // Helpers de vasilhas (perfil em torno, faixa de impressão, superfícies). Arquivo estável: caneca, copo e garrafa importam daqui.
 
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { metalColor } from "./shared";
@@ -38,6 +39,59 @@ export function radiusOnProfile(profile: Pt[], y: number): number {
     if ((y0 <= y && y <= y1) || (y1 <= y && y <= y0)) return x0 + (x1 - x0) * ((y - y0) / (y1 - y0 || 1));
   }
   return profile[profile.length - 1][0];
+}
+
+/**
+ * Panorama de estúdio (equirretangular) para refletir em metal polido: fundo claro, softboxes verticais e faixas
+ * escuras entre elas, chão cinza. O ambiente do visualizador é preto com poucas placas de luz, e um espelho nele sai
+ * quase preto (a caneca cromada parecia preta e a arte sumia); as fotos de produto mostram o metal claro, com faixas.
+ */
+function studioReflection() {
+  const w = 1024;
+  const h = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    // Fundo infinito branco (o chão também é claro: a parede vista de cima reflete o chão).
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, "#ffffff");
+    sky.addColorStop(0.45, "#f1f2f3");
+    sky.addColorStop(0.5, "#dfe1e4");
+    sky.addColorStop(0.62, "#e9eaec");
+    sky.addColorStop(1, "#b9bcc0");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+    // Faixas verticais (longitude): bandeiras escuras entre as softboxes, que dão o contraste do cromado de catálogo.
+    const bar = (u: number, width: number, color: string, top: number, bottom: number) => {
+      const x = u * w;
+      const half = (width * w) / 2;
+      const g = ctx.createLinearGradient(x - half, 0, x + half, 0);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(0.3, color);
+      g.addColorStop(0.7, color);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - half, top * h, half * 2, (bottom - top) * h);
+    };
+    // u = 0,75 é o que a frente da peça reflete (atrás da câmera): fica clara. As bandeiras escuras caem a ~35° de
+    // cada lado da frente, e atrás da peça (u = 0,25, o que os contornos refletem) o estúdio é cinza médio.
+    bar(0.25, 0.3, "rgba(128,132,138,0.55)", 0.05, 0.95);
+    [0.56, 0.94].forEach((u) => bar(u, 0.09, "rgba(40,43,48,0.85)", 0.1, 0.9));
+    [0.48, 0.02].forEach((u) => bar(u, 0.035, "rgba(70,74,80,0.45)", 0.2, 0.8));
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/** Reflexo de estúdio (studioReflection) para o envMap de cromado, inox e glitter. */
+export function useStudioReflection() {
+  const texture = useMemo(() => studioReflection(), []);
+  useEffect(() => () => texture.dispose(), [texture]);
+  return texture;
 }
 
 export type Surface = { color: string; metalness: number; roughness: number; clearcoat: number; transparent?: boolean; opacity?: number };

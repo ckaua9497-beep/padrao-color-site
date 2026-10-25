@@ -494,7 +494,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   const allValues = chosen.map((c) => c.value).join(" | ");
 
   const sizeText =
-    pick(selection, product.options, /^(formato|tamanho da arte|formato da arte)/) ??
+    pick(selection, product.options, /^(formato|tamanho da arte|formato da arte|tamanho( da)? gravacao)/) ??
     pick(selection, product.options, /^tamanho$/) ??
     product.name;
   const parsed = parseSize(sizeText) ?? parseSize(product.name);
@@ -634,7 +634,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     teacup,
     handle: kind === "mug" || (kind === "tumbler" && (/\btravel mug\b/.test(name) || /\balca\b/.test(allValues))),
     carabiner: /\bmosquet/.test(name) || /\bmosquet/.test(allValues),
-    thermal: kind === "bottle" && (/\btermic/.test(name) || /\binox\b/.test(name)),
+    // DTF U.V. é um adesivo no tamanho do formato (Garrafa Térmica 396: 9×10 cm), não a faixa de 60% da sublimação.
+    thermal: kind === "bottle" && (/\btermic/.test(name) || /\binox\b/.test(name)) && !/\bdtf\b/.test(allValues),
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
     pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b/.test(name),
     spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),
