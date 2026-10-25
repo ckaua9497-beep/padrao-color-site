@@ -785,7 +785,10 @@ function MarkerSet({ floor, front }: { floor: number; front: number }) {
 
 // ---------------------------------------------------------------------------- almofadas
 
-/** Almofada cheia com vivo (quadrada, retangular, redonda, coração); `coloring` vira desenho de contorno. */
+/**
+ * Almofada cheia (quadrada, retangular, redonda, coração) com costura simples, sem vivo: a estampa chega até a costura,
+ * como nas fotos dos produtos (revisão da Padrão de 25/10/2026). `coloring` vira desenho de contorno.
+ */
 function PlushCushion({ spec, art, label, coloring }: ModelProps & { coloring: boolean }) {
   const W = cm(spec.widthCm, 40);
   const H = cm(spec.heightCm, 40);
@@ -793,7 +796,7 @@ function PlushCushion({ spec, art, label, coloring }: ModelProps & { coloring: b
   const s = 2.3 / Math.max(W, H);
   const form = useMemo<PillowForm>(() => ({ w: W, h: H, t: short * 0.16, bow: 0.045, ramp: short * 0.5, q: 0.55, crease: 0.085, backScale: 1, seed: 0.7 }), [W, H, short]);
   const body = useCushionBody(spec.shape, form);
-  const piping = useSeam(body.outline, 0.55);
+  const piping = useSeam(body.outline, 0.16);
   // Verso: a arte própria do verso, se houver (na proporção do editor 2D, para os elementos movidos
   // caírem no mesmo lugar); senão o que a spec diz (liso, mesma arte ou cinza).
   const backArt = useBackArt(art);
@@ -802,6 +805,8 @@ function PlushCushion({ spec, art, label, coloring }: ModelProps & { coloring: b
   const back = useArtTexture(backArt ? artAspect(spec) : body.aspect, backKind, backArt ?? art, label, coloring && backKind !== "blank" ? lineArtMask : undefined);
   const weave = useTile("weave", W / 3, H / 3);
   const fabric = clothColor(spec.baseColor);
+  // A costura fica na cor de fundo da estampa (sublimação até a borda), não num tom do tecido branco.
+  const seamColor = !coloring && /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : fabric;
   const pose = useCushionPose();
   const { room } = useSceneMode();
   // No sofá e na cama a almofada afunda no estofado (o ambiente desce 3 e 1,5 cm): as canetinhas, não.
@@ -816,7 +821,7 @@ function PlushCushion({ spec, art, label, coloring }: ModelProps & { coloring: b
           </mesh>
           <mesh geometry={body.back}>{backKind === "blank" ? <PlainCloth color={fabric} bump={weave} /> : <PrintCloth map={back} bump={weave} />}</mesh>
           <mesh geometry={piping.geometry}>
-            <PlainCloth color={tone(fabric, "#000000", 0.06)} sheen={0.8} />
+            <PlainCloth color={tone(seamColor, "#000000", 0.1)} sheen={0.8} />
           </mesh>
         </FlipGroup>
       </group>
@@ -970,7 +975,7 @@ function BodyPillow({ spec, art, label }: ModelProps) {
 
 /**
  * Almofadas. Corpo paramétrico (retangular: laterais côncavas, cantos em bico e rugas radiais) ou
- * inflado do contorno (redonda, coração), arte pelo UV sem distorção, vivo em tubo e trama em relevo.
+ * inflado do contorno (redonda, coração), arte pelo UV sem distorção, costura simples e trama em relevo.
  * {cover} capa/fronha menos cheia com zíper invisível e puxador (até 50 cm) ou aba envelope (70 × 50);
  * {body} almofada de corpo deitada; {coloring} estampa em traço preto para colorir, com canetinhas.
  */

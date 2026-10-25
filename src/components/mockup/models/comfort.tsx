@@ -554,7 +554,7 @@ function KitPillow({ spec, art, label }: ModelProps) {
   const u = KIT_UNIT;
   const size = 40 * u;
   const shape = useMemo(() => makeShape("rect", size, size, 4 * u), [size, u]);
-  const surfaces = useInflated(shape, 6.5 * u, { falloff: 12 * u, folds: 0.3 * u });
+  const surfaces = useInflated(shape, 8.5 * u, { falloff: 12 * u, folds: 0.3 * u });
   const map = useArtTexture(1, "front", art, label);
   // Verso do cliente: sublimado atrás, na mesma área 40 × 40 da frente.
   const ownBack = hasArtContent(art.back);
@@ -571,6 +571,8 @@ function KitPillow({ spec, art, label }: ModelProps) {
   useGeometryCleanup(printedBack);
   const seam = useMemo(() => (surfaces ? closedTube(surfaces.polygon, 0.22 * u) : null), [surfaces, u]);
   useGeometryCleanup(seam);
+  // Impresso inteiro (revisão da Padrão de 25/10/2026): sem arte no verso, o tecido sai na cor de fundo da arte.
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
   if (!surfaces || !seam) return null;
   return (
     <group>
@@ -583,13 +585,13 @@ function KitPillow({ spec, art, label }: ModelProps) {
         </mesh>
       ) : (
         <mesh geometry={surfaces.back}>
-          <Fabric color={spec.baseColor} sheen={0.7} />
+          <Fabric color={fill} sheen={0.7} />
         </mesh>
       )}
       <mesh geometry={seam}>
-        <Fabric color={shade(spec.baseColor, 0.94)} sheen={0.6} />
+        <Fabric color={shade(fill, 0.94)} sheen={0.6} />
       </mesh>
-      <Zipper length={30 * u} unit={u} tape={shade(spec.baseColor, 0.85)} position={[size / 2, 0, 0]} />
+      <Zipper length={30 * u} unit={u} tape={shade(fill, 0.85)} position={[size / 2, 0, 0]} />
     </group>
   );
 }
@@ -609,17 +611,19 @@ function FoldedBlanket({ spec, art, label, w, d }: ModelProps & { w: number; d: 
 
   const pitch = 1.08 * u;
   const layerZ = (i: number) => 0.5 * u + i * pitch;
-  const bias = spec.accentColor ?? (isLight(spec.baseColor) ? "#3a3a40" : "#e9e6df");
+  // Manta sublimada inteira: todas as camadas e dobras mostram a estampa ou a cor de fundo dela; viés no mesmo tom.
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  const bias = spec.accentColor ?? shade(fill, 0.86);
   const last = BLANKET_LAYERS - 1;
   return (
     <group rotation-x={-Math.PI / 2}>
       {Array.from({ length: last }, (_, i) => (
         <group key={i} position={[LAYER_JITTER[i][0] * u, LAYER_JITTER[i][1] * u, layerZ(i)]}>
           <mesh geometry={layer.front}>
-            <Fabric color={spec.baseColor} />
+            <meshPhysicalMaterial map={map} roughness={0.95} sheen={0.8} sheenRoughness={0.85} sheenColor="#ffffff" />
           </mesh>
           <mesh geometry={layer.back}>
-            <Fabric color={spec.baseColor} />
+            <Fabric color={fill} />
           </mesh>
           <mesh geometry={binding}>
             <Fabric color={bias} sheen={0.5} />
@@ -631,7 +635,7 @@ function FoldedBlanket({ spec, art, label, w, d }: ModelProps & { w: number; d: 
           <meshPhysicalMaterial map={map} roughness={0.95} sheen={0.8} sheenRoughness={0.85} sheenColor="#ffffff" />
         </mesh>
         <mesh geometry={top.back}>
-          <Fabric color={spec.baseColor} />
+          <Fabric color={fill} />
         </mesh>
         <mesh geometry={binding}>
           <Fabric color={bias} sheen={0.5} />
@@ -640,7 +644,7 @@ function FoldedBlanket({ spec, art, label, w, d }: ModelProps & { w: number; d: 
       {/* Dobras: alternam entre a borda da frente (y local negativo) e a de trás */}
       {Array.from({ length: last }, (_, i) => (
         <mesh key={`fold-${i}`} geometry={fold} position={[0, (i % 2 ? 1 : -1) * (d / 2 - 1.0 * u), (layerZ(i) + layerZ(i + 1)) / 2]} rotation-z={Math.PI / 2}>
-          <Fabric color={spec.baseColor} />
+          <Fabric color={fill} />
         </mesh>
       ))}
     </group>
@@ -686,117 +690,69 @@ export function NeckPillowModel(props: ModelProps) {
 const DESK_UNIT = 2.6 / 52;
 
 /**
- * Almofada para notebook: bandeja de MDF de bordas boleadas com a arte laminada (PrintMaterial com
- * verniz), batente de alumínio, apoio de punho em courino pespontado e almofada de tecido inflada por
- * baixo, mais alta atrás — a bandeja acompanha essa inclinação. Câmera mais alta para ver o tampo.
+ * Almofada para notebook (revisão da Padrão de 25/10/2026: sem o vivo e no formato da foto): tampa de PS de cantos
+ * redondos impressa de borda a borda (laminada) sobre uma almofada baixa de tecido, um pouco maior que ela. Câmera mais
+ * alta para ver o tampo.
  */
 export function LapDeskModel({ spec, art, label }: ModelProps) {
   const u = DESK_UNIT;
+  // Tampa de PS do gabarito (50 × 25 cm), impressa de borda a borda.
   const pw = cm(spec.widthCm, 50, 30, 70) * u;
   const ph = cm(spec.heightCm, 25, 15, 40) * u;
-  const border = 1.2 * u;
-  const lipD = 1.4 * u;
-  const lipH = 1.0 * u;
-  const wristD = 7.5 * u;
-  const boardT = 1.0 * u;
-  const bevel = 0.2 * u;
-  const trayW = pw + 2 * border;
-  const deckD = ph + 2 * border;
-  const trayD = deckD + lipD + wristD;
-  const zDeck = -trayD / 2 + deckD / 2;
-  const zLip = -trayD / 2 + deckD + lipD / 2;
-  const zWrist = trayD / 2 - wristD / 2;
-
+  const boardT = 0.35 * u;
+  const radius = 2.6 * u;
   const map = useArtTexture(pw / ph, "front", art, label);
   const laminate = useMemo(() => ({ ...spec, clearcoat: Math.max(spec.clearcoat, 0.5) }), [spec]);
 
   const board = useMemo(() => {
-    const g = new THREE.ExtrudeGeometry(makeShape("rect", trayW, trayD, 2.6 * u), {
+    const bevel = 0.08 * u;
+    const g = new THREE.ExtrudeGeometry(makeShape("rect", pw - 2 * bevel, ph - 2 * bevel, radius - bevel), {
       depth: boardT,
       bevelEnabled: true,
       bevelThickness: bevel,
       bevelSize: bevel,
-      bevelSegments: 3,
+      bevelSegments: 2,
       curveSegments: 16,
     });
     g.rotateX(-Math.PI / 2);
-    g.translate(0, -(boardT + bevel), 0);
+    g.translate(0, -boardT - bevel, 0);
     return g;
-  }, [trayW, trayD, boardT, bevel, u]);
+  }, [pw, ph, boardT, radius, u]);
   useGeometryCleanup(board);
   const face = useMemo(() => {
-    const g = faceGeometry(makeShape("rect", pw, ph, 0.6 * u), pw, ph);
+    const g = faceGeometry(makeShape("rect", pw, ph, radius), pw, ph);
     g.rotateX(-Math.PI / 2);
     return g;
-  }, [pw, ph, u]);
+  }, [pw, ph, radius]);
   useGeometryCleanup(face);
-  const lip = useMemo(() => {
-    const g = new THREE.ExtrudeGeometry(makeShape("rect", lipD, lipH, 0.4 * u), { depth: pw, bevelEnabled: false, curveSegments: 8 });
-    g.rotateY(Math.PI / 2);
-    g.translate(-pw / 2, 0, 0);
-    return g;
-  }, [lipD, lipH, pw, u]);
-  useGeometryCleanup(lip);
 
-  // Apoio de punho: almofadinha de base quase plana.
-  const wristPuff = 1.6 * u;
-  const wristFalloff = 2.2 * u;
-  const wristShape = useMemo(() => makeShape("rect", trayW - 2.4 * u, wristD - 1.0 * u, 2.5 * u), [trayW, wristD, u]);
-  const wrist = useInflatedPair(wristShape, { height: wristPuff, falloff: wristFalloff, resolution: 72, backScale: 0.12 });
-  const wristStitch = useMemo(() => {
-    const inset = 0.55 * u;
-    const z = surfaceHeight(wristPuff, wristFalloff, inset) + 0.03 * u;
-    return insetPolygon(wrist.polygon, inset).map((p) => new THREE.Vector3(p.x, p.y, z));
-  }, [wrist, wristPuff, wristFalloff, u]);
-
-  // Almofada de baixo: frente (topo) mais alta atrás; o verso, achatado, fica no chão.
-  const cushionH = 4.6 * u;
-  const cushionBack = 0.55;
-  const slope = 0.32;
-  const cushionD = trayD - 3 * u;
-  const cushionShape = useMemo(() => makeShape("rect", trayW - 3 * u, cushionD, 7 * u), [trayW, cushionD, u]);
-  const cushion = useInflatedPair(cushionShape, { height: cushionH, falloff: 7 * u, folds: 0.15 * u, resolution: 80, slope, backScale: cushionBack });
-  const piping = useMemo(() => closedTube(cushion.polygon, 0.35 * u), [cushion, u]);
-  useGeometryCleanup(piping);
-
-  const tilt = Math.atan((cushionH * slope) / (cushionD / 2));
-  const cushionY = cushionH * cushionBack;
-  const trayY = cushionY + cushionH - 0.25 * u + boardT + 2 * bevel;
-  const laminateEdge = spec.accentColor ?? "#1f1f22";
-  const leather = spec.accentColor ? shade(spec.accentColor, 0.9) : "#26262a";
+  // Almofada baixa por baixo da tampa, um pouco maior que ela e sem vivo (foto do produto).
+  const cushionH = 5.2 * u;
+  const cushionShape = useMemo(() => makeShape("rect", pw + 1.4 * u, ph + 1.4 * u, radius + 0.8 * u), [pw, ph, radius, u]);
+  const cushion = useInflatedPair(cushionShape, { height: cushionH, falloff: 5 * u, folds: 0.12 * u, resolution: 80, slope: 0, backScale: 0.5 });
+  const cushionY = cushionH * 0.5;
+  // A tampa assenta no ponto mais alto da almofada (o meio dela não pode atravessar o PS).
+  const boardY = cushionY + cushionH * 1.04 + boardT + 0.2 * u;
+  // O tecido da almofada é sublimado (faixa de 139 × 34 cm no gabarito): sai na cor de fundo da arte.
+  const fabric = /^#[0-9a-f]{3,8}$/i.test(art.background) ? shade(art.background, 0.92) : spec.baseColor;
 
   return (
-    <group userData={{ view: { elevation: 0.7 } }} rotation-y={0.12}>
+    <group userData={{ view: { elevation: 0.62 } }} rotation-y={0.12}>
       <group position-y={cushionY} rotation-x={-Math.PI / 2}>
         <mesh geometry={cushion.front}>
-          <Fabric color={spec.baseColor} sheen={0.5} />
+          <Fabric color={fabric} sheen={0.5} />
         </mesh>
         <mesh geometry={cushion.back}>
-          <Fabric color={spec.baseColor} sheen={0.5} />
-        </mesh>
-        <mesh geometry={piping}>
-          <Fabric color={shade(spec.baseColor, 0.86)} sheen={0.4} />
+          <Fabric color={fabric} sheen={0.5} />
         </mesh>
       </group>
-      <group position-y={trayY} rotation-x={tilt}>
+      <group position-y={boardY}>
         <mesh geometry={board}>
-          <meshPhysicalMaterial color={laminateEdge} roughness={0.42} clearcoat={0.6} clearcoatRoughness={0.15} />
+          <meshPhysicalMaterial color="#f4f4f2" roughness={0.42} clearcoat={0.4} clearcoatRoughness={0.2} />
         </mesh>
-        <mesh geometry={face} position={[0, 0.02 * u, zDeck]}>
+        <mesh geometry={face} position-y={0.02 * u}>
           <PrintMaterial map={map} spec={laminate} />
         </mesh>
-        <mesh geometry={lip} position={[0, lipH / 2, zLip]}>
-          <meshStandardMaterial color="#d4d7dc" metalness={1} roughness={0.28} />
-        </mesh>
-        <group position={[0, wristPuff * 0.12, zWrist]} rotation-x={-Math.PI / 2}>
-          <mesh geometry={wrist.front}>
-            <meshPhysicalMaterial color={leather} roughness={0.5} clearcoat={0.25} clearcoatRoughness={0.4} />
-          </mesh>
-          <mesh geometry={wrist.back}>
-            <meshStandardMaterial color={leather} roughness={0.6} />
-          </mesh>
-          <Stitches points={wristStitch} pitch={0.45 * u} radius={0.04 * u} color="#a3a3a8" />
-        </group>
       </group>
     </group>
   );
