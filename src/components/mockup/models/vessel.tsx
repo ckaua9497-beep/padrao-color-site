@@ -95,9 +95,11 @@ export function useStudioReflection() {
 }
 
 /*
- * Máscara de gravação/talho numa cor só (laser do copo, fresa da tábua), como a produção prepara o arquivo: o fundo é
- * a cor dos quatro cantos da arte; grava o que se destaca dele (texto, ícones, logo). Com os cantos transparentes
- * (logo sem fundo), grava o que é opaco e não é quase branco. GLSL para colar no shader: precisa de `map` (a arte).
+ * Máscara de gravação/talho numa cor só (laser do copo, fresa da tábua). Na página do produto a arte já vem num tom só
+ * (ArtSettings.mono "black", src/lib/processo.ts): grava o que é opaco (ENGRAVE_DIRECT). Sem isso (fotos de catálogo,
+ * QA), faz como a produção prepara o arquivo: o fundo é a cor dos quatro cantos da arte e grava o que se destaca dele
+ * (texto, ícones, logo); com os cantos transparentes (logo sem fundo), grava o que é opaco e não é quase branco.
+ * GLSL para colar no shader: precisa de `map` (a arte); `engraveAt` é a máscara final.
  */
 export const ENGRAVE_MASK_GLSL = /* glsl */ `
 vec4 engraveBackground() {
@@ -115,7 +117,20 @@ float engraveMask(vec4 art, vec4 bg) {
   float cutout = (1.0 - smoothstep(0.86, 0.97, lum)) * art.a;
   return mix(cutout, solid, step(0.5, bg.a));
 }
+float engraveAt(vec2 uv) {
+  vec4 art = texture2D(map, uv);
+#ifdef ENGRAVE_DIRECT
+  return art.a;
+#else
+  return engraveMask(art, engraveBackground());
+#endif
+}
 `;
+
+/** A arte já vem num tom só (processo laser/talhamento): a máscara é o próprio alfa. */
+export function engravesDirect(art: { mono?: "gray" | "black" | null }) {
+  return art.mono === "black";
+}
 
 export type Surface = { color: string; metalness: number; roughness: number; clearcoat: number; transparent?: boolean; opacity?: number };
 

@@ -304,6 +304,8 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
   ],
   coaster: [
     [/\bporta jarra\b/, "pitcher"],
+    // Capa de tecido com elástico (138), por cima de um sousplat.
+    [/\bcapa\b.*\bsousplat\b/, "cover"],
     [/\bsousplat\b/, "placemat"],
   ],
   acrylic: [

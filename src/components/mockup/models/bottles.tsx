@@ -9,7 +9,7 @@ import type { MockupSpec } from "@/lib/mockup";
 import { THERMAL_SHARE, artArea, artAspect } from "@/lib/mockup-kinds";
 import { THERMAL_WINDOW } from "../art";
 import { bandGeometry, makeShape, metalColor, useArtTexture, type MaskPath, type ModelProps } from "./shared";
-import { ENGRAVE_MASK_GLSL, lathe, radiusOnProfile, smoothProfile, useStudioReflection, type Pt } from "./vessel";
+import { ENGRAVE_MASK_GLSL, engravesDirect, lathe, radiusOnProfile, smoothProfile, useStudioReflection, type Pt } from "./vessel";
 
 /*
  * Escala: 1 cm = 0,12 unidade (uma garrafa de 25 cm fica com 3 unidades). Cada peça é um perfil 2D
@@ -595,26 +595,34 @@ function thermalCupWall(y: number) {
  * não importa). A máscara (ENGRAVE_MASK_GLSL) grava o que se destaca do fundo da arte; o resto da faixa é
  * descartado (alphaTest) e a pintura do corpo aparece.
  */
-function engrave(shader: { fragmentShader: string }) {
-  shader.fragmentShader = shader.fragmentShader
-    .replace("#include <map_pars_fragment>", `#include <map_pars_fragment>\n${ENGRAVE_MASK_GLSL}`)
-    .replace(
-      "#include <map_fragment>",
-      /* glsl */ `
+function engraveShader(direct: boolean) {
+  return (shader: { fragmentShader: string }) => {
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <map_pars_fragment>", `#include <map_pars_fragment>\n${direct ? "#define ENGRAVE_DIRECT\n" : ""}${ENGRAVE_MASK_GLSL}`)
+      .replace(
+        "#include <map_fragment>",
+        /* glsl */ `
 #ifdef USE_MAP
-  diffuseColor.a *= engraveMask( texture2D( map, vMapUv ), engraveBackground() );
+  diffuseColor.a *= engraveAt( vMapUv );
 #endif
 `,
-    );
+      );
+  };
 }
 
-const engraveKey = () => "bottles-engrave";
+/** Os dois programas da gravação: arte já num tom só (mono) ou máscara pelo fundo da arte. */
+const ENGRAVE = {
+  direct: { onBeforeCompile: engraveShader(true), key: () => "bottles-engrave-mono" },
+  byBackground: { onBeforeCompile: engraveShader(false), key: () => "bottles-engrave" },
+};
 
 /** Inox revelado pelo laser: acetinado (a queima deixa o metal fosco), refletindo o estúdio. */
-function EngravedSteel({ geometry, map, y, env }: { geometry: THREE.BufferGeometry; map: THREE.Texture; y: number; env: THREE.Texture }) {
+function EngravedSteel({ geometry, map, y, env, direct }: { geometry: THREE.BufferGeometry; map: THREE.Texture; y: number; env: THREE.Texture; direct: boolean }) {
+  const program = direct ? ENGRAVE.direct : ENGRAVE.byBackground;
   return (
     <mesh geometry={geometry} position-y={y}>
       <meshPhysicalMaterial
+        key={program.key()}
         color="#d3d6da"
         metalness={1}
         roughness={0.34}
@@ -624,8 +632,8 @@ function EngravedSteel({ geometry, map, y, env }: { geometry: THREE.BufferGeomet
         polygonOffset
         polygonOffsetFactor={-2}
         polygonOffsetUnits={-2}
-        onBeforeCompile={engrave}
-        customProgramCacheKey={engraveKey}
+        onBeforeCompile={program.onBeforeCompile}
+        customProgramCacheKey={program.key}
       />
     </mesh>
   );
@@ -731,7 +739,7 @@ function ThermalCup({ spec, art, label }: ModelProps) {
       <mesh geometry={geo.rim}>
         <SteelMaterial env={studio} roughness={0.12} />
       </mesh>
-      {laser ? <EngravedSteel geometry={band} map={map} y={center} env={studio} /> : <ArtBand geometry={band} map={map} y={center} look={printLook(spec, finish)} />}
+      {laser ? <EngravedSteel geometry={band} map={map} y={center} env={studio} direct={engravesDirect(art)} /> : <ArtBand geometry={band} map={map} y={center} look={printLook(spec, finish)} />}
       <mesh geometry={geo.lid}>
         <FinishMaterial finish={lidFinish} />
       </mesh>

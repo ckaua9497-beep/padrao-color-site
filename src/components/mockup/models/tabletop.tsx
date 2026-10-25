@@ -14,7 +14,7 @@ import * as THREE from "three";
 import type { MockupShape, MockupSpec } from "@/lib/mockup";
 import { KIND_INFO, artAspect } from "@/lib/mockup-kinds";
 import { Dimensions, PrintMaterial, faceGeometry, makeShape, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
-import { ENGRAVE_MASK_GLSL, lathe, smoothProfile, type Pt } from "./vessel";
+import { ENGRAVE_MASK_GLSL, engravesDirect, lathe, smoothProfile, type Pt } from "./vessel";
 
 /** Lado maior da peça principal, em unidades de cena. */
 const TARGET = 2.4;
@@ -371,6 +371,11 @@ function paintSurface(kind: SurfaceKind, repeatX: number, repeatY: number, tint:
   texture.repeat.set(Math.max(repeatX, 0.01), Math.max(repeatY, 0.01));
   texture.anisotropy = 8;
   return texture;
+}
+
+/** Pinus das tábuas (o mesmo da tábua talhada), para a tábua de frios dentro da caixa acrílica (boxes.tsx). */
+export function usePineTexture() {
+  return useSurfaceTexture("pine", 1, 1);
 }
 
 /** Textura de superfície com repetição (ladrilhos por peça); liberada ao trocar ou desmontar. */
@@ -1041,18 +1046,16 @@ uniform vec3 tone;
 varying vec2 vUv;
 ${ENGRAVE_MASK_GLSL}
 void main() {
-  vec4 bg = engraveBackground();
-  #define carveAt(uv) engraveMask(texture2D(map, uv), bg)
-  float c = carveAt(vUv);
+  float c = engraveAt(vUv);
   vec2 o = texel * 5.0;
-  float shade = c * (1.0 - carveAt(vUv + vec2(-o.x, o.y)));
+  float shade = c * (1.0 - engraveAt(vUv + vec2(-o.x, o.y)));
   float g = texture2D(groove, vUv).a;
   vec3 color = mix(vec3(1.0), tone, c) * (1.0 - 0.5 * shade) * (1.0 - g);
   gl_FragColor = vec4(color, 1.0);
 }`;
 
-/** Camada do talho sobre o tampo (multiplica a madeira). */
-function Carving({ map, groove, w, h, z }: { map: THREE.Texture; groove: THREE.Texture; w: number; h: number; z: number }) {
+/** Camada do talho sobre o tampo (multiplica a madeira). `direct`: a arte já vem num tom só (processo talhamento). */
+function Carving({ map, groove, w, h, z, direct }: { map: THREE.Texture; groove: THREE.Texture; w: number; h: number; z: number; direct: boolean }) {
   const image = map.image as { width?: number; height?: number } | undefined;
   const uniforms = useMemo(
     () => ({
@@ -1068,10 +1071,10 @@ function Carving({ map, groove, w, h, z }: { map: THREE.Texture; groove: THREE.T
       <planeGeometry args={[w, h]} />
       {/* Como no LaserEngraving: textura nova pede material novo (o renderer guarda os uniforms). */}
       <shaderMaterial
-        key={`${map.uuid}:${groove.uuid}`}
+        key={`${map.uuid}:${groove.uuid}:${direct}`}
         uniforms={uniforms}
         vertexShader={BURN_VERTEX}
-        fragmentShader={CARVE_FRAGMENT}
+        fragmentShader={direct ? `#define ENGRAVE_DIRECT\n${CARVE_FRAGMENT}` : CARVE_FRAGMENT}
         transparent
         depthWrite={false}
         blending={THREE.MultiplyBlending}
@@ -1108,7 +1111,7 @@ function CarvedBoard({ spec, art, label, showDims }: ModelProps) {
         <mesh geometry={board}>
           <meshPhysicalMaterial map={wood} bumpMap={wood} bumpScale={0.05} roughness={0.66} clearcoat={0.08} clearcoatRoughness={0.6} />
         </mesh>
-        <Carving map={front} groove={groove} w={W * s} h={H * s} z={T * s} />
+        <Carving map={front} groove={groove} w={W * s} h={H * s} z={T * s} direct={engravesDirect(art)} />
         {hasDims(spec, showDims) && <Dimensions w={W * s} h={H * s} z={T * s + 0.02} labelW={lw} labelH={lh} />}
       </group>
     </group>
@@ -1232,6 +1235,129 @@ function Sousplat({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
+/** Capa de sousplat (cm, do gabarito da 138): costura em Ø35 (o tampo) e tecido até Ø40, que dobra por baixo. */
+const COVER = { seamR: 17.5, cutR: 20, disc: 0.5, fabric: 0.06, gathers: 56 };
+
+/**
+ * Casca de tecido da capa: tampo plano até a costura, borda boleada em volta do disco e a aba que entra por baixo,
+ * franzida pelo elástico. UV radial pelo comprimento do tecido (o círculo de Ø40 do gabarito): o que passa da costura
+ * é a parte da arte que vai para baixo. Montada em y para cima (sem o FLAT), topo da arte para o fundo.
+ */
+function coverShellGeometry() {
+  const { seamR, cutR, disc, fabric, gathers } = COVER;
+  const rho = disc / 2 + fabric;
+  type Ring = { r: number; y: number; s: number; under: number };
+  const rings: Ring[] = [];
+  for (let i = 0; i <= 24; i += 1) rings.push({ r: (seamR * i) / 24, y: rho, s: (seamR * i) / 24, under: 0 });
+  for (let i = 1; i <= 12; i += 1) {
+    const a = Math.PI / 2 - (Math.PI * i) / 12;
+    rings.push({ r: seamR + rho * Math.cos(a), y: rho * Math.sin(a), s: seamR + rho * (Math.PI / 2 - a), under: 0 });
+  }
+  const lipStart = seamR + rho * Math.PI;
+  const lip = cutR - lipStart;
+  for (let i = 1; i <= 10; i += 1) {
+    const k = i / 10;
+    rings.push({ r: seamR - lip * k, y: -rho - 0.05 * k, s: lipStart + lip * k, under: k });
+  }
+  const cols = 192;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  rings.forEach((ring) => {
+    for (let i = 0; i <= cols; i += 1) {
+      const phi = (i / cols) * Math.PI * 2;
+      // Franzido do elástico: o tecido sobra na volta menor e faz pregas que crescem até a bainha.
+      const pleat = ring.under * (0.5 + 0.5 * Math.sin(phi * gathers));
+      const r = ring.r + ring.under * 0.35 * Math.sin(phi * gathers + 1.1);
+      positions.push(r * Math.cos(phi), ring.y - pleat * 0.7, r * Math.sin(phi));
+      uvs.push(0.5 + (ring.s / (2 * cutR)) * Math.cos(phi), 0.5 - (ring.s / (2 * cutR)) * Math.sin(phi));
+    }
+  });
+  for (let j = 0; j < rings.length - 1; j += 1) {
+    for (let i = 0; i < cols; i += 1) {
+      const p = j * (cols + 1) + i;
+      const q = p + cols + 1;
+      indices.push(p, p + 1, q, p + 1, q + 1, q);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return { geometry, hemR: seamR - lip, hemY: -rho - 0.05 };
+}
+
+/** Capa sobre o disco do sousplat (y para cima, centro na origem do disco). */
+function CoveredSousplat({ shell, hem, front, weave }: { shell: { geometry: THREE.BufferGeometry; hemR: number; hemY: number }; hem: THREE.BufferGeometry; front: THREE.Texture; weave: THREE.Texture }) {
+  return (
+    <group>
+      <mesh>
+        <cylinderGeometry args={[COVER.seamR - 0.05, COVER.seamR - 0.05, COVER.disc, 96]} />
+        <meshStandardMaterial color="#ecebe7" roughness={0.7} />
+      </mesh>
+      <mesh geometry={shell.geometry}>
+        <meshPhysicalMaterial map={front} bumpMap={weave} bumpScale={0.25} roughness={0.82} sheen={0.45} sheenRoughness={0.5} sheenColor="#ffffff" side={THREE.DoubleSide} />
+      </mesh>
+      {/* Bainha com o elástico, fechando a aba por baixo. */}
+      <mesh geometry={hem} position-y={shell.hemY - 0.1} rotation-x={Math.PI / 2}>
+        <meshPhysicalMaterial map={front} roughness={0.85} sheen={0.4} sheenColor="#ffffff" />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Capa p/ Sousplat (138): Oxford sublimado esticado sobre o sousplat, a arte do círculo de Ø40 passando pela borda e
+ * indo até embaixo, onde o elástico franze o tecido. Uma capa de frente e outra virada atrás, mostrando o franzido
+ * (como na foto do produto).
+ */
+function SousplatCover({ spec, art, label, showDims }: ModelProps) {
+  const s = cmScale(2.25 * COVER.cutR, 2.25 * COVER.cutR);
+  const front = useArtTexture(1, "front", art, label);
+  const weave = useSurfaceTexture("weave", 40 / 0.7, 40 / 0.7);
+  const parts = useMemo(() => {
+    const shell = coverShellGeometry();
+    // Bainha: anel (tubo) na borda de dentro da aba, com a UV no fim do círculo da arte.
+    const hem = new THREE.TorusGeometry(shell.hemR, 0.22, 8, 160);
+    const uv = hem.getAttribute("uv");
+    for (let i = 0; i < uv.count; i += 1) {
+      const phi = uv.getX(i) * Math.PI * 2;
+      uv.setXY(i, 0.5 + 0.495 * Math.cos(phi), 0.5 - 0.495 * Math.sin(phi));
+    }
+    return { shell, hem };
+  }, []);
+  useEffect(
+    () => () => {
+      parts.shell.geometry.dispose();
+      parts.hem.dispose();
+    },
+    [parts],
+  );
+  const [lw, lh] = sizeLabels(spec);
+  // Altura do centro do disco: a de frente apoia nas pregas da aba; a virada, no tampo.
+  const lift = COVER.disc / 2 + COVER.fabric + 0.75;
+  const liftFlipped = COVER.disc / 2 + COVER.fabric + 0.01;
+  return (
+    <group userData={{ view: { elevation: 0.8, azimuth: 0.3 } satisfies View }}>
+      <group scale={s}>
+        <group position={[-13, lift, 10]} rotation-y={0.2}>
+          <CoveredSousplat shell={parts.shell} hem={parts.hem} front={front} weave={weave} />
+        </group>
+        {/* A outra, de cabeça para baixo: a aba franzida pelo elástico, com a arte até a bainha. */}
+        <group position={[15, liftFlipped, -14]} rotation={[Math.PI, -0.5, 0]}>
+          <CoveredSousplat shell={parts.shell} hem={parts.hem} front={front} weave={weave} />
+        </group>
+      </group>
+      {hasDims(spec, showDims) && (
+        <group position={[-13 * s, (lift + COVER.disc) * s, 10 * s]} rotation-x={FLAT}>
+          <Dimensions w={2 * COVER.seamR * s} h={2 * COVER.seamR * s} z={0.01} labelW={lw} labelH={lh} />
+        </group>
+      )}
+    </group>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Exportados
 // ---------------------------------------------------------------------------------------------
@@ -1258,6 +1384,7 @@ export function MatModel(props: ModelProps) {
 export function CoasterModel(props: ModelProps) {
   const { spec } = props;
   if (spec.variant === "pitcher") return <Trivet {...props} />;
+  if (spec.variant === "cover") return <SousplatCover {...props} />;
   if (spec.variant === "placemat") return <Sousplat {...props} />;
   return <CoasterSet {...props} />;
 }

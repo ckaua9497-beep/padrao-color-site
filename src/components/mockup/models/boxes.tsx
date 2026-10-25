@@ -7,12 +7,13 @@ import { useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { hasArtContent } from "../art";
-import { AcrylicMaterials, PrintMaterial, bandGeometry, faceGeometry, makeShape, roughnessOf, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
-import { PrintBand, handleGeometry, lathe, smoothProfile, type Pt } from "./vessel";
+import { AcrylicMaterials, PrintMaterial, bandGeometry, faceGeometry, makeShape, roughnessOf, useArtTexture, useBackTexture, useFaceTexture, useGeometryCleanup, type ModelProps } from "./shared";
+import { PrintBand, handleGeometry, lathe, type Pt } from "./vessel";
 import { BasketBox, PanettoneBox } from "./baskets";
 import { CartonBag, CartonBox } from "./cartons";
 import { sensorDisplayTexture } from "./bottles";
 import { CapModel } from "./textile";
+import { usePineTexture } from "./tabletop";
 
 type Vec3 = [number, number, number];
 
@@ -297,24 +298,19 @@ function GiftBox({ spec, art, label }: ModelProps) {
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Kit Cinema: bandeja de madeira, balde de pipoca e copo com tampa e canudo
+ * Kit Cinema: almofada porta-pipoca de Oxford sublimado com o suporte de dois furos por cima (fotos da 188)
  * ---------------------------------------------------------------------------------------------- */
 
-const CINEMA_TRAY = { w: 35, d: 25, h: 2.4, wall: 0.9, floor: 0.6, radius: 2.4, bevel: 0.3 };
-const BUCKET = { top: 8.5, bottom: 5.8, height: 19, x: -7, z: -2.5 };
-const CUP = { top: 4.5, bottom: 3.1, height: 14, x: 9, z: 4.5 };
+/**
+ * Medidas do gabarito (cm): o topo (suporte) é 37 × 25 com cantos de raio grande; a lateral da almofada é uma faixa
+ * de 109 × 30 que dá a volta e entra por baixo até o fundo de 30 × 20. Furos das fotos: copo à esquerda, balde à direita.
+ */
+const CINEMA = { topW: 37, topD: 25, corner: 7.5, bottomW: 30, bottomD: 20, height: 14, board: 1.1 };
+const LATERAL = { w: 109, h: 30 };
+const CINEMA_HOLES = { cup: { x: -8.2, z: 0.6, r: 4 }, bucket: { x: 6.4, z: 0, r: 7.5 } };
+const BUCKET = { top: 8.5, bottom: 5.8, height: 19 };
+const CUP = { top: 4.5, bottom: 3.1, height: 14 };
 const POPCORN_COLORS = ["#fff3d1", "#fbe6b0", "#f6dc9c", "#fff8e6", "#f2d48e", "#fdeec4", "#e2b56a"];
-
-/** Faixa de impressão num tronco de cone (perfil reto entre y = 0,45 e y = altura − 0,2), cobrindo `coverage` da volta. */
-function coneBand(rBottom: number, rTop: number, height: number, y0: number, y1: number, coverage: number) {
-  const radiusAt = (y: number) => rBottom + (rTop - rBottom) * ((y - 0.45) / (height - 0.65));
-  const r0 = radiusAt(y0) + 0.04;
-  const r1 = radiusAt(y1) + 0.04;
-  // Largura física constante: no raio menor a faixa abre mais o ângulo. Limita a 0,94π para a faixa da
-  // frente e a de trás não se sobreporem nas laterais (z-fighting na silhueta).
-  const width = Math.min(coverage * Math.PI * (r0 + r1), 0.94 * Math.PI * Math.min(r0, r1));
-  return { r0, r1, width, height: y1 - y0, center: (y0 + y1) / 2, aspect: width / Math.hypot(y1 - y0, r1 - r0) };
-}
 
 function cupProfile(rBottom: number, rTop: number, height: number): Pt[] {
   return [
@@ -343,72 +339,22 @@ function kernelGeometry() {
   return geometry;
 }
 
-function popcornGeometry(floor: number) {
+/** Monte de pipoca na boca do balde (coordenadas do balde: boca em y = altura). */
+function popcornGeometry() {
   const base = kernelGeometry();
   const random = rng(17);
   const pieces: Piece[] = [];
-  const rim = floor + BUCKET.height;
   const reach = BUCKET.top - 0.9;
   for (let i = 0; i < 220; i += 1) {
     const rho = reach * Math.sqrt(random());
     const phi = random() * Math.PI * 2;
     const dome = 4.3 * Math.pow(Math.max(0, 1 - (rho / BUCKET.top) ** 2), 0.85);
     const s = 0.78 + random() * 0.32;
-    pieces.push(
-      piece(random, [BUCKET.x + Math.cos(phi) * rho, rim - 0.35 + dome + (random() - 0.5) * 0.8, BUCKET.z + Math.sin(phi) * rho], [s * 1.05, s * 0.86, s], pickColor(random, POPCORN_COLORS)),
-    );
+    pieces.push(piece(random, [Math.cos(phi) * rho, BUCKET.height - 0.35 + dome + (random() - 0.5) * 0.8, Math.sin(phi) * rho], [s * 1.05, s * 0.86, s], pickColor(random, POPCORN_COLORS)));
   }
-  // Algumas pipocas caídas na bandeja, na frente do balde.
-  const spilled: [number, number][] = [
-    [-1.5, 6.5],
-    [0.8, 8.2],
-    [2.6, 6.9],
-    [-3.6, 9.4],
-    [4.3, 10],
-    [1.4, 10.4],
-  ];
-  spilled.forEach(([x, z]) => {
-    const s = 0.75 + random() * 0.25;
-    pieces.push(piece(random, [x, floor + s * 1.05, z], [s * 1.05, s * 0.86, s], pickColor(random, POPCORN_COLORS)));
-  });
   const merged = mergePieces(base, pieces);
   base.dispose();
   return merged;
-}
-
-/** Textura de madeira (veios ondulados) para a bandeja. */
-function woodTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const random = rng(7);
-    ctx.fillStyle = "#b27c4c";
-    ctx.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 150; i += 1) {
-      const y0 = random() * 512;
-      const amp = 2 + random() * 7;
-      const freq = 0.004 + random() * 0.012;
-      ctx.strokeStyle = random() > 0.45 ? `rgba(92,52,22,${0.18 + random() * 0.25})` : `rgba(222,170,112,${0.15 + random() * 0.2})`;
-      ctx.lineWidth = 0.6 + random() * 2.4;
-      ctx.beginPath();
-      for (let x = 0; x <= 512; x += 8) {
-        const y = y0 + Math.sin(x * freq + i) * amp + Math.sin(x * 0.031 + i * 0.7) * 1.2;
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  // UV da extrusão = coordenadas em cm: uma volta da textura cobre a bandeja.
-  texture.repeat.set(1 / 36, 1 / 36);
-  texture.anisotropy = 4;
-  return texture;
 }
 
 /** Listras diagonais do canudo (viram hélice no cilindro). */
@@ -439,48 +385,169 @@ function stripeTexture(color: string) {
   return texture;
 }
 
-function CinemaKit({ spec, art, label }: ModelProps) {
-  const S = 2.5 / CINEMA_TRAY.w;
-  const floor = CINEMA_TRAY.floor;
-  const bucketBand = coneBand(BUCKET.bottom, BUCKET.top, BUCKET.height, 1.3, BUCKET.height - 1.4, 0.44);
-  const cupBand = coneBand(CUP.bottom, CUP.top, CUP.height, 1.2, CUP.height - 1.5, 0.44);
-  const bucketArt = useArtTexture(bucketBand.aspect, "front", art, label);
-  const cupArt = useArtTexture(cupBand.aspect, "front", art, label);
-  // Papel-cartão fosco por padrão; "brilho" no pedido deixa as faixas envernizadas.
-  const glossy = spec.finish === "gloss";
+/**
+ * Ponto do contorno de um retângulo de cantos arredondados (meia-largura a, meia-profundidade b, raio r) no
+ * parâmetro s ∈ [0, 1) do perímetro, começando no meio de trás (−z) e indo pela esquerda até a frente: na frente
+ * (+z) o s cresce para +x, e a arte lê da esquerda para a direita.
+ */
+function roundedRectAt(a: number, b: number, r: number, s: number): [number, number, number, number] {
+  const sx = a - r;
+  const sz = b - r;
+  const quarter = (Math.PI * r) / 2;
+  // Trechos a partir do meio de trás, no sentido −x: meia aresta de trás, canto, aresta esquerda, canto, aresta da frente…
+  const segments: [number, (t: number) => [number, number, number, number]][] = [
+    [sx, (t) => [-t, -b, 0, -1]],
+    [quarter, (t) => {
+      const ang = -Math.PI / 2 - t / r;
+      return [-sx + r * Math.cos(ang), -sz + r * Math.sin(ang), Math.cos(ang), Math.sin(ang)];
+    }],
+    [2 * sz, (t) => [-a, -sz + t, -1, 0]],
+    [quarter, (t) => {
+      const ang = Math.PI - t / r;
+      return [-sx + r * Math.cos(ang), sz + r * Math.sin(ang), Math.cos(ang), Math.sin(ang)];
+    }],
+    [2 * sx, (t) => [-sx + t, b, 0, 1]],
+    [quarter, (t) => {
+      const ang = Math.PI / 2 - t / r;
+      return [sx + r * Math.cos(ang), sz + r * Math.sin(ang), Math.cos(ang), Math.sin(ang)];
+    }],
+    [2 * sz, (t) => [a, sz - t, 1, 0]],
+    [quarter, (t) => {
+      const ang = -t / r;
+      return [sx + r * Math.cos(ang), -sz + r * Math.sin(ang), Math.cos(ang), Math.sin(ang)];
+    }],
+    [sx, (t) => [sx - t, -b, 0, -1]],
+  ];
+  const total = segments.reduce((sum, [len]) => sum + len, 0);
+  let d = (((s % 1) + 1) % 1) * total;
+  for (const [len, at] of segments) {
+    if (d <= len) return at(d);
+    d -= len;
+  }
+  return segments[segments.length - 1][1](segments[segments.length - 1][0]);
+}
 
-  const wood = useMemo(() => woodTexture(), []);
+/**
+ * Lateral da almofada: superfície em anéis de cantos arredondados, do topo (contorno do suporte) estufando para fora e
+ * entrando por baixo até o fundo menor. UV: u ao longo do perímetro (meio da frente em u = 0,5), v pelo comprimento do
+ * tecido no perfil (topo = 1): a faixa da lateral do gabarito cobre a volta toda e a parte que entra por baixo.
+ */
+function cushionGeometry() {
+  const { topW, topD, bottomW, bottomD, height, corner } = CINEMA;
+  // Perfil (quanto o contorno cresce em relação ao topo, altura): estufa no meio e fecha no fundo menor.
+  const control: Pt[] = [
+    [0, height],
+    [1.6, height * 0.78],
+    [2.4, height * 0.5],
+    [1.4, height * 0.2],
+    [-1.2, height * 0.04],
+    [-(topW - bottomW) / 2, 0],
+  ];
+  const curve = new THREE.SplineCurve(control.map(([x, y]) => new THREE.Vector2(x, y)));
+  const rows = curve.getPoints(28);
+  const lengths = [0];
+  for (let j = 1; j < rows.length; j += 1) lengths.push(lengths[j - 1] + rows[j].distanceTo(rows[j - 1]));
+  const total = lengths[lengths.length - 1];
+  const cols = 160;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  rows.forEach((row, j) => {
+    const grow = row.x;
+    const a = topW / 2 + grow;
+    const b = topD / 2 + grow * ((topD - bottomD) / (topW - bottomW));
+    const r = Math.max(2, corner + grow * 0.8);
+    for (let i = 0; i <= cols; i += 1) {
+      const s = i / cols;
+      const [x, z, nx, nz] = roundedRectAt(a, b, r, s);
+      // Tecido de pufe: ondas suaves (franzido) que somem no topo e no fundo.
+      const ease = Math.sin((Math.PI * lengths[j]) / total);
+      const wrinkle = ease * (0.18 * Math.sin(s * Math.PI * 22 + row.y * 0.9) + 0.12 * Math.sin(s * Math.PI * 9 - row.y * 1.7));
+      positions.push(x + nx * wrinkle, row.y, z + nz * wrinkle);
+      uvs.push(s, 1 - lengths[j] / total);
+    }
+  });
+  for (let j = 0; j < rows.length - 1; j += 1) {
+    for (let i = 0; i < cols; i += 1) {
+      const p = j * (cols + 1) + i;
+      const q = p + cols + 1;
+      indices.push(p, q, p + 1, p + 1, q, q + 1);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Contorno do suporte (37 × 25, cantos grandes) com os dois furos; y do shape = −z do mundo. */
+function cinemaTopShape() {
+  const shape = makeShape("rect", CINEMA.topW, CINEMA.topD, CINEMA.corner);
+  for (const hole of [CINEMA_HOLES.cup, CINEMA_HOLES.bucket]) {
+    const path = new THREE.Path();
+    path.absarc(hole.x, -hole.z, hole.r, 0, Math.PI * 2, true);
+    shape.holes.push(path);
+  }
+  return shape;
+}
+
+/** Bolsão de tecido sob um furo: cilindro franzido que desce dentro da almofada (face de dentro visível). */
+function pocketGeometry(r: number, depth: number) {
+  const geometry = new THREE.CylinderGeometry(r, r * 0.86, depth, 48, 10, true);
+  const p = geometry.getAttribute("position");
+  for (let i = 0; i < p.count; i += 1) {
+    const x = p.getX(i);
+    const y = p.getY(i);
+    const z = p.getZ(i);
+    const a = Math.atan2(z, x);
+    const k = 1 + 0.07 * Math.sin(a * 7 + y * 0.8) * (0.5 - y / depth);
+    p.setXYZ(i, x * k, y - depth / 2, z * k);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Tecido Oxford sublimado: fosco com um leve brilho de fibra sintética. */
+function Oxford({ map, color, side }: { map?: THREE.Texture; color?: string; side?: THREE.Side }) {
+  return <meshPhysicalMaterial map={map ?? null} color={color ?? "#ffffff"} roughness={0.78} sheen={0.55} sheenRoughness={0.5} sheenColor="#ffffff" side={side ?? THREE.FrontSide} />;
+}
+
+/**
+ * Kit Cinema (188): almofada de Oxford sublimado (a arte da lateral dá a volta), o suporte de cima com o furo do copo
+ * e o do balde (arte do "Topo"; sem ela, repete a da frente), bolsões de tecido nos furos e alças nas laterais.
+ * Modelos "com bandeja": o suporte é rígido (placa reta); "sem bandeja": tecido macio, sem a placa. "Completo": balde
+ * de pipoca e copo lisos encaixados (sem arte, como pede a Padrão).
+ */
+function CinemaKit({ spec, art, label }: ModelProps) {
+  const S = 2.5 / CINEMA.topW;
+  const details = spec.details ?? "";
+  const tray = !/\bsem bandeja\b/.test(details);
+  const complete = /\bcompleto\b/.test(details);
+  const side = useArtTexture(LATERAL.w / LATERAL.h, "front", art, label);
+  const top = useFaceTexture(CINEMA.topW / CINEMA.topD, art, "topo", label, "front");
   const straw = useMemo(() => stripeTexture("#e02018"), []);
-  useEffect(() => () => wood.dispose(), [wood]);
   useEffect(() => () => straw.dispose(), [straw]);
 
-  const bucket = useMemo(() => lathe(cupProfile(BUCKET.bottom, BUCKET.top, BUCKET.height), 96), []);
-  const cup = useMemo(() => lathe(cupProfile(CUP.bottom, CUP.top, CUP.height), 72), []);
-  const bucketPrint = useMemo(
-    () => bandGeometry({ radiusTop: bucketBand.r1, radiusBottom: bucketBand.r0, height: bucketBand.height, width: bucketBand.width, segments: 72, rows: 10 }),
-    [bucketBand.r0, bucketBand.r1, bucketBand.height, bucketBand.width],
-  );
-  const cupPrint = useMemo(
-    () => bandGeometry({ radiusTop: cupBand.r1, radiusBottom: cupBand.r0, height: cupBand.height, width: cupBand.width, segments: 64, rows: 8 }),
-    [cupBand.r0, cupBand.r1, cupBand.height, cupBand.width],
-  );
-  // Monte de pipoca: domo liso por baixo (não deixa buracos) e grãos por cima.
-  const filler = useMemo(
-    () =>
-      lathe(
-        smoothProfile([
-          [BUCKET.top - 0.45, BUCKET.height - 0.6],
-          [BUCKET.top * 0.72, BUCKET.height + 1.6],
-          [BUCKET.top * 0.38, BUCKET.height + 3.3],
-          [0, BUCKET.height + 3.7],
-        ]),
-        64,
-      ),
-    [],
-  );
-  const lid = useMemo(
-    () =>
-      lathe(
+  const parts = useMemo(() => {
+    const shape = cinemaTopShape();
+    const t = CINEMA.board;
+    const board = new THREE.ExtrudeGeometry(shape, { depth: t - 0.5, bevelEnabled: true, bevelThickness: 0.25, bevelSize: 0.25, bevelSegments: 3, curveSegments: 24 });
+    board.rotateX(-Math.PI / 2);
+    board.translate(0, 0.25, 0);
+    return {
+      cushion: cushionGeometry(),
+      bottom: new THREE.ShapeGeometry(makeShape("rect", CINEMA.bottomW, CINEMA.bottomD, 5), 16),
+      board,
+      face: faceGeometry(shape, CINEMA.topW, CINEMA.topD),
+      cupPocket: pocketGeometry(CINEMA_HOLES.cup.r - 0.05, 9.5),
+      bucketPocket: pocketGeometry(CINEMA_HOLES.bucket.r - 0.05, 12.5),
+      handle: new THREE.TorusGeometry(2.4, 0.35, 10, 32, Math.PI),
+      bucket: lathe(cupProfile(BUCKET.bottom, BUCKET.top, BUCKET.height), 96),
+      cup: lathe(cupProfile(CUP.bottom, CUP.top, CUP.height), 72),
+      popcorn: popcornGeometry(),
+      lid: lathe(
         [
           [0, 1.25],
           [1.3, 1.25],
@@ -495,68 +562,82 @@ function CinemaKit({ spec, art, label }: ModelProps) {
         ],
         72,
       ),
-    [],
-  );
-  const popcorn = useMemo(() => popcornGeometry(floor), [floor]);
-  useGeometryCleanup(bucket);
-  useGeometryCleanup(cup);
-  useGeometryCleanup(bucketPrint);
-  useGeometryCleanup(cupPrint);
-  useGeometryCleanup(filler);
-  useGeometryCleanup(lid);
-  useGeometryCleanup(popcorn);
+    };
+  }, []);
+  useEffect(() => () => Object.values(parts).forEach((geometry) => geometry.dispose()), [parts]);
 
-  const paper = <meshPhysicalMaterial color={art.background} roughness={0.42} clearcoat={0.35} clearcoatRoughness={0.2} />;
-  const woodMaterial = <meshPhysicalMaterial map={wood} roughness={0.5} clearcoat={0.45} clearcoatRoughness={0.25} />;
-
+  const H = CINEMA.height;
+  // Sem bandeja o topo é só o tecido: fica um pouco abaixo da borda e sem a placa.
+  const topY = tray ? H - 0.15 : H - 0.55;
+  const fabric = art.background;
+  const paper = <meshPhysicalMaterial color="#fbfbf9" roughness={0.42} clearcoat={0.35} clearcoatRoughness={0.2} />;
+  // Altura onde o balde (cônico) encosta na borda do furo: dali para baixo ele fica dentro do bolsão.
+  const seat = (rBottom: number, rTop: number, height: number, r: number) => (height * (r - rBottom)) / (rTop - rBottom);
+  const bucketY = topY - seat(BUCKET.bottom, BUCKET.top, BUCKET.height, CINEMA_HOLES.bucket.r);
+  const cupY = topY - seat(CUP.bottom, CUP.top, CUP.height, CINEMA_HOLES.cup.r);
   return (
-    <group userData={{ view: { elevation: 0.36 } }}>
+    <group userData={{ view: { elevation: 0.62 } }}>
       <group scale={S}>
-        <Tray w={CINEMA_TRAY.w} d={CINEMA_TRAY.d} h={CINEMA_TRAY.h} wall={CINEMA_TRAY.wall} floor={floor} radius={CINEMA_TRAY.radius} bevel={CINEMA_TRAY.bevel} material={woodMaterial} />
-
-        <group position={[BUCKET.x, floor, BUCKET.z]}>
-          <mesh geometry={bucket}>{paper}</mesh>
-          <mesh position-y={BUCKET.height - 0.15} rotation-x={Math.PI / 2}>
-            <torusGeometry args={[BUCKET.top - 0.05, 0.32, 10, 96]} />
-            {paper}
-          </mesh>
-          <group position-y={bucketBand.center}>
-            <PrintBand geometry={bucketPrint} map={bucketArt} glossy={glossy} />
-          </group>
-          <group position-y={bucketBand.center} rotation-y={Math.PI}>
-            <PrintBand geometry={bucketPrint} map={bucketArt} glossy={glossy} />
-          </group>
-          <mesh geometry={filler}>
-            <meshStandardMaterial color="#f3dca2" roughness={0.9} />
-          </mesh>
-        </group>
-        <mesh geometry={popcorn}>
-          <meshStandardMaterial vertexColors roughness={0.82} />
+        <mesh geometry={parts.cushion}>
+          <Oxford map={side} />
         </mesh>
-
-        <group position={[CUP.x, floor, CUP.z]}>
-          <mesh geometry={cup}>{paper}</mesh>
-          <mesh position-y={CUP.height - 0.12} rotation-x={Math.PI / 2}>
-            <torusGeometry args={[CUP.top - 0.02, 0.2, 8, 72]} />
-            {paper}
-          </mesh>
-          <group position-y={cupBand.center}>
-            <PrintBand geometry={cupPrint} map={cupArt} glossy={glossy} />
-          </group>
-          <group position-y={cupBand.center} rotation-y={Math.PI}>
-            <PrintBand geometry={cupPrint} map={cupArt} glossy={glossy} />
-          </group>
-          <mesh geometry={lid} position-y={CUP.height - 0.2}>
-            <meshPhysicalMaterial color="#f7f7f5" roughness={0.28} clearcoat={0.6} side={THREE.DoubleSide} />
-          </mesh>
-          {/* Canudo atravessando a tampa, levemente inclinado: ~8 cm para fora, como no copo real. */}
-          <group position={[1, CUP.height + 1, 0.4]} rotation={[0.1, 0, -0.14]}>
-            <mesh position-y={18 / 2 - 10}>
-              <cylinderGeometry args={[0.32, 0.32, 18, 18]} />
-              <meshPhysicalMaterial map={straw} roughness={0.3} clearcoat={0.6} />
+        <mesh geometry={parts.bottom} rotation-x={Math.PI / 2} position-y={0.02}>
+          <Oxford color={fabric} />
+        </mesh>
+        <group position-y={topY}>
+          {tray && (
+            <mesh geometry={parts.board} position-y={-CINEMA.board + 0.1}>
+              <Oxford color={fabric} />
             </mesh>
-          </group>
+          )}
+          <mesh geometry={parts.face} rotation-x={-Math.PI / 2} position-y={0.12}>
+            <Oxford map={top} />
+          </mesh>
+          {/* Bolsões de tecido sob os furos (vistos por dentro). */}
+          <mesh geometry={parts.cupPocket} position={[CINEMA_HOLES.cup.x, 0.05, CINEMA_HOLES.cup.z]}>
+            <Oxford color={fabric} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh geometry={parts.bucketPocket} position={[CINEMA_HOLES.bucket.x, 0.05, CINEMA_HOLES.bucket.z]}>
+            <Oxford color={fabric} side={THREE.DoubleSide} />
+          </mesh>
         </group>
+        {/* Alças de tecido nas laterais curtas, saindo logo abaixo do suporte. */}
+        {[-1, 1].map((sx) => (
+          <mesh key={sx} geometry={parts.handle} position={[sx * (CINEMA.topW / 2 + 0.2), topY - 1.4, 0]} rotation={[0, sx > 0 ? 0 : Math.PI, -Math.PI / 2]} scale={[1, 1, 2.2]}>
+            <Oxford color={fabric} />
+          </mesh>
+        ))}
+        {complete && (
+          <>
+            <group position={[CINEMA_HOLES.bucket.x, bucketY, CINEMA_HOLES.bucket.z]}>
+              <mesh geometry={parts.bucket}>{paper}</mesh>
+              <mesh position-y={BUCKET.height - 0.15} rotation-x={Math.PI / 2}>
+                <torusGeometry args={[BUCKET.top - 0.05, 0.32, 10, 96]} />
+                {paper}
+              </mesh>
+              <mesh geometry={parts.popcorn}>
+                <meshStandardMaterial vertexColors roughness={0.82} />
+              </mesh>
+            </group>
+            <group position={[CINEMA_HOLES.cup.x, cupY, CINEMA_HOLES.cup.z]}>
+              <mesh geometry={parts.cup}>{paper}</mesh>
+              <mesh position-y={CUP.height - 0.12} rotation-x={Math.PI / 2}>
+                <torusGeometry args={[CUP.top - 0.02, 0.2, 8, 72]} />
+                {paper}
+              </mesh>
+              <mesh geometry={parts.lid} position-y={CUP.height - 0.2}>
+                <meshPhysicalMaterial color="#f7f7f5" roughness={0.28} clearcoat={0.6} side={THREE.DoubleSide} />
+              </mesh>
+              {/* Canudo atravessando a tampa, levemente inclinado. */}
+              <group position={[1, CUP.height + 1, 0.4]} rotation={[0.1, 0, -0.14]}>
+                <mesh position-y={18 / 2 - 10}>
+                  <cylinderGeometry args={[0.32, 0.32, 18, 18]} />
+                  <meshPhysicalMaterial map={straw} roughness={0.3} clearcoat={0.6} />
+                </mesh>
+              </group>
+            </group>
+          </>
+        )}
       </group>
     </group>
   );
@@ -894,114 +975,157 @@ function ExecutiveKit({ spec, art, label, showDims }: ModelProps) {
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Caixa acrílica: painéis transparentes chanfrados, tampa impressa em UV e cartão impresso dentro
+ * Caixa acrílica: painéis cristal chanfrados, tampa lisa com puxador e a U.V. nas laterais e no fundo (gabarito)
  * ---------------------------------------------------------------------------------------------- */
 
-const SHRED_COLORS = ["#d8b98c", "#c9a271", "#e8d3ad", "#b88d5c", "#efe2c6"];
+type AcrylicWall = "front" | "back" | "left" | "right" | "bottom";
 
-/** Papel picado (tirinhas sanfonadas) cobrindo o fundo da caixa. */
-function shredGeometry(w: number, d: number, floor: number, height: number) {
-  // Tirinha deitada (comprimento em x, largura em z), sanfonada em y.
-  const base = new THREE.PlaneGeometry(4, 0.32, 10, 1);
-  base.rotateX(-Math.PI / 2);
-  const p = base.getAttribute("position");
+/**
+ * Plano de impressão de uma parede, por fora (a `out` cm da face), com a UV da planificação do gabarito (123): a
+ * lateral frontal em cima do fundo, a traseira embaixo, a esquerda e a direita dos lados. Dobrada, a frente fica de pé;
+ * as laterais giram 90° (a borda de fora do painel vira o topo da parede) e a traseira 180°, como na peça montada.
+ */
+function acrylicPrintGeometry(wall: AcrylicWall, W: number, D: number, H: number, out: number) {
+  const across = wall === "left" || wall === "right" ? D : W;
+  const tall = wall === "bottom" ? D : H;
+  const geometry = new THREE.PlaneGeometry(across, tall, 1, 1);
+  const p = geometry.getAttribute("position");
+  const uv = geometry.getAttribute("uv");
   for (let i = 0; i < p.count; i += 1) {
-    const x = p.getX(i);
-    p.setY(i, Math.sin(x * 4.2) * 0.12 + Math.sin(x * 1.3) * 0.25);
+    // a ∈ [−½, ½] ao longo da parede (da esquerda para a direita de quem olha de fora), b ∈ [0, 1] de baixo para cima.
+    const a = p.getX(i) / across;
+    const b = p.getY(i) / tall + 0.5;
+    let pos: [number, number, number];
+    let tex: [number, number];
+    if (wall === "front") {
+      pos = [a * W, b * H, D / 2 + out];
+      tex = [a + 0.5, b];
+    } else if (wall === "back") {
+      // De fora (atrás), a esquerda de quem olha é o +x; no gabarito o topo do painel encosta no fundo.
+      pos = [-a * W, b * H, -D / 2 - out];
+      tex = [0.5 - a, 1 - b];
+    } else if (wall === "left") {
+      // De fora (pela esquerda), a direita de quem olha é a frente (+z); a borda de fora do painel é o topo.
+      pos = [-W / 2 - out, b * H, a * D];
+      tex = [1 - b, a + 0.5];
+    } else if (wall === "right") {
+      pos = [W / 2 + out, b * H, -a * D];
+      tex = [b, 0.5 - a];
+    } else {
+      // Fundo, visto por baixo: x do painel = x da caixa, topo do painel = frente.
+      pos = [a * W, -out, -(b - 0.5) * D];
+      tex = [a + 0.5, 1 - b];
+    }
+    p.setXYZ(i, ...pos);
+    uv.setXY(i, ...tex);
   }
-  base.computeVertexNormals();
-  const random = rng(29);
-  const spanX = Math.max(w / 2 - 2.6, 0.5);
-  const spanZ = Math.max(d / 2 - 2.6, 0.5);
-  const count = Math.round(clamp(w * d * 0.9, 150, 620));
-  const pieces: Piece[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const layer = Math.pow(random(), 1.6);
-    const s = 0.8 + random() * 0.4;
-    // Inclinação de até ±0,4 rad: a ponta mais baixa fica sempre acima do fundo.
-    pieces.push(piece(random, [(random() * 2 - 1) * spanX, floor + 1.7 + layer * height, (random() * 2 - 1) * spanZ], [s, 1, 1], pickColor(random, SHRED_COLORS), 0.4));
-  }
-  const merged = mergePieces(base, pieces);
-  base.dispose();
-  return merged;
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
+/** Arte com fundo transparente nas imagens enviadas (frente, verso e lados): PNG sem fundo fica só o desenho. */
+function withoutImageBackgrounds<T extends ModelProps["art"]>(art: T): T {
+  const clear = <A extends { src: string | null; background: string }>(side: A): A => (side.src ? { ...side, background: "rgba(0,0,0,0)" } : side);
+  const faces = art.faces ? Object.fromEntries(Object.entries(art.faces).map(([id, face]) => [id, clear(face)])) : art.faces;
+  return { ...clear(art), ...(art.back ? { back: clear(art.back) } : {}), ...(faces ? { faces } : {}) };
+}
+
+/** U.V. direto no acrílico: brilhante, recortada pelo alfa da arte; vista por dentro (através da caixa), espelhada. */
+function AcrylicPrint({ geometry, map }: { geometry: THREE.BufferGeometry; map: THREE.Texture }) {
+  return (
+    <mesh geometry={geometry} renderOrder={1}>
+      <meshPhysicalMaterial map={map} roughness={0.25} clearcoat={0.8} clearcoatRoughness={0.08} alphaTest={0.5} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+/**
+ * Caixa acrílica (123): cristal com tampa lisa e puxador (sem impressão, como diz o gabarito) e a U.V. em cada parte do
+ * gabarito: a lateral frontal (arte principal), a traseira (verso) e as superfícies extras "lateral-esquerda",
+ * "lateral-direita" e "fundo-da-caixa" (src/lib/superficies.ts). Parte sem arte do cliente fica cristal. "Com Tábua de
+ * Frios": a tábua de pinus dentro.
+ */
 function AcrylicBox({ spec, art, label }: ModelProps) {
-  // O formato traz largura × profundidade; a altura vem do catálogo (15 cm, 10 cm na de 40 cm) quando não informada.
+  // O formato traz largura × profundidade × altura; sem a altura, 15 cm (10 cm na de 40 cm).
   const W = cm(spec.widthCm, 25, 8);
   const D = cm(spec.heightCm, 25, 8);
   const H = spec.depthCm >= 5 ? spec.depthCm : W >= 38 ? 10 : 15;
-  const t = spec.depthCm > 0 && spec.depthCm < 1.2 ? spec.depthCm : 0.3;
+  const t = 0.3;
   const S = 2.3 / Math.max(W, D, H);
   const bevel = t * 0.28;
-  const lidW = W + 0.2;
-  const lidD = D + 0.2;
-  const margin = 0.8;
-  const printW = lidW - 2 * margin;
-  const printD = lidD - 2 * margin;
-  const cardW = W - 2 * t - 2.4;
-  const cardH = (H - t) * 0.78;
-  const lidArt = useArtTexture(printW / printD, "front", art, label);
-  const cardArt = useArtTexture(cardW / cardH, "front", art, label);
+  const decal = useMemo(() => withoutImageBackgrounds(art), [art]);
+  const front = useArtTexture(W / H, "front", decal, label);
+  const back = useBackTexture(W / H, spec, decal, label, undefined, "blank");
+  const left = useFaceTexture(H / D, decal, "lateral-esquerda", label);
+  const right = useFaceTexture(H / D, decal, "lateral-direita", label);
+  const bottomArt = useFaceTexture(W / D, decal, "fundo-da-caixa", label);
+  const printed = {
+    back: hasArtContent(art.back),
+    left: hasArtContent(art.faces?.["lateral-esquerda"]),
+    right: hasArtContent(art.faces?.["lateral-direita"]),
+    bottom: hasArtContent(art.faces?.["fundo-da-caixa"]),
+  };
+  const withBoard = /\bcom tabua\b/.test(spec.details ?? "");
+  const pine = usePineTexture();
 
-  const bottom = useMemo(() => plateGeometry(W, D, t, 0.15, bevel), [W, D, t, bevel]);
-  const frontBack = useMemo(() => plateGeometry(W, H - t, t, 0.15, bevel), [W, H, t, bevel]);
-  const sides = useMemo(() => plateGeometry(D - 2 * t, H - t, t, 0.15, bevel), [D, H, t, bevel]);
-  const lid = useMemo(() => plateGeometry(lidW, lidD, t, 0.5, bevel), [lidW, lidD, t, bevel]);
-  const card = useMemo(() => plateGeometry(cardW, cardH, 0.06, 0.25, 0.01), [cardW, cardH]);
-  const shred = useMemo(() => shredGeometry(W - 2 * t, D - 2 * t, t, 1.4), [W, D, t]);
-  useGeometryCleanup(bottom);
-  useGeometryCleanup(frontBack);
-  useGeometryCleanup(sides);
-  useGeometryCleanup(lid);
-  useGeometryCleanup(card);
-  useGeometryCleanup(shred);
+  const parts = useMemo(() => {
+    // A impressão fica 0,03 cm por fora da face de fora de cada parede.
+    const out = 0.03;
+    return {
+      bottom: plateGeometry(W, D, t, 0.15, bevel),
+      frontBack: plateGeometry(W, H - t, t, 0.15, bevel),
+      sides: plateGeometry(D - 2 * t, H - t, t, 0.15, bevel),
+      lid: plateGeometry(W + 0.2, D + 0.2, t, 0.5, bevel),
+      tab: plateGeometry(6, 3.2, t, 1.2, bevel),
+      front: acrylicPrintGeometry("front", W, D, H, out),
+      back: acrylicPrintGeometry("back", W, D, H, out),
+      left: acrylicPrintGeometry("left", W, D, H, out),
+      right: acrylicPrintGeometry("right", W, D, H, out),
+      floor: acrylicPrintGeometry("bottom", W, D, H, out),
+    };
+  }, [W, D, H, bevel]);
+  useEffect(() => () => Object.values(parts).forEach((geometry) => geometry.dispose()), [parts]);
 
   const wallY = t + (H - t) / 2;
   const glass = <AcrylicMaterials />;
-  // Impressão UV direto no acrílico: sai brilhante.
-  const uvSpec: MockupSpec = { ...spec, finish: "gloss", clearcoat: Math.max(spec.clearcoat, 0.8) };
+  const boardT = 1.8;
   return (
     <group userData={{ view: { elevation: 0.45 } }}>
       <group scale={S}>
-        <mesh geometry={shred}>
-          <meshStandardMaterial vertexColors roughness={0.85} side={THREE.DoubleSide} />
-        </mesh>
-        {/* Cartão impresso encostado na parede de trás, aparecendo através da frente. */}
-        <group position={[0, t + 0.3 + cardH / 2, -D / 2 + t + 0.7]} rotation-x={-0.06}>
-          <mesh geometry={card}>
-            <meshStandardMaterial color="#f7f7f5" roughness={0.85} />
+        {withBoard && (
+          <mesh position={[0, t + boardT / 2 + 0.02, 0]}>
+            <boxGeometry args={[W - 2 * t - 0.6, boardT, D - 2 * t - 0.6]} />
+            <meshPhysicalMaterial map={pine} roughness={0.66} clearcoat={0.08} clearcoatRoughness={0.6} />
           </mesh>
-          <Face w={cardW} h={cardH} radius={0.25} map={cardArt} spec={spec} position={[0, 0, 0.03 + LIFT]} />
-        </group>
+        )}
+        <mesh geometry={parts.bottom} position-y={t / 2} rotation-x={-Math.PI / 2}>
+          {glass}
+        </mesh>
+        <mesh geometry={parts.frontBack} position={[0, wallY, D / 2 - t / 2]}>
+          {glass}
+        </mesh>
+        <mesh geometry={parts.frontBack} position={[0, wallY, -D / 2 + t / 2]}>
+          {glass}
+        </mesh>
+        <mesh geometry={parts.sides} position={[W / 2 - t / 2, wallY, 0]} rotation-y={Math.PI / 2}>
+          {glass}
+        </mesh>
+        <mesh geometry={parts.sides} position={[-W / 2 + t / 2, wallY, 0]} rotation-y={Math.PI / 2}>
+          {glass}
+        </mesh>
+        {/* Tampa fechada, um pouco maior que a caixa, com o puxador em pé no meio. */}
+        <mesh geometry={parts.lid} position-y={H + t / 2} rotation-x={-Math.PI / 2}>
+          {glass}
+        </mesh>
+        <mesh geometry={parts.tab} position={[0, H + t + 1.5, -D * 0.12]}>
+          {glass}
+        </mesh>
 
-        <mesh geometry={bottom} position-y={t / 2} rotation-x={-Math.PI / 2}>
-          {glass}
-        </mesh>
-        <mesh geometry={frontBack} position={[0, wallY, D / 2 - t / 2]}>
-          {glass}
-        </mesh>
-        <mesh geometry={frontBack} position={[0, wallY, -D / 2 + t / 2]}>
-          {glass}
-        </mesh>
-        <mesh geometry={sides} position={[W / 2 - t / 2, wallY, 0]} rotation-y={Math.PI / 2}>
-          {glass}
-        </mesh>
-        <mesh geometry={sides} position={[-W / 2 + t / 2, wallY, 0]} rotation-y={Math.PI / 2}>
-          {glass}
-        </mesh>
-
-        {/* Tampa apoiada e deslizada para trás, mostrando a abertura; impressão UV com borda cristal. */}
-        <group position={[0, 0, -D * 0.12]} rotation-y={0.05}>
-          <mesh geometry={lid} position-y={H + t / 2} rotation-x={-Math.PI / 2}>
-            {glass}
-          </mesh>
-          <Face w={printW} h={printD} radius={0.4} map={lidArt} spec={uvSpec} position={[0, H + t + LIFT, 0]} rotation={[-Math.PI / 2, 0, 0]} />
-          <mesh position-y={H + t + LIFT * 0.5} rotation-x={Math.PI / 2}>
-            <planeGeometry args={[printW, printD]} />
-            <meshStandardMaterial color="#f4f4f4" roughness={0.6} />
-          </mesh>
-        </group>
+        <AcrylicPrint geometry={parts.front} map={front} />
+        {printed.back && <AcrylicPrint geometry={parts.back} map={back} />}
+        {printed.left && <AcrylicPrint geometry={parts.left} map={left} />}
+        {printed.right && <AcrylicPrint geometry={parts.right} map={right} />}
+        {printed.bottom && <AcrylicPrint geometry={parts.floor} map={bottomArt} />}
       </group>
     </group>
   );
