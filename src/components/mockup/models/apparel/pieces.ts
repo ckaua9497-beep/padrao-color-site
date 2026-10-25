@@ -478,6 +478,112 @@ export function printPatch(shape: GarmentShape, rect: PrintRect, back: boolean, 
   return fixOutward(g, (i, out) => out.set(pos[i * 3], 0, pos[i * 3 + 2]));
 }
 
+export type SublimationSkins = {
+  front: THREE.BufferGeometry;
+  back: THREE.BufferGeometry;
+  /** Largura ÷ altura da arte de cada lado (cm de tecido). */
+  frontAspect: number;
+  backAspect: number;
+};
+
+/** Cópia da malha só com os triângulos escolhidos e um uv novo (a arte); uv2 guarda o uv original (máscara das cavas). */
+function skinOf(source: THREE.BufferGeometry, triangles: number[], uv: Float32Array): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+  for (const name of ["position", "normal", "color", "uv1"]) {
+    const attr = source.getAttribute(name);
+    if (attr) g.setAttribute(name, (attr as THREE.BufferAttribute).clone());
+  }
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  g.setAttribute("uv2", (source.getAttribute("uv") as THREE.BufferAttribute).clone());
+  g.setIndex(triangles);
+  return g;
+}
+
+/**
+ * Sublimação total (revisão da Padrão de 25/10/2026: camisas, abadás e coletes impressos inteiros): o corpo da peça
+ * vira duas "peles", frente e costas, divididas nas laterais (as colunas a ±90° do meio). A arte é medida no tecido:
+ * na horizontal, o arco no peito (uv1.x); na vertical, o comprimento de cada coluna desde a barra, de modo que a arte
+ * sobe pela frente e passa por cima do ombro sem achatar. A arte das costas lê da esquerda para a direita para quem
+ * olha por trás. `torso` é a malha do torsoPiece (grade de colunas em volta × linhas da barra ao decote).
+ */
+export function sublimationSkins(torso: THREE.BufferGeometry): SublimationSkins {
+  const pos = torso.getAttribute("position") as THREE.BufferAttribute;
+  const uv0 = torso.getAttribute("uv") as THREE.BufferAttribute;
+  const uv1 = torso.getAttribute("uv1") as THREE.BufferAttribute;
+  const NC = Math.round(1 / uv0.getX(1));
+  const cols = NC + 1;
+  const rows = pos.count / cols;
+  // Comprimento de cada coluna desde a barra (cm de tecido).
+  const arc = new Float32Array(pos.count);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  let tallest = 1;
+  for (let c = 0; c < cols; c += 1) {
+    for (let r = 1; r < rows; r += 1) {
+      a.fromBufferAttribute(pos, (r - 1) * cols + c);
+      b.fromBufferAttribute(pos, r * cols + c);
+      arc[r * cols + c] = arc[(r - 1) * cols + c] + a.distanceTo(b);
+    }
+    tallest = Math.max(tallest, arc[(rows - 1) * cols + c]);
+  }
+  const cA = Math.round(NC / 4);
+  const cB = Math.round((3 * NC) / 4);
+  const perimeter = uv1.getX(NC);
+  const sA = uv1.getX(cA);
+  const sB = uv1.getX(cB);
+  const frontW = Math.max(1, sB - sA);
+  const backW = Math.max(1, perimeter - frontW);
+  const frontUv = new Float32Array(pos.count * 2);
+  const backUv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i += 1) {
+    const s = uv1.getX(i);
+    const v = arc[i] / tallest;
+    frontUv[i * 2] = (s - sA) / frontW;
+    frontUv[i * 2 + 1] = v;
+    // Costas: de sB (lado +x, à esquerda de quem olha por trás) passando pelo meio (s = 0 = perímetro) até sA.
+    backUv[i * 2] = ((((s - sB) % perimeter) + perimeter) % perimeter) / backW;
+    backUv[i * 2 + 1] = v;
+  }
+  const index = torso.getIndex();
+  const front: number[] = [];
+  const back: number[] = [];
+  if (index) {
+    for (let t = 0; t < index.count; t += 3) {
+      const tri = [index.getX(t), index.getX(t + 1), index.getX(t + 2)];
+      const mid = (tri[0] % cols) + (tri[1] % cols) + (tri[2] % cols);
+      (mid >= 3 * cA && mid <= 3 * cB ? front : back).push(...tri);
+    }
+  }
+  return {
+    front: skinOf(torso, front, frontUv),
+    back: skinOf(torso, back, backUv),
+    frontAspect: frontW / tallest,
+    backAspect: backW / tallest,
+  };
+}
+
+/**
+ * Manga sublimada: a arte da manga (molde chapado, gabarito "Manga direita/esquerda") dá a volta no braço com o meio
+ * no alto do ombro e a costura embaixo do braço, a cabeça da manga em cima e a boca embaixo. `mirrored`: a manga
+ * desenhada no lado −x (espelhada pelo grupo com escala −1) inverte o u para a arte não sair ao contrário.
+ */
+export function sleeveArtGeometry(sleeve: SleevePiece, mirrored: boolean): { geometry: THREE.BufferGeometry; aspect: number } {
+  const g = sleeve.geometry.clone();
+  const uv = g.getAttribute("uv") as THREE.BufferAttribute;
+  const uv1 = g.getAttribute("uv1") as THREE.BufferAttribute;
+  let circ = 1;
+  let length = 1;
+  for (let i = 0; i < uv.count; i += 1) {
+    const u = uv.getX(i);
+    const v = uv.getY(i);
+    uv.setXY(i, mirrored ? 1 - u : u, 1 - v);
+    if (v === 0) circ = Math.max(circ, uv1.getX(i));
+    length = Math.max(length, -uv1.getY(i));
+  }
+  uv.needsUpdate = true;
+  return { geometry: g, aspect: circ / length };
+}
+
 // ---------------------------------------------------------------------------- sombra de contato (AO)
 
 /** Sombra suave nas dobras, sob a gola e onde o braço encosta (cor por vértice). */

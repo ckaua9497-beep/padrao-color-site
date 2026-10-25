@@ -123,6 +123,22 @@ test("total: a soma dos itens, sem desconto no PIX", () => {
   assert.equal(totalsDiffer(237.86, 237.88), true);
 });
 
+test("criação de arte: o preço da variação entra uma vez no item e vai em arte.preco com arte.tipo 2", () => {
+  const prices: LinePrices = { ...cardPrices, criacao: { "22": 44.9 } };
+  const priced = line(item({ criacaoArte: true, options: { "Criação da arte": "Logo no centro", "Nome da arte": "Cartão Padaria", Observação: "Cores da marca" } }), prices);
+  assert.equal(priced.criacao, 44.9);
+  assert.equal(priced.total, 175.28, "130,38 + 44,90");
+  const product = buildOrderPayload({ customerId: 1, lines: [priced], method: "pix", delivery: { tipo: "Retirada", endereco: null }, now: new Date("2026-10-09T11:31:49Z") }).produtos[0];
+  assert.deepEqual({ tipo: product.arte.tipo, preco: product.arte.preco }, { tipo: 2, preco: 44.9 });
+  assert.equal(product.nome_trabalho, "Cartão Padaria");
+  assert.equal(product.descricao, "Cores da marca");
+  assert.ok(!product.desc_trabalho.includes("Cores da marca"), "a observação não se repete na descrição do trabalho");
+  // Variação sem criação: erro do item (o navegador não escolhe o preço).
+  const semCriacao = priceLine(item({ variationId: 23, criacaoArte: true }), prices);
+  assert.ok(isLineError(semCriacao));
+  assert.equal(line(item(), prices).criacao, 0);
+});
+
 test("nome do trabalho: texto da arte ou nome do produto, com a contagem de itens", () => {
   assert.equal(itemJobName(item()), "Padaria Pão Quente");
   assert.equal(itemJobName(item({ options: {} })), "Cartão de Visita");

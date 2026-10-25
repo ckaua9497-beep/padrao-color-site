@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { anexosComplementares, anexosDeProducao, camposVisiveis, CUSTOMIZACAO_PADRAO, customizacaoDa, customizacaoDaLinha, opcaoDeAcessorio, perfisDeCustomizacao, recebeArte, semImpressaoPeloNome } from "./customizacao.ts";
+import { anexosComplementares, anexosDeProducao, camposVisiveis, criacaoPorVariacao, CUSTOMIZACAO_PADRAO, customizacaoDa, customizacaoDaLinha, frenteEnviada, opcaoDeAcessorio, perfisDeCustomizacao, recebeArte, semImpressaoPeloNome } from "./customizacao.ts";
 
 const linha = (tipo: number, anexos: string[] | null, criacao: [number, string] = [1, "34.90"], extra: Record<string, unknown> = {}) => ({
   customizacao: { tipo, web2print: "Não", criacao_arte: { tipo: String(criacao[0]), preco: criacao[1] }, ...extra },
@@ -70,13 +70,29 @@ test("linha sem customização (erro da API): arte do cliente em arquivo único"
 test("arquivos para a produção: arquivo único ou separados, um escondendo o outro (revisão da Padrão de 25/10/2026)", () => {
   const cartao = { ...CUSTOMIZACAO_PADRAO, anexos: ["Arquivo Único", "Impressão Frente", "Impressão Verso", "Verniz Local Frente"] };
   assert.deepEqual(anexosDeProducao(cartao), ["Arquivo Único", "Impressão Frente", "Impressão Verso", "Verniz Local Frente"]);
-  assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, anexos: ["Arquivo Único"] }), [], "só o arquivo único: a arte do editor já é ele");
+  assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, anexos: ["Arquivo Único"] }), ["Arquivo Único"], "só o arquivo único: ele continua sendo a primeira opção do envio");
+  assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, anexos: [] }), ["Arquivo Único"]);
   assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, anexos: ["Impressão Frente", "Impressão Verso"] }), ["Arquivo Único", "Impressão Frente", "Impressão Verso"], "o arquivo único sempre é opção");
   assert.deepEqual(anexosDeProducao({ ...CUSTOMIZACAO_PADRAO, modo: "nenhuma", anexos: ["Arquivo Único", "Impressão Frente"] }), []);
   const tipos = anexosDeProducao(cartao);
   assert.deepEqual(camposVisiveis(tipos, {}), tipos);
   assert.deepEqual(camposVisiveis(tipos, { "Arquivo Único": true }), ["Arquivo Único"]);
   assert.deepEqual(camposVisiveis(tipos, { "Impressão Verso": true }), ["Impressão Frente", "Impressão Verso", "Verniz Local Frente"]);
+  assert.equal(frenteEnviada({}), false);
+  assert.equal(frenteEnviada({ "Arquivo Único": true }), true);
+  assert.equal(frenteEnviada({ "Impressão Frente": true, "Verniz Local Frente": true }), true);
+  assert.equal(frenteEnviada({ "Verniz Local Frente": true }), false, "só o verniz: a frente segue a arte montada no site");
+});
+
+test("criação de arte por variação: o preço de cada uma, sem as que não oferecem nem as sem personalização", () => {
+  const perfis = [
+    { ...CUSTOMIZACAO_PADRAO, criacao: 44.9 },
+    { ...CUSTOMIZACAO_PADRAO, criacao: null },
+    { modo: "nenhuma" as const, anexos: [], criacao: 30, web2print: false },
+  ];
+  const product = { customizacoes: perfis, variations: [{ id: 1, cz: 0 }, { id: 2, cz: 1 }, { id: 3, cz: 2 }, { cz: 0 }] };
+  assert.deepEqual(criacaoPorVariacao(product), { "1": 44.9 });
+  assert.equal(criacaoPorVariacao({ customizacoes: [perfis[1]], variations: [{ id: 5, cz: 0 }] }), null);
 });
 
 test("regra 8: o controle remoto é só uma peça e não muda os arquivos aceitos (Quadro Acrílico com Led Neon)", () => {

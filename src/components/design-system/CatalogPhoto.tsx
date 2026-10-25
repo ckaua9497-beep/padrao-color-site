@@ -18,7 +18,16 @@ export type CatalogPhotoProps = {
   /** Lado da foto final (px) e margem em volta da peça (fração do lado). */
   size: number;
   margin: number;
+  /**
+   * Conferência das superfícies (src/lib/superficies.ts): "back" e os ids das extras ganham a estampa em outras cores,
+   * e `face` é a superfície "em edição" (o modelo mostra ela, como no passo da arte).
+   */
+  faces?: string[];
+  face?: string | null;
 };
+
+/** Cores das superfícies extras na conferência, em ordem. */
+const FACE_COLORS = ["blue", "lime", "sun", "magenta", "cyan", "red", "amber", "ink"];
 
 /** Espera do modelo pronto até a foto: cobre a animação de entrada e o carregamento das texturas. */
 const SETTLE_MS = 2500;
@@ -70,16 +79,28 @@ async function catalogFrame(png: string, size: number, margin: number): Promise<
  * transparente e enquadrado num quadrado de `size` px (600 na página; 1200 pelo fotos:novos). O resultado fica em `window.__foto`
  * (WebP em data URL) para o scripts/fotos-produtos.mjs gravar em public/.
  */
-export default function CatalogPhoto({ product, selection, brand, turn, size, margin }: CatalogPhotoProps) {
+export default function CatalogPhoto({ product, selection, brand, turn, size, margin, faces = [], face = null }: CatalogPhotoProps) {
   const captureRef = useRef<CaptureFn | null>(null);
   const stage = useRef<HTMLDivElement>(null);
   const [photo, setPhoto] = useState<{ src: string | null; error?: string } | null>(null);
   const spec = useMemo(() => mockupSpec(product, selection), [product, selection]);
+  const facesKey = faces.join(",");
   const art = useMemo<ArtSettings>(() => {
-    const src = brandArtDataUrl(brand);
     // Modo "mark" (serigrafia de 1 cor): sem fundo, a tinta sobre a peça.
-    return { ...DEFAULT_ART, src, fit: "cover", background: brand.mode === "mark" ? "rgba(0,0,0,0)" : brandColor(brand.color) };
-  }, [brand]);
+    const paint = (options: typeof brand): ArtSettings => ({
+      ...DEFAULT_ART,
+      src: brandArtDataUrl(options),
+      fit: "cover",
+      background: options.mode === "mark" ? "rgba(0,0,0,0)" : brandColor(options.color),
+    });
+    const main = paint(brand);
+    const extras = facesKey ? facesKey.split(",") : [];
+    const seed = brand.seed ?? 7;
+    const other = (i: number) => paint({ ...brand, color: FACE_COLORS[i % FACE_COLORS.length], seed: seed + i + 1 });
+    const back = extras.includes("back") ? other(extras.indexOf("back")) : null;
+    const own = Object.fromEntries(extras.flatMap((id, i) => (id === "back" ? [] : [[id, other(i)]])));
+    return { ...main, back, faces: Object.keys(own).length ? own : null };
+  }, [brand, facesKey]);
 
   useEffect(() => {
     const started = performance.now();
@@ -114,7 +135,7 @@ export default function CatalogPhoto({ product, selection, brand, turn, size, ma
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <div ref={stage} className="w-full max-w-[900px]">
-        <Mockup3D spec={spec} art={art} label={product.name} fallbackImage={product.image} captureRef={captureRef} className="aspect-square w-full" />
+        <Mockup3D spec={spec} art={art} label={product.name} fallbackImage={product.image} captureRef={captureRef} face={face} className="aspect-square w-full" />
       </div>
       <div>
         <p role="status" className="text-sm text-muted" data-foto={photo ? (photo.src ? "pronta" : "falhou") : "aguardando"}>

@@ -18,7 +18,10 @@ import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./term
  * e precoTotalAcabamentos. No envelope: data e hora (Brasília), previsao (o maior prazo em dias úteis, sem fim de
  * semana nem feriado nacional), idCliente, pagamento {tipo, valor, status} e entrega.
  * Premissas a confirmar com a Padrão (trocar aqui):
- * - arte.tipo = 1 sempre (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda depois).
+ * - arte.tipo = 1 com a arte do cliente (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda
+ *   depois). Criação de arte pela equipe (preço da variação, `criacao_arte`): arte.tipo = 2 e arte.preco = o preço dela,
+ *   somado ao total do item e do pedido; o pedido do cliente vai em desc_trabalho e as referências em anexos.
+ * - "Nome da arte" vira o nome do trabalho do item e "Observação" vai em descricao.
  * - anexos: os arquivos do Bunny (art-files.ts), com o tipo de anexo que a variação aceita (customizacao.ts); a
  *   variação sem personalização ou de neon pronto vai sem anexos.
  * - tipoProducao "economico" no prazo normal (o exemplo só mostra "expresso"); productType 0; tratamentoArquivo
@@ -70,6 +73,8 @@ export type OrderItemInput = {
   acabamentos?: AcabamentoEscolhido[];
   /** Aceite dos termos de envio de arte (termos-arte.ts): obrigatório no item personalizado. */
   termosArte?: AceiteTermos | null;
+  /** Criação de arte pela equipe da Padrão: o servidor cobra o preço da variação (catálogo). */
+  criacaoArte?: boolean;
 };
 
 /** Preços do cliente para um grupo: variações já com o desconto da categoria de revenda, se houver. */
@@ -86,6 +91,8 @@ export type LinePrices = {
   orderable?: boolean;
   /** Acabamentos extras do produto (catálogo): a tabela e os índices de cada variação (id → índices). */
   acabamentos?: { tabela: Acabamento[]; porVariacao: Record<string, number[]> } | null;
+  /** Preço da criação de arte por variação (id → preço; customizacao.ts criacaoPorVariacao). */
+  criacao?: Record<string, number> | null;
 };
 
 export type PricedLine = {
@@ -105,8 +112,10 @@ export type PricedLine = {
   lotSize: number;
   lots: number;
   units: number;
-  /** Produto (productTotal) mais os acabamentos extras. */
+  /** Produto (productTotal) mais os acabamentos extras e a criação de arte. */
   total: number;
+  /** Preço da criação de arte pela equipe (0 sem ela). */
+  criacao: number;
   /** Acabamentos extras escolhidos, com preço e prazo (vazio quando não há). */
   acabamentos: CotacaoAcabamentos;
   /** Prazo do produto mais o dos acabamentos. */
@@ -198,6 +207,9 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
   const disponiveis = (prices.acabamentos?.porVariacao[String(variation.id)] ?? []).map((i) => tabela[i]).filter((a): a is Acabamento => Boolean(a));
   const acabamentos = cotarAcabamentos(disponiveis, input.acabamentos, units);
   if (!acabamentos) return fail("Um acabamento escolhido não está mais disponível para esta opção. Remova o item e escolha de novo.");
+  // Criação de arte: uma vez no item, com o preço do catálogo (o do navegador não vale).
+  const criacao = input.criacaoArte ? (prices.criacao?.[String(variation.id)] ?? 0) : 0;
+  if (input.criacaoArte && !(criacao > 0)) return fail("A criação de arte não está disponível para esta opção. Remova o item e envie a sua arte.");
   const leadDays = express ? (variation.de ?? variation.d) : variation.d;
   return {
     key: input.key,
@@ -211,7 +223,8 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
     lotSize,
     lots: input.quantity,
     units,
-    total: round2((productTotal ?? unitPrice * input.quantity) + acabamentos.total),
+    total: round2((productTotal ?? unitPrice * input.quantity) + acabamentos.total + criacao),
+    criacao,
     acabamentos,
     leadDays: leadDays !== null && leadDays !== undefined ? leadDays + acabamentos.prazo : null,
     size,
@@ -239,7 +252,7 @@ export function bundleTitle(bundle: { id: string; name: string }, options: Recor
 
 /** Nome do trabalho do item: o texto da arte, senão o nome do produto. */
 export function itemJobName(input: Pick<OrderItemInput, "name" | "options">): string {
-  const text = (input.options["Texto da arte"] ?? input.options.Subtexto ?? "").trim();
+  const text = (input.options["Nome da arte"] ?? input.options["Texto da arte"] ?? input.options.Subtexto ?? "").trim();
   return clip(text || input.name, 60);
 }
 
@@ -427,6 +440,10 @@ export type OrderPayload = {
 
 const NO_FACTS: ProductFacts = { image: "", categoryId: null, packaging: null, attachments: [] };
 
+/** arte.tipo do pedido: a arte do cliente (como no exemplo da Padrão) ou a criação pela equipe (a confirmar). */
+export const ARTE_DO_CLIENTE = 1;
+export const ARTE_CRIACAO = 2;
+
 /** Rótulo limpo da opção ("02 - Formato:" → "Formato"). */
 const optionLabel = (key: string) => cleanOptionLabel(key).replace(/:$/, "").trim();
 
@@ -434,8 +451,9 @@ const optionLabel = (key: string) => cleanOptionLabel(key).replace(/:$/, "").tri
 function workDescription(line: PricedLine, variationLabels: Set<string>): string {
   const art = line.input.artName ? `Arte: ${line.input.artName}` : "Arte: enviar depois";
   // Os acabamentos vêm da cotação do servidor (a linha "Acabamentos" do carrinho é só exibição).
+  // A observação vai em descricao (não repete aqui).
   const extras = Object.entries(line.input.options)
-    .filter(([key]) => !variationLabels.has(optionLabel(key)) && optionLabel(key) !== "Acabamentos")
+    .filter(([key]) => !variationLabels.has(optionLabel(key)) && optionLabel(key) !== "Acabamentos" && optionLabel(key) !== "Observação")
     .map(([key, value]) => `${key}: ${value}`);
   const finishing = line.acabamentos.itens.length ? [`Acabamentos: ${resumoAcabamentos(line.acabamentos.itens)}`] : [];
   const termos = line.input.termosArte ? [`Termos de envio de arte: ${textoDoAceite(line.input.termosArte)}`] : [];
@@ -457,14 +475,18 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     price: line.unitPrice,
     precoTotal: round2(line.productTotal),
     variations,
-    descricao: "",
+    descricao: clip(line.input.options["Observação"] ?? "", 500),
     nomeTrabalho: job,
     nome_trabalho: job,
     desc_trabalho: workDescription(line, new Set(Object.keys(variations))),
     tipoProducao: line.express ? "expresso" : "economico",
     productionTime: line.leadDays,
     package: box ? { peso: box[0], altura: box[2], largura: box[1], comprimento: box[3] } : null,
-    arte: { tipo: 1, preco: 0, anexos: orderAttachments(line.input.files ?? [], facts.attachments, { semArquivo: facts.semArquivo }) },
+    arte: {
+      tipo: line.criacao > 0 ? ARTE_CRIACAO : ARTE_DO_CLIENTE,
+      preco: round2(line.criacao),
+      anexos: orderAttachments(line.input.files ?? [], facts.attachments, { semArquivo: facts.semArquivo }),
+    },
     tratamentoArquivo: { tipo: "Padrão", preco: 0 },
     precoTotalAcabamentos: line.acabamentos.total,
     unidades: line.units,
@@ -568,6 +590,7 @@ export function parseItem(raw: unknown, artBase: ArtBases = ""): OrderItemInput 
     files: parseUploadedFiles(raw.files, artBase),
     acabamentos: parseAcabamentosEscolhidos(raw.acabamentos),
     termosArte: aceiteValido(raw.termosArte),
+    ...(raw.criacaoArte === true ? { criacaoArte: true } : {}),
   };
 }
 

@@ -9,6 +9,7 @@ import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, ledColorName, neon
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { keepArtFiles, uploadedFileOf } from "./art-source";
+import type { ArtRequest } from "./SendArtDialog";
 import { artSummary } from "./art-summary";
 import { useCart } from "@/components/cart/CartProvider";
 import { IconClock, IconCube, IconTruck } from "@/components/icons";
@@ -21,7 +22,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cx } from "@/components/ui/cx";
 import type { CustomSize, InfoBlock, SizeChartRow, Variation } from "@/lib/catalog";
 import { avisosDoProduto } from "@/lib/avisos-produto";
-import { ARQUIVO_UNICO, anexosDeProducao, customizacaoDa, recebeArte, type Customizacao } from "@/lib/customizacao";
+import { ARQUIVO_UNICO, anexosDeProducao, customizacaoDa, frenteEnviada, recebeArte, type Customizacao } from "@/lib/customizacao";
 import { acabamentosDa, cotarAcabamentos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido } from "@/lib/acabamentos";
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
@@ -186,6 +187,11 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   // Arquivos para a produção da variação, por tipo de anexo: o arquivo único ou os separados (frente, verso, verniz, faca…).
   const [extraFiles, setExtraFiles] = useState<Record<string, File>>({});
+  // Criação de arte pela equipe (o que o cliente quer e as referências); null = não pediu.
+  const [creationRequest, setCreationRequest] = useState<ArtRequest | null>(null);
+  // Nome da arte (nome do trabalho no pedido) e observação para a produção.
+  const [artTitle, setArtTitle] = useState("");
+  const [artNote, setArtNote] = useState("");
   // Acabamentos extras escolhidos (os que a variação atual não aceita ficam de fora no cálculo).
   const [finishing, setFinishing] = useState<AcabamentoEscolhido[]>([]);
   // "Enviar arte depois" (só multiloja).
@@ -278,9 +284,14 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const modeloPronto = custom.modo === "neon-modelo" && !spec.blank;
   const semArte = spec.blank || !recebeArte(custom);
   const producao = semArte ? [] : anexosDeProducao(custom);
-  // Arquivos enviados no bloco de produção (só os tipos da variação atual).
+  // Arquivos de produção enviados no "Enviar sua arte" (só os tipos da variação atual). Com o arquivo único ou a
+  // "Impressão Frente", a frente vai como o cliente mandou: a arte montada no site não vira arquivo de impressão.
   const productionFiles = Object.fromEntries(Object.entries(extraFiles).filter(([tipo]) => producao.includes(tipo)));
-  const singleFile = productionFiles[ARQUIVO_UNICO] ?? null;
+  // Criação de arte pela equipe: o preço da variação (API) soma uma vez no item; com ela pedida, a arte vem da equipe.
+  const creationPrice = !semArte && custom.criacao ? custom.criacao : null;
+  const creationOn = creationPrice !== null && creationRequest !== null;
+  const singleFile = creationOn ? null : (productionFiles[ARQUIVO_UNICO] ?? null);
+  const frontCovered = creationOn || frenteEnviada(productionFiles);
   const presets = areaMode ? sizePresets(baseSpec.kind, baseSpec.variant, rules.limits) : [];
 
   // Vestuário com grade: quantidade por tamanho; o total respeita o mínimo/máximo do produto.
@@ -299,7 +310,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const contorno = semArte ? null : contornoDo({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name) });
   // Verniz localizado: a máscara sai da arte (ArtSettings.varnish) para os tipos de anexo de verniz da variação.
   const vernizTipos = spec.spotVarnish && !semArte ? tiposDoVerniz(destinoDoVerniz(producao)) : [];
-  const automaticFiles = [...(contorno ? [contorno.anexo] : []), ...vernizTipos];
+  // A máscara de verniz sai da arte montada no site; com a frente enviada pronta, o verniz vem do arquivo do cliente.
+  const vernizAuto = frontCovered ? [] : vernizTipos;
+  const automaticFiles = [...(contorno ? [contorno.anexo] : []), ...vernizAuto];
   const semFundo = contorno !== null;
   const renderArt = useMemo(() => {
     const painted = withMono(art, monoDo(processo));
@@ -361,7 +374,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const frontFacts = gabarito?.front ? describePanel(gabarito.front.ref.panel) : null;
   const verso = versoPelaCor || Boolean(gabarito?.back);
   // Superfícies com arte própria: frente, verso (4/1, 4/4, peças de duas faces) e as extras do gabarito.
-  const surfaces = semArte ? [] : superficiesDe({ pages: gabarito?.pages ?? [], verso, ...rotulosDosLados(spec.kind, spec.variant) });
+  const surfaces = semArte ? [] : superficiesDe({ pages: gabarito?.pages ?? [], verso, semManga: spec.kind === "tshirt" && spec.sleeveless, ...rotulosDosLados(spec.kind, spec.variant) });
   const surfaceLabels = Object.fromEntries(surfaces.map((s) => [s.id, s.label]));
   // A superfície escolhida sumiu (outra variação): o 3D volta para a frente.
   const shownSide = surfaces.some((s) => s.id === artSide) ? artSide : "front";
@@ -425,7 +438,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const finishQuote = cotarAcabamentos(finishes, chosenFinishes, pieces) ?? { itens: [], total: 0, prazo: 0 };
   const leadDays = chosen.leadDays ? chosen.leadDays + finishQuote.prazo : chosen.leadDays;
   // Medida livre: o total do item vem pronto (o mínimo de 1 m² vale no item inteiro, não por peça).
-  const total = roundMoney((area ? area.total : unitPrice * (apparel ? units : quantity)) + finishQuote.total);
+  const total = roundMoney((area ? area.total : unitPrice * (apparel ? units : quantity)) + finishQuote.total + (creationOn ? creationPrice : 0));
   const display =
     area && !area.error
       ? { value: area.price, unit: neonFrase ? "pelo letreiro" : "por peça" }
@@ -462,6 +475,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     ...(area ? [["Medida", `${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm`] as [string, string]] : []),
     ...(apparel ? [["Tamanhos", sizeSummary(sizes, counts) || "nenhum"] as [string, string]] : []),
     ...(finishQuote.itens.length ? [["Acabamentos", resumoAcabamentos(finishQuote.itens)] as [string, string]] : []),
+    ...(creationOn ? [["Criação da arte", `+ ${formatBRL(creationPrice)} · ${creationRequest.briefing}`] as [string, string]] : []),
+    ...(!semArte && artTitle.trim() ? [["Nome da arte", artTitle.trim()] as [string, string]] : []),
+    ...(!semArte && artNote.trim() ? [["Observação", artNote.trim()] as [string, string]] : []),
     ...(processo ? [["Processo", PROCESSO_INFO[processo].titulo] as [string, string]] : []),
     ...(canOrient ? [["Orientação", (orientation ?? naturalOrientation) === "vertical" ? "Vertical" : "Horizontal"] as [string, string]] : []),
     ...(expressAvailable ? [["Prazo", `${expressChosen ? "Expresso" : "Econômico"}${leadDays ? ` · ${daysText(leadDays)}` : ""}`] as [string, string]] : []),
@@ -477,7 +493,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
   // Quadro com LED: as linhas desenhadas com o pincel já são a arte (acrílico só com o LED).
   const ledDrawn = contorno?.tipo === "led" && desenhoDe(art).linhas.length > 0;
-  const hasArt = semArte || artLater || Boolean(artName) || typedArt || ledDrawn || facesWithArt(art).length > 0 || Object.keys(productionFiles).length > 0;
+  const hasArt = semArte || artLater || creationOn || Boolean(artName) || typedArt || ledDrawn || facesWithArt(art).length > 0 || Object.keys(productionFiles).length > 0;
 
   // Escolher um valor ajusta os passos seguintes para uma combinação que existe na API.
   const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
@@ -497,15 +513,22 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
 
   // Cada envio ganha um número: o resultado de um envio anterior que termina depois não sobrescreve o último.
   const uploadSeq = useRef(0);
-  // `raw`: "Usar a imagem original" (sem corte de margem nem remoção de fundo).
-  const onFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
+  // `raw`: "Usar a imagem original" (sem corte de margem nem remoção de fundo). `preview`: prévia no 3D de um arquivo de
+  // produção (arquivo único ou "Impressão Frente"); ele vai para a produção como veio, mesmo sem prévia.
+  const onFile = async (file: File | undefined, { raw = false, preview = false }: { raw?: boolean; preview?: boolean } = {}) => {
     if (!file) return;
     // Grande demais: avisa sem cancelar um envio que ainda está em andamento.
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      if (preview) {
+        uploadSeq.current += 1;
+        setArt((a) => ({ ...a, src: null, templateFit: null }));
+        setArtName(file.name);
+        return;
+      }
       setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.`);
       return;
     }
-    if (!arquivoServe(processo, file.name)) {
+    if (!preview && !arquivoServe(processo, file.name)) {
       setUploadError("Para o talhamento na madeira, envie arte vetorial (SVG, PDF, AI, CDR ou EPS) ou escreva o texto.");
       return;
     }
@@ -547,12 +570,37 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       setTab("3d");
     } catch (error) {
       if (seq !== uploadSeq.current) return;
-      if (error instanceof IntakeError && error.attach) attach(error.message);
+      if (preview) attach(null);
+      else if (error instanceof IntakeError && error.attach) attach(error.message);
       else if (pdf) attach(null); // PDF que o navegador não lê: segue anexado pelo nome, como antes.
       else setUploadError(error instanceof IntakeError ? error.message : "Não conseguimos ler essa imagem. Tente PNG, JPG, WEBP ou SVG.");
     } finally {
       if (seq === uploadSeq.current) setUploading(false);
     }
+  };
+
+  // Foto do mockup com a arte (PNG sem fundo) para o "Selecione a arte" destacar a arte no produto.
+  const snapMockup = () => captureRef.current?.({ transparent: true }) ?? null;
+
+  // Arquivo de produção (modal "Enviar sua arte"): o arquivo único e a "Impressão Frente" aparecem na frente do 3D
+  // (prévia); tirados, a prévia sai junto e a frente volta à arte de exemplo.
+  const onProductionFile = (tipo: string, file: File | null) => {
+    setExtraFiles((files) => {
+      const rest = { ...files };
+      delete rest[tipo];
+      return file ? { ...rest, [tipo]: file } : rest;
+    });
+    setArtMissing(false);
+    if (tipo !== ARQUIVO_UNICO && tipo !== "Impressão Frente") return;
+    if (file) {
+      void onFile(file, { preview: true });
+      return;
+    }
+    uploadSeq.current += 1;
+    setUploading(false);
+    setArt((a) => ({ ...a, src: null, templateFit: null, layout: a.layout?.text ? { text: a.layout.text } : null }));
+    setArtName(null);
+    setAttachedFile(null);
   };
 
   const goTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -588,9 +636,10 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     }
     // Arquivo de impressão no gabarito (PDF no tamanho real): fica no navegador e segue com o pedido.
     let printFile: { id: string; name: string } | null = null;
-    // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado.
+    // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado. Com a frente
+    // enviada pronta (arquivo único ou "Impressão Frente"), os arquivos de produção são a arte: não sai PDF do editor.
     const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back) || facesWithArt(art).length > 0 || ledDrawn;
-    if (gabarito && !artLater && ownArt && !singleFile) {
+    if (gabarito && !artLater && ownArt && !frontCovered && !creationOn) {
       try {
         const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
         const sheets = printSheets(gabarito, renderArt);
@@ -610,7 +659,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // Faca de corte ou posição do LED feita do contorno da arte, quando o cliente não mandou a dele nem o arquivo único.
     let autoContorno: File | null = null;
     let ledResumo: string | null = null;
-    if (contorno && !semArte && !artLater && !singleFile && !productionFiles[contorno.anexo] && ownArt) {
+    if (contorno && !semArte && !artLater && !creationOn && !singleFile && !productionFiles[contorno.anexo] && ownArt) {
       try {
         const { arquivoDeContorno, arquivoDeLed } = await import("./contorno-arquivo");
         if (contorno.tipo === "led") {
@@ -625,7 +674,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     }
     // Máscaras de verniz localizado feitas da arte, nos tipos que o cliente não mandou.
     let autoVerniz: { file: File; tipo: string }[] = [];
-    if (vernizTipos.length && !artLater && !singleFile && ownArt) {
+    if (vernizAuto.length && !artLater && ownArt) {
       try {
         const { arquivosDeVerniz } = await import("./verniz-arquivo");
         autoVerniz = await arquivosDeVerniz({ art: renderArt, spec, gabarito, anexos: producao, enviados: productionFiles, label: product.name, slug: product.slug });
@@ -633,11 +682,18 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         autoVerniz = [];
       }
     }
+    const productionSummary: Record<string, string> = {
+      "Arquivos para a produção": Object.entries(productionFiles)
+        .map(([tipo, file]) => `${tipo === ARQUIVO_UNICO ? "Arquivo único" : tipo}: ${file.name}`)
+        .join(" · "),
+    };
     const artFiles =
       semArte || artLater
         ? []
         : await keepArtFiles(
-            singleFile
+            creationOn
+              ? creationRequest.references.map((file) => ({ file, kind: "extra" as const, tipo: ARQUIVO_UNICO }))
+              : singleFile
               ? [{ file: singleFile, kind: "extra" as const, tipo: ARQUIVO_UNICO }]
               : [
                   manualFront ? { file: manualFront, kind: "extra" as const, tipo: "Impressão Frente" } : { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" as const },
@@ -659,10 +715,10 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
-        ...(!semArte && !artLater ? artSummary(art, family, surfaceLabels) : {}),
+        ...(!semArte && !artLater && !creationOn ? (frontCovered ? productionSummary : artSummary(art, family, surfaceLabels)) : {}),
         ...(autoContorno && contorno ? { [contorno.anexo]: contorno.tipo === "led" ? "automática" : `automática · ${String(contorno.margemCm).replace(".", ",")} cm do desenho` } : {}),
         ...(ledResumo ? { "Linhas de LED": ledResumo } : {}),
-        ...(vernizTipos.length && !semArte && !artLater ? { "Verniz localizado": autoVerniz.length ? `${vernizResumo(art.varnish)} · máscara automática` : vernizResumo(art.varnish) } : {}),
+        ...(vernizAuto.length && !semArte && !artLater ? { "Verniz localizado": autoVerniz.length ? `${vernizResumo(art.varnish)} · máscara automática` : vernizResumo(art.varnish) } : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
@@ -673,13 +729,28 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       quantity: apparel ? units : quantity,
       leadDays,
       ...(finishQuote.itens.length ? { acabamentos: finishQuote.itens.map((item) => ({ id: item.acabamento.id, qtd: item.qtd })), acabamentosPreco: finishQuote.total } : {}),
+      ...(creationOn ? { criacaoArte: true, criacaoPreco: creationPrice } : {}),
       groupId: product.groupId,
       variationId: price.variation?.id,
       ...(area ? { widthCm, heightCm } : {}),
       express: expressChosen,
       ...(!semArte ? { termosArte: novoAceite(new Date()) } : {}),
       // O carrinho mostra "Arte: …"; null = enviar depois (só multiloja).
-      artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : singleFile ? `${singleFile.name} · arquivo único` : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : ledDrawn ? "linhas de LED desenhadas no editor" : Object.keys(productionFiles).length ? "arquivos para a produção" : null)),
+      artName: modeloPronto
+        ? "modelo pronto"
+        : semArte
+          ? "produto sem impressão"
+          : artLater
+            ? null
+            : creationOn
+              ? "criação de arte pela equipe da Padrão"
+              : singleFile
+              ? `${singleFile.name} · arquivo único`
+              : frontCovered
+                ? `${Object.values(productionFiles)
+                    .map((file) => file.name)
+                    .join(" + ")} · arquivos para a produção`
+                : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : ledDrawn ? "linhas de LED desenhadas no editor" : Object.keys(productionFiles).length ? "arquivos para a produção" : null)),
     });
     setAdding(false);
     setPreview(false);
@@ -866,12 +937,22 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               onSide={setArtSide}
               extraTypes={producao}
               extraFiles={extraFiles}
-              onExtraFile={(tipo, file) =>
-                setExtraFiles((files) => {
-                  const rest = { ...files };
-                  delete rest[tipo];
-                  return file ? { ...rest, [tipo]: file } : rest;
-                })
+              onExtraFile={onProductionFile}
+              itemName={product.name}
+              priceLabel={formatBRL(total)}
+              snapMockup={show3d ? snapMockup : null}
+              details={{ title: artTitle, note: artNote, onTitle: setArtTitle, onNote: setArtNote }}
+              creation={
+                creationPrice !== null
+                  ? {
+                      price: creationPrice,
+                      request: creationRequest,
+                      onRequest: (request) => {
+                        setCreationRequest(request);
+                        if (request) setArtMissing(false);
+                      },
+                    }
+                  : null
               }
               art={art}
               onArt={updateArt}
@@ -927,6 +1008,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             <div className="tabular-nums">
               <p className="text-caption text-muted">Total · {totalLabel}</p>
               <p className="text-2xl font-black">{formatBRL(total)}</p>
+              {creationOn && <p className="text-caption text-muted">inclui a criação da arte · {formatBRL(creationPrice)}</p>}
             </div>
             {/* Em telas estreitas o botão desce para a linha de baixo e ocupa a largura toda. */}
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">

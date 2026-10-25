@@ -18,7 +18,8 @@ import { hasArtContent, type ArtVariant } from "../art";
 import { useSceneMode, type RoomSurface } from "../viewer-hooks";
 import { useGeometriesCleanup } from "./fabric";
 import { inflatedSurface, shapePolygon } from "./inflate";
-import { backVariant, makeShape, useArtTexture, useGeometryCleanup, type MaskPath, type ModelProps } from "./shared";
+import { faceIdOf } from "@/lib/superficies";
+import { backVariant, faceArtOf, makeShape, useArtTexture, useGeometryCleanup, type MaskPath, type ModelProps } from "./shared";
 import { lathe, type Pt } from "./vessel";
 
 /** Deita a peça: o plano XY vira o chão (arte para cima, topo da arte ao fundo). */
@@ -618,10 +619,12 @@ function flipPose(group: THREE.Group, angle: number, phase: number, hop: number,
 /**
  * Vira o corpo da almofada 180° quando o cliente pede o verso ("Ver verso"): uma virada curta com
  * um pulinho; sem animação com reduced motion. `lift` sobe a peça no fim da virada (almofada de
- * corpo: o verso é mais baixo). A arte do verso já vem espelhada no UV para ler certo depois de virar.
+ * corpo: o verso é mais baixo). A arte do verso já vem espelhada no UV para ler certo depois de virar. `flipped` também
+ * vira (o modelo pede: a cama pet com o fundo em edição).
  */
-function FlipGroup({ children, hop = 0, lift = 0, roll = false }: { children: ReactNode; hop?: number; lift?: number; roll?: boolean }) {
-  const { back, motion } = useSceneMode();
+function FlipGroup({ children, hop = 0, lift = 0, roll = false, flipped = false }: { children: ReactNode; hop?: number; lift?: number; roll?: boolean; flipped?: boolean }) {
+  const { back: viewerBack, motion } = useSceneMode();
+  const back = viewerBack || flipped;
   const ref = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
   const anim = useRef({ angle: 0, from: 0, to: 0, t: 1, started: false, mounted: false });
@@ -991,49 +994,121 @@ export function CushionModel(props: ModelProps) {
 /** Espessura da base acolchoada da cama (cm). */
 const BED_BASE = 1.8;
 
+/** Parede da borda da cama retangular (pela normal de fora); a redonda tem uma borda só. */
+type BedWall = "all" | "back" | "left" | "right" | "front";
+
+type RimPart = { wall: BedWall; inner: boolean; geometry: THREE.BufferGeometry; aspect: number };
+
 /**
- * Rolo (bolster) da borda: tubo de seção elíptica ao longo do contorno, mais baixo na frente (entrada),
- * com gomos de matelassê a cada ~15 cm. Grade fechada nas duas direções (sem costura de normal).
+ * Rolo (bolster) da borda: tubo de seção elíptica ao longo do contorno, com gomos do franzido a cada ~15 cm na redonda.
+ * Sai em partes com UV próprio, uma por superfície do gabarito (revisão da Padrão de 25/10/2026: "fundo e tecido ao
+ * redor"): a metade de fora (do chão à crista) e a de dentro (da crista ao assento), inteiras na redonda e por parede na
+ * retangular. A arte fica em pé para quem olha a face: de fora, u corre no sentido anti-horário; de dentro, no horário
+ * (a "metade de cima, invertida" do gabarito redondo vira para dentro e fica em pé). `frontLow`: quanto a parede da
+ * frente (a entrada, "com recorte") é mais baixa que as outras.
  */
-function bolsterGeometry(kind: MockupShape, W: number, H: number, corner: number, rw: number, z0: number, top: number) {
-  const ring = makeShape(kind, W - 2 * rw, H - 2 * rw, Math.max(corner - rw, 1.5)).getSpacedPoints(240);
-  if (ring.length > 3 && ring[0].distanceTo(ring[ring.length - 1]) < 1e-6) ring.pop();
-  const N = ring.length;
-  const M = 28;
-  const arc = new Float64Array(N + 1);
-  for (let i = 1; i <= N; i += 1) arc[i] = arc[i - 1] + ring[i % N].distanceTo(ring[i - 1]);
-  const total = arc[N] || 1;
-  const lobes = Math.max(6, Math.round(total / 15));
-  const positions = new Float32Array((N + 1) * (M + 1) * 3);
-  const uvs = new Float32Array((N + 1) * (M + 1) * 2);
-  for (let i = 0; i <= N; i += 1) {
-    const k = i % N;
-    const prev = ring[(k - 1 + N) % N];
-    const next = ring[(k + 1) % N];
+function bedRim(kind: MockupShape, W: number, H: number, corner: number, rw: number, z0: number, top: number, frontLow: number): RimPart[] {
+  const raw = makeShape(kind, W - 2 * rw, H - 2 * rw, Math.max(corner - rw, 1.5)).getSpacedPoints(240);
+  if (raw.length > 3 && raw[0].distanceTo(raw[raw.length - 1]) < 1e-6) raw.pop();
+  const N = raw.length;
+  const normalOf = (list: THREE.Vector2[], k: number) => {
+    const prev = list[(k - 1 + N) % N];
+    const next = list[(k + 1) % N];
     const tl = Math.hypot(next.x - prev.x, next.y - prev.y) || 1;
     // Contorno anti-horário: a normal externa é a tangente girada -90°.
-    const nx = (next.y - prev.y) / tl;
-    const ny = -(next.x - prev.x) / tl;
-    const dip = 1 - 0.3 * smoothstep(0.35, 1, -ny);
+    return { nx: (next.y - prev.y) / tl, ny: -(next.x - prev.x) / tl };
+  };
+  const wallOf = (nx: number, ny: number): BedWall => {
+    if (kind !== "rect") return "all";
+    if (Math.abs(ny) >= Math.abs(nx)) return ny > 0 ? "back" : "front";
+    return nx > 0 ? "right" : "left";
+  };
+  // Começa numa troca de parede (retangular) ou no meio de trás (redonda: a emenda da faixa fica escondida atrás).
+  const rawWall = raw.map((_, k) => {
+    const { nx, ny } = normalOf(raw, k);
+    return wallOf(nx, ny);
+  });
+  const start =
+    kind === "rect"
+      ? Math.max(0, rawWall.findIndex((w, k) => w !== rawWall[(k - 1 + N) % N]))
+      : raw.reduce((best, p, k) => (p.y > raw[best].y ? k : best), 0);
+  const ring = [...raw.slice(start), ...raw.slice(0, start)];
+  const arc = new Float64Array(N + 1);
+  for (let k = 1; k <= N; k += 1) arc[k] = arc[k - 1] + ring[k % N].distanceTo(ring[k - 1]);
+  const total = arc[N] || 1;
+  const lobes = kind === "rect" ? 0 : Math.max(6, Math.round(total / 15));
+  const points = ring.map((p, k) => {
+    const { nx, ny } = normalOf(ring, k);
+    const dip = 1 - frontLow * smoothstep(0.35, 1, -ny);
     const rh = ((top - z0) / 2) * dip;
-    const zc = z0 + rh;
-    const phase = (arc[i] / total) * lobes;
-    const pinch = 1 - 0.09 * Math.exp(-(((phase - Math.round(phase)) / 0.07) ** 2));
-    for (let j = 0; j <= M; j += 1) {
-      const alpha = (j / M) * Math.PI * 2;
-      const sn = Math.sin(alpha);
-      const out = rw * Math.cos(alpha) * pinch;
-      const up = rh * sn * pinch * (sn < 0 ? 0.9 : 1);
-      const idx = i * (M + 1) + j;
-      positions[idx * 3] = ring[k].x + nx * out;
-      positions[idx * 3 + 1] = ring[k].y + ny * out;
-      positions[idx * 3 + 2] = zc + up;
-      // UV em ladrilhos de 4 cm (para a trama).
-      uvs[idx * 2] = ((j / M) * Math.PI * 2 * rw) / 4;
-      uvs[idx * 2 + 1] = arc[i] / 4;
+    const phase = lobes ? (arc[k] / total) * lobes : 0.5;
+    const pinch = lobes ? 1 - 0.09 * Math.exp(-(((phase - Math.round(phase)) / 0.07) ** 2)) : 1;
+    return { x: p.x, y: p.y, nx, ny, rh, zc: z0 + rh, pinch, wall: wallOf(nx, ny) };
+  });
+
+  // Trechos contínuos da mesma parede; cada um leva o primeiro ponto do seguinte (sem fresta entre as paredes).
+  const runs: { wall: BedWall; ks: number[] }[] = [];
+  if (kind !== "rect") runs.push({ wall: "all", ks: Array.from({ length: N + 1 }, (_, k) => k) });
+  else {
+    for (let k = 0; k < N; k += 1) {
+      const last = runs[runs.length - 1];
+      if (last && last.wall === points[k].wall) last.ks.push(k);
+      else {
+        if (last) last.ks.push(k);
+        runs.push({ wall: points[k].wall, ks: [k] });
+      }
     }
+    runs[runs.length - 1].ks.push(N);
   }
-  return gridGeometry(positions, uvs, M, N, true, true, true);
+
+  const Mh = 14;
+  const closed = kind !== "rect";
+  const build = (ks: number[], inner: boolean) => {
+    const count = ks.length;
+    const positions = new Float32Array(count * (Mh + 1) * 3);
+    const uvs = new Float32Array(count * (Mh + 1) * 2);
+    const a0 = arc[ks[0]];
+    const len = arc[ks[count - 1]] - a0 || 1;
+    ks.forEach((k, i) => {
+      const p = points[k % N];
+      for (let j = 0; j <= Mh; j += 1) {
+        const alpha = (inner ? Math.PI / 2 : -Math.PI / 2) + (j / Mh) * Math.PI;
+        const sn = Math.sin(alpha);
+        const out = rw * Math.cos(alpha) * p.pinch;
+        const up = p.rh * sn * p.pinch * (sn < 0 ? 0.9 : 1);
+        const idx = i * (Mh + 1) + j;
+        positions[idx * 3] = p.x + p.nx * out;
+        positions[idx * 3 + 1] = p.y + p.ny * out;
+        positions[idx * 3 + 2] = p.zc + up;
+        const s = (arc[k] - a0) / len;
+        uvs[idx * 2] = inner ? 1 - s : s;
+        uvs[idx * 2 + 1] = inner ? 1 - j / Mh : j / Mh;
+      }
+    });
+    // Proporção da arte: o comprimento na linha do meio da face ÷ a meia seção (do chão ou do assento até a crista).
+    const at = (i: number, j: number) => new THREE.Vector3().fromArray(positions, (i * (Mh + 1) + j) * 3);
+    let along = 0;
+    for (let i = 1; i < count; i += 1) along += at(i, Mh / 2).distanceTo(at(i - 1, Mh / 2));
+    const mid = Math.floor(count / 2);
+    let across = 0;
+    for (let j = 1; j <= Mh; j += 1) across += at(mid, j).distanceTo(at(mid, j - 1));
+    return { geometry: gridGeometry(positions, uvs, Mh, count - 1, true, false, closed), aspect: along / (across || 1) };
+  };
+  return runs.flatMap(({ wall, ks }) => [false, true].map((inner) => ({ wall, inner, ...build(ks, inner) })));
+}
+
+/** Superfície do gabarito de cada parte da borda (ids de src/lib/superficies.ts: nome da peça + painel na retangular). */
+const BED_WALL_NAMES: Record<Exclude<BedWall, "all">, string> = {
+  back: "Lateral de cima",
+  left: "Lateral esquerda",
+  right: "Lateral direita",
+  front: "Lateral de baixo (com recorte)",
+};
+
+function bedFaceId(part: { wall: BedWall; inner: boolean }) {
+  if (part.wall === "all") return part.inner ? faceIdOf("Lateral (metade de cima, invertida)") : faceIdOf("Lateral (metade de baixo)");
+  const panel = part.inner ? "peça superior (assento e laterais)" : "peça inferior (fundo/base e laterais)";
+  return faceIdOf(`${BED_WALL_NAMES[part.wall]} (${panel})`);
 }
 
 /** Ossinho de pelúcia: haste e quatro bolinhas, deitado no chão. */
@@ -1065,15 +1140,35 @@ function Bone({ position, yaw }: { position: [number, number, number]; yaw: numb
   );
 }
 
-/** Volume da almofada interna da cama pet (cm): frente cheia, verso baixo (fica dentro da base). */
+/** Volume da almofada do assento (cm). */
 const PET_PUFF = 4.4;
-const PET_BACK_PUFF = 0.9;
+
+/** Uma parte da cama: a arte da superfície dela (a textura só existe quando há arte) ou o tecido na cor do fundo. */
+function BedPart({ geometry, aspect, art, label, fill, bump }: { geometry: THREE.BufferGeometry; aspect: number; art: ModelProps["art"] | null; label: string; fill: string; bump?: THREE.Texture }) {
+  if (!art) {
+    return (
+      <mesh geometry={geometry}>
+        <PlainCloth color={fill} bump={bump} sheen={0.8} />
+      </mesh>
+    );
+  }
+  return <BedPrint geometry={geometry} aspect={aspect} art={art} label={label} bump={bump} />;
+}
+
+function BedPrint({ geometry, aspect, art, label, bump }: { geometry: THREE.BufferGeometry; aspect: number; art: ModelProps["art"]; label: string; bump?: THREE.Texture }) {
+  const map = useArtTexture(aspect, "front", art, label);
+  return (
+    <mesh geometry={geometry}>
+      <PrintCloth map={map} bump={bump} sheen={0.8} />
+    </mesh>
+  );
+}
 
 /**
- * Cama pet redonda ou retangular, vista de cima: base acolchoada com costura, almofada interna inflada
- * com a arte (UV na proporção da almofada), rolo de borda em matelassê mais baixo na frente e um
- * ossinho de pelúcia no chão. O tecido liso usa a cor da peça (grafite quando branca). A almofada
- * interna é dupla face: com arte no verso, "Ver verso" a desvira dentro da cama.
+ * Cama pet sublimada inteira (revisão da Padrão de 25/10/2026, fotos do produto): o assento com a arte principal, a borda
+ * com a arte das laterais do gabarito e o fundo com a dele; parte sem arte sai no tecido da cor de fundo da arte. A
+ * redonda é uma rosca de borda franzida e altura igual; a retangular, paredes altas atrás e dos lados e a frente baixa
+ * (a entrada). Com o fundo em edição (ou "Ver verso"), a cama vira de cabeça para baixo. Ossinho de pelúcia no chão.
  */
 export function PetBedModel({ spec, art, label }: ModelProps) {
   const round = spec.shape === "round";
@@ -1083,21 +1178,21 @@ export function PetBedModel({ spec, art, label }: ModelProps) {
   const D = clamp(cm(spec.depthCm, 15), 10, 24);
   const short = Math.min(W, H);
   const s = 2.5 / Math.max(W, H);
-  const rw = clamp(short * 0.095, 4, 9.5);
+  const rw = round ? clamp(short * 0.1, 4, 9.5) : clamp(short * 0.085, 4, 8);
+  const top = round ? D : D * 1.4;
   const corner = round ? 0 : Math.min(short * 0.24, 15);
   const inset = rw * 1.6;
   const cw = Math.max(W - 2 * inset, 10);
   const ch = Math.max(H - 2 * inset, 10);
-  const texture = useArtTexture(cw / ch, "front", art, label);
-  // Verso da almofada interna: a arte do verso (proporção do editor 2D) ou tecido liso.
-  const backArt = useBackArt(art);
-  const backTexture = useArtTexture(artAspect(spec), backArt ? "front" : "blank", backArt ?? art, label);
-  const bolsterWeave = useTile("weave", 1, 1);
+  const { face } = useSceneMode();
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.accentColor ?? (isWhite(spec.baseColor) ? "#3d3e44" : spec.baseColor);
+  const seatTexture = useArtTexture(cw / ch, "front", art, label);
+  const rimWeave = useTile("weave", 30, 5);
   const baseWeave = useTile("weave", W / 4, H / 4);
-  const cushionWeave = useTile("weave", cw / 3, ch / 3);
+  const seatWeave = useTile("weave", cw / 3, ch / 3);
   const parts = useMemo(() => {
     const basePolygon = shapePolygon(makeShape(kind, W, H, corner), 200);
-    const cushionPolygon = shapePolygon(makeShape(kind, cw, ch, Math.max(corner - inset, 3)), 200);
+    const seatPolygon = shapePolygon(makeShape(kind, cw, ch, Math.max(corner - inset, 3)), 200);
     return {
       baseTop: inflatedSide(basePolygon, BED_BASE / 2, 1.6, 0.04, 0.4, 1),
       baseBottom: inflatedSide(basePolygon, BED_BASE / 2, 1.6, 0.02, 1.1, -1),
@@ -1107,41 +1202,36 @@ export function PetBedModel({ spec, art, label }: ModelProps) {
         true,
         8,
       ),
-      cushion: inflatedSide(cushionPolygon, PET_PUFF, Math.min(cw, ch) * 0.3, 0.12, 1.7, 1),
-      cushionBack: inflatedSide(cushionPolygon, PET_BACK_PUFF, Math.min(cw, ch) * 0.3, 0.06, 2.9, -1),
-      bolster: bolsterGeometry(kind, W, H, corner, rw, BED_BASE * 0.8, D),
+      seat: inflatedSide(seatPolygon, PET_PUFF, Math.min(cw, ch) * 0.3, 0.12, 1.7, 1),
+      rim: bedRim(kind, W, H, corner, rw, BED_BASE * 0.8, top, round ? 0 : 0.58),
     };
-  }, [kind, W, H, corner, cw, ch, inset, rw, D]);
-  const list = useMemo(() => [parts.baseTop, parts.baseBottom, parts.seam.geometry, parts.cushion, parts.cushionBack, parts.bolster], [parts]);
+  }, [kind, W, H, corner, cw, ch, inset, rw, top, round]);
+  const list = useMemo(() => [parts.baseTop, parts.baseBottom, parts.seam.geometry, parts.seat, ...parts.rim.map((p) => p.geometry)], [parts]);
   useGeometriesCleanup(list);
-  const fabric = spec.accentColor ?? (isWhite(spec.baseColor) ? "#3d3e44" : spec.baseColor);
-  // Câmera alta o bastante para o rolo da frente (mais baixo) não esconder a base da arte.
+  const bottomArt = faceArtOf(art, "fundo-base");
+  // Câmera alta o bastante para a borda da frente não esconder o assento.
   return (
     <group scale={s} userData={{ view: { elevation: 0.72, azimuth: 0.25 } satisfies View, unitsPerCm: s, roomPose: true }}>
       <group rotation-x={FLAT}>
-        <group position-z={BED_BASE / 2}>
-          <mesh geometry={parts.baseTop}>
-            <PlainCloth color={fabric} bump={baseWeave} />
-          </mesh>
-          <mesh geometry={parts.baseBottom}>
-            <PlainCloth color={tone(fabric, "#000000", 0.18)} />
-          </mesh>
-          <mesh geometry={parts.seam.geometry}>
-            <PlainCloth color={tone(fabric, "#000000", 0.12)} sheen={0.8} />
-          </mesh>
-        </group>
-        <group position-z={BED_BASE * 0.85}>
-          {/* Desvira pulando por cima do rolo; virada, a frente cheia fica embaixo e a almofada sobe. */}
-          <FlipGroup roll lift={PET_PUFF - PET_BACK_PUFF} hop={Math.min(cw, ch) * 0.55}>
-            <mesh geometry={parts.cushion}>
-              <PrintCloth map={texture} bump={cushionWeave} />
+        <FlipGroup roll flipped={face === "fundo-base"} lift={top + BED_BASE} hop={short * 0.2}>
+          <group position-z={BED_BASE / 2}>
+            <mesh geometry={parts.baseTop}>
+              <PlainCloth color={fill} bump={baseWeave} />
             </mesh>
-            <mesh geometry={parts.cushionBack}>{backArt ? <PrintCloth map={backTexture} bump={cushionWeave} /> : <PlainCloth color={fabric} bump={cushionWeave} />}</mesh>
-          </FlipGroup>
-        </group>
-        <mesh geometry={parts.bolster}>
-          <PlainCloth color={fabric} bump={bolsterWeave} sheen={0.8} />
-        </mesh>
+            <BedPart geometry={parts.baseBottom} aspect={W / H} art={bottomArt} label={label} fill={tone(fill, "#000000", 0.12)} bump={baseWeave} />
+            <mesh geometry={parts.seam.geometry}>
+              <PlainCloth color={tone(fill, "#000000", 0.12)} sheen={0.8} />
+            </mesh>
+          </group>
+          <group position-z={BED_BASE * 0.85}>
+            <mesh geometry={parts.seat}>
+              <PrintCloth map={seatTexture} bump={seatWeave} />
+            </mesh>
+          </group>
+          {parts.rim.map((part) => (
+            <BedPart key={`${part.wall}:${part.inner}`} geometry={part.geometry} aspect={part.aspect} art={faceArtOf(art, bedFaceId(part))} label={label} fill={fill} bump={rimWeave} />
+          ))}
+        </FlipGroup>
       </group>
       <Bone position={onTable(W * 0.44, -H * 0.62)} yaw={0.55} />
     </group>

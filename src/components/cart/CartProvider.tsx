@@ -51,6 +51,10 @@ export type CartItem = {
   acabamentosPreco?: number;
   /** Aceite dos termos de envio de arte dado na página do produto (sem ele, o checkout pede). */
   termosArte?: AceiteTermos | null;
+  /** Criação de arte pela equipe da Padrão; o preço é recalculado pelo catálogo (no carrinho e no servidor). */
+  criacaoArte?: boolean;
+  /** Preço da criação ao adicionar: só vale enquanto o preço do cliente não chega. */
+  criacaoPreco?: number;
 };
 
 export type CartArtFile = { id: string; name: string; kind: Exclude<ArtFileKind, "pdf">; /** Tipo de anexo do complementar ("Faca de Corte"…). */ tipo?: string };
@@ -236,6 +240,7 @@ export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderIt
     files: uploadedFilesOf(item),
     ...(item.acabamentos?.length ? { acabamentos: item.acabamentos } : {}),
     ...(item.termosArte ? { termosArte: item.termosArte } : {}),
+    ...(item.criacaoArte ? { criacaoArte: true } : {}),
   };
 }
 
@@ -343,7 +348,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const lines = useMemo<CartLine[]>(
     () =>
       items.map((item) => {
-        const saved: CartLine = { item, unitPrice: item.unitPrice, total: round2(item.unitPrice * item.quantity + (item.acabamentosPreco ?? 0)), reseller: false, pending: false };
+        const saved: CartLine = { item, unitPrice: item.unitPrice, total: round2(item.unitPrice * item.quantity + (item.acabamentosPreco ?? 0) + (item.criacaoArte ? (item.criacaoPreco ?? 0) : 0)), reseller: false, pending: false };
         if (!needsPrice(item)) return saved;
         const entry = priceOf(item.groupId as number);
         if (!entry) return { ...saved, pending: true };
@@ -355,6 +360,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           neon: entry.data.neon,
           reseller: entry.data.reseller,
           acabamentos: entry.data.acabamentos ?? null,
+          criacao: entry.data.criacao ?? null,
         });
         if (isLineError(priced)) return saved;
         return { item, unitPrice: priced.unitPrice, total: priced.total, reseller: priced.reseller, pending: false };

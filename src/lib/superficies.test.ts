@@ -59,6 +59,22 @@ test("short (24): 4 partes, lado direito e esquerdo × frente e verso", () => {
   assert.equal(new Set(ids).size, 4);
 });
 
+test("camisa sublimada (461): frente, costas e as duas mangas; sem manga, as mangas saem", () => {
+  const pages = pagesOf("461");
+  const labels = { frontLabel: "Frente", backLabel: "Costas" };
+  assert.deepEqual(superficiesDe({ pages, verso: true, ...labels }).map((s) => s.id), ["front", "back", "manga-direita", "manga-esquerda"]);
+  assert.deepEqual(superficiesDe({ pages, verso: true, semManga: true, ...labels }).map((s) => s.id), ["front", "back"]);
+});
+
+test("cama pet (168): assento, fundo e as laterais do gabarito, sem um verso à parte", () => {
+  assert.equal(temVerso({ kind: "petbed", name: "cama pet", selection: {}, anexos: [] }), false);
+  const round = superficiesDe({ pages: pagesOf("168", { Formato: "Redonda (64x64 cm)" }), verso: false });
+  assert.deepEqual(round.map((s) => s.id), ["front", "lateral-metade-de-cima-invertida", "lateral-metade-de-baixo", "fundo-base"]);
+  const rect = superficiesDe({ pages: pagesOf("168", { Formato: "Retangular (65x55 cm)" }), verso: false });
+  assert.equal(rect.length, 10, "assento, fundo e as 4 laterais por dentro e por fora");
+  assert.ok(rect.some((s) => s.id === "fundo-base"));
+});
+
 test("caixa acrílica (123): frontal, traseira e as outras peças do gabarito", () => {
   const list = superficiesDe({ pages: pagesOf("123"), verso: true, frontLabel: "Lateral frontal", backLabel: "Lateral traseira" });
   assert.deepEqual(list.map((s) => s.label), ["Lateral frontal", "Lateral traseira", "Lateral esquerda", "Fundo da caixa", "Lateral direita"]);

@@ -10,10 +10,12 @@ const TURN_SECONDS = 0.7;
 
 /**
  * Grupo que gira 180° no eixo vertical quando o viewer pede o verso (useSceneMode().back): um giro curto
- * com easing; sem animação com reduced motion. `base` é a leve rotação de 3/4 da vitrine.
+ * com easing; sem animação com reduced motion. `base` é a leve rotação de 3/4 da vitrine. `turned` também
+ * mostra as costas (o modelo pede, por exemplo quando a superfície em edição fica atrás).
  */
-export function TurnGroup({ base, scale, children }: { base: number; scale: number; children: ReactNode }) {
-  const { back, motion } = useSceneMode();
+export function TurnGroup({ base, scale, turned = false, children }: { base: number; scale: number; turned?: boolean; children: ReactNode }) {
+  const { back: viewerBack, motion } = useSceneMode();
+  const back = viewerBack || turned;
   const ref = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
   const anim = useRef({ angle: base, from: base, to: base, t: 1, mounted: false });

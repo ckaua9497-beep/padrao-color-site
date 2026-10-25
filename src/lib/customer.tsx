@@ -133,6 +133,8 @@ export type GroupPrices = {
   variations: Variation[];
   /** Acabamentos extras do produto (preço do catálogo): o carrinho soma os escolhidos. */
   acabamentos?: LinePrices["acabamentos"];
+  /** Preço da criação de arte por variação (catálogo): o carrinho soma no item que pediu. */
+  criacao?: LinePrices["criacao"];
 };
 
 export type PriceEntry = { status: "ready"; data: GroupPrices } | { status: "error"; at: number };
@@ -160,6 +162,13 @@ function parseFinishes(raw: unknown): LinePrices["acabamentos"] {
   return tabela.length === d.tabela.length ? { tabela, porVariacao: d.porVariacao as Record<string, number[]> } : null;
 }
 
+/** Criação de arte da resposta do /api/precos: ID da variação → preço (só números positivos). */
+function parseCreation(raw: unknown): LinePrices["criacao"] {
+  if (typeof raw !== "object" || raw === null) return null;
+  const entries = Object.entries(raw as Record<string, unknown>).filter((entry): entry is [string, number] => typeof entry[1] === "number" && entry[1] > 0);
+  return entries.length ? Object.fromEntries(entries) : null;
+}
+
 function parsePrices(data: unknown): (GroupPrices & { customerId: number | null }) | null {
   const d = (data ?? {}) as Record<string, unknown>;
   if (typeof d.groupId !== "number" || !Array.isArray(d.variations)) return null;
@@ -170,9 +179,11 @@ function parsePrices(data: unknown): (GroupPrices & { customerId: number | null 
     groupId: d.groupId,
     category: typeof d.category === "string" ? d.category : "",
     customSize: typeof d.customSize === "object" && d.customSize !== null ? (d.customSize as CustomSize) : null,
+    neon: d.neon === "frase" || d.neon === "logo" ? d.neon : null,
     reseller: d.reseller === true,
     variations,
     acabamentos: parseFinishes(d.acabamentos),
+    criacao: parseCreation(d.criacao),
     customerId: typeof d.customerId === "number" ? d.customerId : null,
   };
 }
