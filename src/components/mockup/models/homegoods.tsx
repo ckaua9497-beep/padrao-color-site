@@ -1261,179 +1261,75 @@ function DishTowel({ spec, art, label }: ModelProps) {
   );
 }
 
-const FINIAL: Pt[] = [
-  [0, 0],
-  [1, 0],
-  [1.45, 0.35],
-  [1.6, 1.1],
-  [1.35, 1.9],
-  [0.7, 2.5],
-  [0, 2.62],
-];
-
-/** Bastão de madeira com ponteiras torneadas, ou varão preto de metal com bolas nas pontas. */
-function HangingRod({ length, metal }: { length: number; metal: boolean }) {
-  const finial = useMemo(() => lathe(FINIAL, 32), []);
-  useGeometryCleanup(finial);
-  const radius = metal ? 0.9 : 1.1;
-  const material = metal ? <meshStandardMaterial color="#1d1d20" metalness={0.85} roughness={0.38} /> : <meshPhysicalMaterial color="#b88a5a" roughness={0.5} clearcoat={0.25} clearcoatRoughness={0.4} />;
-  return (
-    <group>
-      <mesh rotation-z={Math.PI / 2}>
-        <cylinderGeometry args={[radius, radius, length, 32]} />
-        {material}
-      </mesh>
-      {[-1, 1].map((sign) =>
-        metal ? (
-          <mesh key={sign} position-x={sign * (length / 2 + 1.2)}>
-            <sphereGeometry args={[1.5, 24, 16]} />
-            {material}
-          </mesh>
-        ) : (
-          <mesh key={sign} geometry={finial} position-x={(sign * length) / 2} rotation-z={-sign * (Math.PI / 2)}>
-            {material}
-          </mesh>
-        ),
-      )}
-    </group>
-  );
-}
-
-/** Cordão de pendurar: duas pernas retas das pontas do bastão até um prego invisível. */
-function cordPoints(halfSpan: number, apex: number) {
-  const top = new THREE.Vector3(0, apex, -0.4);
-  const left = new THREE.Vector3(-halfSpan, 0, 0);
-  const right = new THREE.Vector3(halfSpan, 0, 0);
-  const points: THREE.Vector3[] = [];
-  for (let i = 0; i <= 10; i += 1) points.push(left.clone().lerp(top, (i / 10) * 0.92));
-  points.push(new THREE.Vector3(0, apex + 0.15, -0.4));
-  for (let i = 10; i >= 0; i -= 1) points.push(right.clone().lerp(top, (i / 10) * 0.92));
-  return points;
-}
-
-/** Tecido sublimado (sem acabamento): painel solto pendurado num bastão por uma alça costurada atrás. */
-function RodFabric({ spec, art, label }: ModelProps) {
-  const W = cm(spec.widthCm, 50);
-  const H = cm(spec.heightCm, 70);
-  const R = 1.1 + 0.3;
-  const B = 5;
-  const texture = useArtTexture(W / H, "front", art, label);
-  const weave = useTile("weave", W / 2.5, H / 2.5);
-  const sleeveWeave = useTile("weave", W / 2.5, (Math.PI * R + B) / 2.5);
-  const parts = useMemo(() => {
-    const fn = hangOverBar(H, R, B, 0.6, 0.5);
-    const total = H + Math.PI * R + B;
-    return {
-      face: sheetGeometry(fn, [-W / 2, W / 2, 0, H], 50, 110),
-      sleeve: sheetGeometry(fn, [-W / 2, W / 2, H, total], 50, 16),
-      edge: tubeAlong(edgeLoop(fn, [-W / 2, W / 2, 0, total], 0.8), 0.07, true, 4),
-      cord: tubeAlong(cordPoints(W / 2 + 2, 15), 0.22, false, 6),
-    };
-  }, [W, H, R]);
-  const list = useMemo(() => [parts.face, parts.sleeve, parts.edge.geometry, parts.cord.geometry], [parts]);
-  useGeometriesCleanup(list);
-  const fabric = clothColor(spec.baseColor);
-  const s = 2.5 / Math.max(W + 14, H + 18);
-  return (
-    <group scale={s} rotation-y={0.18}>
-      <HangingRod length={W + 8} metal={false} />
-      <mesh geometry={parts.cord.geometry}>
-        <meshStandardMaterial color="#cdb48a" roughness={0.95} />
-      </mesh>
-      <mesh geometry={parts.face}>
-        <PrintCloth map={texture} bump={weave} />
-      </mesh>
-      <mesh geometry={parts.face}>
-        <PlainCloth color={tone(fabric, "#000000", 0.05)} bump={weave} side={THREE.BackSide} />
-      </mesh>
-      <mesh geometry={parts.sleeve}>
-        <PlainCloth color={fabric} bump={sleeveWeave} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh geometry={parts.edge.geometry}>
-        <PlainCloth color={fabric} />
-      </mesh>
-    </group>
-  );
-}
-
 /**
- * Painel com bainha e ilhós pendurado por argolas num varão: a borda de cima cede entre as argolas
- * e forma uma dobra suave à frente.
+ * Tecido solto estendido (sublimação e UV em tecido): o painel sem bastão nem cordão, como a peça é entregue (revisão
+ * da Padrão de 25/10/2026). Ondas largas de quem acabou de abrir o tecido, um vinco suave e o canto de baixo à direita
+ * erguido, mostrando o avesso.
  */
-function grommetHang(W: number, H: number, x0: number, spacing: number, gap: number): SheetFn {
+function looseSurface(W: number, H: number): SheetFn {
+  const L = Math.max(W, H);
+  const a = clamp(L / 32, 1, 6);
   return (u, v, out) => {
-    const d = H - v;
-    const k = Math.max(d, 0) / H;
-    const wave = Math.sin((Math.PI * (u - x0)) / spacing);
-    const near = Math.exp(-Math.max(d, 0) / 9);
-    const sag = 1.1 * wave * wave * near;
-    const bulge = 0.55 * wave * wave * Math.exp(-Math.max(d, 0) / 14);
-    const fold = 0.6 * Math.pow(k, 1.4) * (0.6 * Math.sin(u * 0.42 + 0.9) + 0.4 * Math.sin(u * 0.9 + 2.4));
-    return out.set(u, -gap - d - sag, bulge + fold);
+    // Ondas largas e cruzadas: o tecido não assenta reto.
+    const wave = a * (0.42 * Math.sin((u / L) * 6.5 + 0.6) * Math.sin((v / L) * 4.8 + 1.1) + 0.2 * Math.sin(((u + 0.6 * v) / L) * 11 + 0.4));
+    const crease = a * 0.75 * Math.exp(-(((u - W * 0.14 + 0.25 * v) / (L * 0.04)) ** 2)) * (0.6 + 0.4 * Math.sin((v / L) * 5));
+    // Canto de baixo à direita virado. Sem erguer as bordas: o ponto mais baixo tem de ficar na borda, porque o 3D
+    // assenta a peça no chão por ele e, num vale no meio, a sombra do chão atravessaria o tecido.
+    const corner = smoothstep(0.6, 1, u / W - v / H);
+    return out.set(u, v, 0.12 + a * 0.45 + wave + crease + L * 0.07 * corner * corner);
   };
 }
 
-/** Tecido com bainha e ilhós (opção de acabamento): argolas no varão, pesponto e ilhós nos cantos. */
-function GrommetFabric({ spec, art, label }: ModelProps) {
+/** Tecido solto; com bainha e ilhós (opção de acabamento), a bainha com pesponto e os ilhoses na borda de cima e nos cantos de baixo. */
+function LooseFabric({ spec, art, label }: ModelProps) {
   const W = cm(spec.widthCm, 50);
   const H = cm(spec.heightCm, 70);
-  const gap = 2;
+  const finished = spec.grommets;
   const texture = useArtTexture(W / H, "front", art, label);
   const weave = useTile("weave", W / 2.5, H / 2.5);
   const parts = useMemo(() => {
+    const fn = looseSurface(W, H);
+    const range: Range = [-W / 2, W / 2, -H / 2, H / 2];
+    const sheet = sheetGeometry(fn, range, 90, Math.round(clamp((90 * H) / W, 40, 140)));
+    const edge = tubeAlong(edgeLoop(fn, [-W / 2 + 0.1, W / 2 - 0.1, -H / 2 + 0.1, H / 2 - 0.1], 0.8), finished ? 0.24 : 0.06, true, finished ? 6 : 4);
+    planarUv(edge.geometry, W, H);
+    const stitch = finished ? tubeAlong(edgeLoop(fn, [-W / 2 + 2.6, W / 2 - 2.6, -H / 2 + 2.6, H / 2 - 2.6], 0.6, 0.05), 0.055, true, 4) : null;
+    // Ilhoses a cada ~17 cm na borda de cima e nos dois cantos de baixo (como a peça vem para pendurar).
     const count = Math.max(3, Math.round(W / 17) + 1);
     const x0 = -W / 2 + 2.4;
     const spacing = Math.max((W - 4.8) / (count - 1), 1);
-    const fn = grommetHang(W, H, x0, spacing, gap);
-    const top = Array.from({ length: count }, (_, i) => x0 + i * spacing);
-    const holes: [number, number][] = [...top.map((x): [number, number] => [x, H - 1.7]), [x0, 1.7], [x0 + (count - 1) * spacing, 1.7]];
+    const holes: [number, number][] = finished ? [...Array.from({ length: count }, (_, i): [number, number] => [x0 + i * spacing, H / 2 - 1.7]), [x0, -H / 2 + 1.7], [x0 + (count - 1) * spacing, -H / 2 + 1.7]] : [];
     const z = new THREE.Vector3(0, 0, 1);
     const grommets = holes.map(([u, v]) => {
       const position = fn(u, v, new THREE.Vector3());
       const normal = sheetNormal(fn, u, v, 1e-2, new THREE.Vector3());
       return { id: `${u.toFixed(1)}:${v.toFixed(1)}`, position, quaternion: new THREE.Quaternion().setFromUnitVectors(z, normal) };
     });
-    // Argola vertical (plano YZ) que passa por cima do varão e pelo furo do ilhós.
-    const holeY = -gap - 1.7;
-    const ringR = (0.9 + 0.2 - holeY) / 2;
-    return {
-      face: sheetGeometry(fn, [-W / 2, W / 2, 0, H], 60, 110),
-      hem: tubeAlong(edgeLoop(fn, [-W / 2 + 0.2, W / 2 - 0.2, 0.2, H - 0.2], 0.8), 0.24, true, 6),
-      stitch: tubeAlong(edgeLoop(fn, [-W / 2 + 2.6, W / 2 - 2.6, 2.6, H - 3.2], 0.6, 0.05), 0.055, true, 4),
-      grommet: new THREE.TorusGeometry(0.72, 0.26, 10, 28),
-      ring: new THREE.TorusGeometry(ringR, 0.16, 8, 40),
-      ringY: (0.9 + 0.2 + holeY) / 2,
-      grommets,
-      top,
-    };
-  }, [W, H]);
-  const list = useMemo(() => [parts.face, parts.hem.geometry, parts.stitch.geometry, parts.grommet, parts.ring], [parts]);
+    return { sheet, edge, stitch, grommets, grommet: new THREE.TorusGeometry(0.72, 0.26, 10, 28) };
+  }, [W, H, finished]);
+  const list = useMemo(() => [parts.sheet, parts.edge.geometry, parts.grommet, ...(parts.stitch ? [parts.stitch.geometry] : [])], [parts]);
   useGeometriesCleanup(list);
   const fabric = clothColor(spec.baseColor);
-  const s = 2.5 / Math.max(W + 14, H + 8);
+  const s = 2.6 / Math.max(W, H);
   return (
-    <group scale={s} rotation-y={0.18}>
-      <HangingRod length={W + 10} metal />
-      {parts.top.map((x) => (
-        <mesh key={x.toFixed(2)} geometry={parts.ring} position={[x, parts.ringY, 0]} rotation-y={Math.PI / 2}>
-          <Steel color="#c9ccd1" />
+    <group scale={s} rotation-y={0.12} userData={{ view: { elevation: 0.8, azimuth: 0.16 } satisfies View }}>
+      <group rotation-x={FLAT}>
+        <mesh geometry={parts.sheet}>
+          <PrintCloth map={texture} bump={weave} />
         </mesh>
-      ))}
-      <mesh geometry={parts.face}>
-        <PrintCloth map={texture} bump={weave} />
-      </mesh>
-      <mesh geometry={parts.face}>
-        <PlainCloth color={tone(fabric, "#000000", 0.05)} bump={weave} side={THREE.BackSide} />
-      </mesh>
-      <mesh geometry={parts.hem.geometry}>
-        <PlainCloth color={tone(fabric, "#000000", 0.03)} />
-      </mesh>
-      <Stitches tube={parts.stitch} color={tone(fabric, "#000000", 0.3)} />
-      {parts.grommets.map((g) => (
-        <mesh key={g.id} geometry={parts.grommet} position={g.position} quaternion={g.quaternion}>
-          <Steel color="#c9ccd1" roughness={0.3} />
+        <mesh geometry={parts.sheet}>
+          <PlainCloth color={tone(fabric, "#000000", 0.05)} bump={weave} side={THREE.BackSide} />
         </mesh>
-      ))}
+        <mesh geometry={parts.edge.geometry}>
+          {finished ? <PlainCloth color={tone(fabric, "#000000", 0.03)} /> : <PrintCloth map={texture} />}
+        </mesh>
+        {parts.stitch && <Stitches tube={parts.stitch} color={tone(fabric, "#000000", 0.3)} />}
+        {parts.grommets.map((g) => (
+          <mesh key={g.id} geometry={parts.grommet} position={g.position} quaternion={g.quaternion}>
+            <Steel color="#c9ccd1" roughness={0.3} />
+          </mesh>
+        ))}
+      </group>
     </group>
   );
 }
@@ -1825,13 +1721,13 @@ function NapkinSet({ spec, art, label }: ModelProps) {
  * Tecidos. {napkin} kit de guardanapos: um aberto na mesa com vincos e bainha estampada, outro
  * dobrado sobre o prato, com garfo e faca; {dishcloth} pano de prato dobrado no puxador de inox do
  * forno, estampa localizada, bainha e pesponto; {barber-cape} capa de corte em cetim vestida num busto
- * de costura, gola com pressão; padrão (sublimação / UV em tecido) painel pendurado num bastão de
- * madeira com cordão, ou, com bainha e ilhós, preso por argolas num varão preto.
+ * de costura, gola com pressão; padrão (sublimação / UV em tecido) o tecido solto estendido, sem bastão nem
+ * cordão, com bainha e ilhós quando a opção pede.
  */
 export function ClothModel(props: ModelProps) {
   const { spec } = props;
   if (spec.variant === "napkin") return <NapkinSet {...props} />;
   if (spec.variant === "dishcloth") return <DishTowel {...props} />;
   if (spec.variant === "barber-cape") return <BarberCape {...props} />;
-  return spec.grommets ? <GrommetFabric {...props} /> : <RodFabric {...props} />;
+  return <LooseFabric {...props} />;
 }

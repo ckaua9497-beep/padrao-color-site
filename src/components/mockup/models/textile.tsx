@@ -2290,8 +2290,6 @@ function sheetGeometry(nx: number, ny: number, vertex: (u: number, v: number) =>
 
 /** Unidades de cena por centímetro: bandana 60 × 60 cm estendida. */
 const BANDANA_UNIT = 2.6 / 60;
-/** Bandana pet (30 × 30 cm dobrada em triângulo) amarrada num pescoço invisível. */
-const PET_UNIT = 2.2 / 32;
 
 function buildFlatBandana(W: number, H: number) {
   const t = 0.06;
@@ -2355,100 +2353,6 @@ function buildFlatBandana(W: number, H: number) {
   return { front, back, hem, stitches, list: [front, back, hem, stitches] };
 }
 
-function buildPetBandana(S: number, aspect: number) {
-  const Wt = S * Math.SQRT2;
-  const Ht = Wt / 2;
-  const Rn = 7;
-  // Cone desenvolvível: a cada cm descendo pela face, o raio cresce 0,34 cm e a altura cai 0,94 cm.
-  const flare = 0.34;
-  const tri = [new THREE.Vector2(-Wt / 2, 0), new THREE.Vector2(0, -Ht), new THREE.Vector2(Wt / 2, 0)];
-  const polygon: THREE.Vector2[] = [];
-  for (let k = 0; k < 3; k += 1) {
-    const p = tri[k];
-    const q = tri[(k + 1) % 3];
-    const steps = k === 2 ? 40 : 30;
-    for (let i = 0; i < steps; i += 1) polygon.push(new THREE.Vector2(lerp(p.x, q.x, i / steps), lerp(p.y, q.y, i / steps)));
-  }
-  // Cone invisível: a borda de cima abraça o pescoço e a ponta cai sobre o peito.
-  const wrap = (x: number, y: number, lift: number) => {
-    const R = Rn + flare * -y + lift;
-    const ang = x / (Rn + flare * -y);
-    const sway = 0.25 * Math.sin(x * 0.45 - y * 0.3) * (-y / Ht);
-    return new THREE.Vector3(R * Math.sin(ang), y * 0.94, R * Math.cos(ang) + sway);
-  };
-  const layer = (side: 1 | -1) => {
-    const g = inflatedSurface(polygon, { height: 1, falloff: 0.5, resolution: 90, side });
-    const pos = g.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < pos.count; i += 1) {
-      const p = wrap(pos.getX(i), pos.getY(i), 0.12 * pos.getZ(i));
-      pos.setXYZ(i, p.x, p.y, p.z);
-    }
-    pos.needsUpdate = true;
-    g.computeVertexNormals();
-    return g;
-  };
-  const front = layer(1);
-  const back = layer(-1);
-  // Área da estampa: retângulo na proporção da arte, centrado na parte do triângulo que fica de frente
-  // (abaixo da faixa do pescoço). Cabe inteiro no triângulo: meia largura ≤ Wt/2 + y no pé da arte.
-  const top = -1.4;
-  const artSide = Math.max(4, Math.min(Ht * 0.62, (Ht - 1.6) / 1.5));
-  const pw = aspect >= 1 ? artSide : artSide * aspect;
-  const ph = aspect >= 1 ? artSide / aspect : artSide;
-  const rect = [new THREE.Vector2(-pw / 2, top - ph), new THREE.Vector2(pw / 2, top - ph), new THREE.Vector2(pw / 2, top), new THREE.Vector2(-pw / 2, top)];
-  const print = inflatedSurface(rect, { height: 1, falloff: 0.3, resolution: 56, side: 1 });
-  {
-    const pos = print.attributes.position as THREE.BufferAttribute;
-    const uv = print.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < pos.count; i += 1) {
-      const x = pos.getX(i);
-      const y = pos.getY(i);
-      // Um fio acima do tecido (a frente sobe 0,12 no miolo): sem brigar no depth.
-      const p = wrap(x, y, 0.16);
-      pos.setXYZ(i, p.x, p.y, p.z);
-      uv.setXY(i, (x + pw / 2) / pw, (y - (top - ph)) / ph);
-    }
-    pos.needsUpdate = true;
-    uv.needsUpdate = true;
-    print.computeVertexNormals();
-  }
-  // Bainha nas duas bordas inclinadas e faixa enrolada em volta do pescoço.
-  const slant = (sgn: number, lift: number, inset = 0) =>
-    Array.from({ length: 40 }, (_, k) => {
-      const y = lerp(-inset * 0.5, -Ht + inset * 1.4, k / 39);
-      const x = sgn * (Wt / 2 + y) - sgn * inset;
-      return wrap(x, y, lift);
-    });
-  const hems = [1, -1].map((sgn) => openTubeGeometry(slant(sgn, 0), 0.16, 6));
-  const stitches = mergeSimple([1, -1].map((sgn) => stitchGeometry(slant(sgn, 0.16, 0.7), 0.3, 0.2, 0.03)));
-  const band = sweepGeometry(
-    Array.from({ length: 72 }, (_, k) => {
-      const a = (k / 72) * Math.PI * 2;
-      return new THREE.Vector3((Rn + 0.35) * Math.sin(a), 0.9 + 0.35 * Math.cos(a * 2), (Rn + 0.35) * Math.cos(a));
-    }),
-    true,
-    () => roundedProfile(2.6, 1.0),
-    new THREE.Vector3(0, 1, 0),
-    (p) => new THREE.Vector3(p.x, 0, p.z),
-  );
-  // Nó atrás do pescoço e as duas pontas soltas.
-  const knot = new THREE.SphereGeometry(1, 20, 14);
-  knot.scale(2.3, 1.9, 1.5);
-  knot.translate(0, 0.6, -(Rn + 1.3));
-  const out = (p: THREE.Vector3) => new THREE.Vector3(p.x, 0, p.z).normalize();
-  const tails = [1, -1].map((sgn) =>
-    tapeGeometry(
-      [new THREE.Vector3(sgn * 1.2, 0.3, -(Rn + 1.8)), new THREE.Vector3(sgn * 3.6, -2.6, -(Rn + 3.2)), new THREE.Vector3(sgn * 5.4, -6.4, -(Rn + 3.6)), new THREE.Vector3(sgn * 6.4, -9, -(Rn + 3))],
-      3.2,
-      0.3,
-      out,
-      32,
-    ),
-  );
-  const extras = mergeSimple([knot, ...tails]);
-  return { front, back, print, hems, stitches, band, extras, list: [front, back, print, ...hems, stitches, band, extras] };
-}
-
 function SublimatedLayers({ front, back, map, base }: { front: THREE.BufferGeometry; back: THREE.BufferGeometry; map: THREE.Texture; base: string }) {
   return (
     <>
@@ -2466,47 +2370,6 @@ function SublimatedLayers({ front, back, map, base }: { front: THREE.BufferGeome
         <meshStandardMaterial map={map} transparent opacity={0.38} depthWrite={false} roughness={0.8} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
     </>
-  );
-}
-
-function PetBandana({ spec, art, label }: ModelProps) {
-  const printArt = useApparelArt(art);
-  const w = measure(spec.widthCm, 30);
-  const h = measure(spec.heightCm, 30);
-  const S = clamp(Math.max(w, h), 15, 80);
-  // Mesma proporção do editor (a arte do quadrado inteiro), arredondada para não refazer a malha à toa.
-  const aspect = Math.round(clamp(w / h, 0.5, 2) * 100) / 100;
-  const texture = useArtTexture(aspect, "front", printArt, label);
-  const parts = useMemo(() => buildPetBandana(S, aspect), [S, aspect]);
-  useGeometriesCleanup(parts.list);
-  const base = spec.baseColor;
-  return (
-    <group rotation-y={0.14} scale={(PET_UNIT * 30) / S}>
-      <mesh geometry={parts.front}>
-        <meshPhysicalMaterial color={base} roughness={0.7} sheen={0.6} sheenRoughness={0.45} sheenColor="#ffffff" />
-      </mesh>
-      <mesh geometry={parts.back}>
-        <meshPhysicalMaterial color={shade(base, 0.9)} roughness={0.75} sheen={0.6} sheenRoughness={0.45} sheenColor="#ffffff" />
-      </mesh>
-      {/* Estampa sublimada na face que fica de frente, sem esticar (UV na proporção da arte). */}
-      <mesh geometry={parts.print}>
-        <meshPhysicalMaterial map={texture} transparent alphaTest={0.02} roughness={0.66} sheen={0.5} sheenRoughness={0.45} sheenColor="#ffffff" polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-      </mesh>
-      {parts.hems.map((g, i) => (
-        <mesh key={i} geometry={g}>
-          <ClothMaterial cloth="dryfit" color={shade(base, 0.96)} />
-        </mesh>
-      ))}
-      <mesh geometry={parts.stitches}>
-        <meshStandardMaterial color={threadOf(base)} roughness={0.85} />
-      </mesh>
-      <mesh geometry={parts.band}>
-        <ClothMaterial cloth="dryfit" color={shade(base, 0.95)} />
-      </mesh>
-      <mesh geometry={parts.extras}>
-        <ClothMaterial cloth="dryfit" color={shade(base, 0.93)} />
-      </mesh>
-    </group>
   );
 }
 
@@ -2533,15 +2396,11 @@ function FlatBandana({ spec, art, label }: ModelProps) {
 }
 
 /**
- * Bandana sublimada de ponta a ponta (arte pelo UV, sem distorcer). Comum: lenço 60 × 60 cm estendido
- * no chão com ondulações leves, bainha enrolada com pesponto e um canto dobrado mostrando o avesso
- * com a estampa clara e espelhada (câmera mais alta). {pet}: triângulo dobrado amarrado num pescoço
- * invisível (cone), com faixa enrolada, nó e pontas nas costas; a arte (na proporção do editor) fica
- * centrada na parte do triângulo voltada para a câmera, sem dar a volta no pescoço.
+ * Bandana sublimada de ponta a ponta (arte pelo UV, sem distorcer): o lenço estendido no chão com ondulações leves,
+ * bainha enrolada com pesponto e um canto dobrado mostrando o avesso com a estampa clara e espelhada (câmera mais
+ * alta). A bandana pet (30 × 30 cm) usa o mesmo modelo, na medida dela: a arte bate com o gabarito, que é o quadrado
+ * inteiro (revisão da Padrão de 25/10/2026; o triângulo amarrado num pescoço mostrava só parte da arte).
  */
 export function BandanaModel(props: ModelProps) {
-  // Sem subtipo na spec, a bandana pet é reconhecida pelo tamanho (30 × 30 cm contra 60 × 60 cm).
-  const { variant, widthCm, heightCm } = props.spec;
-  const pet = variant === "pet" || Math.max(measure(widthCm, 60), measure(heightCm, 60)) <= 40;
-  return pet ? <PetBandana {...props} /> : <FlatBandana {...props} />;
+  return <FlatBandana {...props} />;
 }

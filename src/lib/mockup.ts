@@ -629,7 +629,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     back,
     baseColor,
     innerColor,
-    accentColor,
+    accentColor: override?.accentColor ?? accentColor,
     metal,
     glass,
     glitter,

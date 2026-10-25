@@ -2,12 +2,15 @@ import type { Metadata } from "next";
 import ListingBanner from "@/components/listing/ListingBanner";
 import TemplateList, { type TemplateItem } from "@/components/listing/TemplateList";
 import { IconCube, IconLayers, IconUpload } from "@/components/icons";
-import { getTemplateProducts } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { spectrumAt } from "@/lib/format";
 import { produtosComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 import { describePanel, formatMm, panelFor, type Mm, type TemplatePanel } from "@/lib/templates";
 import { productTemplate } from "@/lib/templates-data";
+
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
 
 export const metadata: Metadata = {
   title: "Gabaritos",
@@ -77,7 +80,7 @@ function templateFacts(productId: string): string | null {
 }
 
 export default async function TemplatesPage() {
-  const products = produtosComMidia(getTemplateProducts(), await midiaDoSite());
+  const products = produtosComMidia((await catalogoVivo()).getTemplateProducts(), await midiaDoSite());
   const items: TemplateItem[] = products.map((p) => ({
     id: p.id,
     slug: p.slug,

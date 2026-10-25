@@ -832,9 +832,10 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
   const H = beach ? cm(spec.heightCm, 32, 18, 60) : cm(spec.heightCm, 40, 12, 70);
   const D = beach ? clamp(W * 0.3, 9, 18) : clamp(cm(spec.depthCm, 10, 2, 20) * 0.7, 3, W * 0.3);
   const fillet = Math.min(1.4, D * 0.3);
-  const y0 = fillet + H * 0.07;
-  const y1 = Math.max(y0 + 2, beach ? H - 7.2 : H - 3.4);
-  const pw = (beach ? 0.76 : 0.8) * W;
+  // Sacola sublimada: a arte vai de borda a borda na frente, até logo abaixo da bainha (fotos das ecobags e bolsas de alça).
+  const y0 = beach ? fillet + H * 0.07 : fillet * 0.5 + 0.3;
+  const y1 = Math.max(y0 + 2, beach ? H - 7.2 : H - 2.5);
+  const pw = (beach ? 0.76 : 0.97) * W;
   const drop = beach ? clamp(H * 0.45, 10, 22) : clamp(H * 0.62, 14, 32);
   const profile = useMemo(() => toteProfile(W, H, D, beach), [W, H, D, beach]);
   const ph = useMemo(() => centerArc(profile, y0, y1), [profile, y0, y1]);
@@ -1052,7 +1053,8 @@ function PaperGiftBag({ spec, art, label }: ModelProps) {
   useGeometriesCleanup(parts.all);
 
   const paper = spec.baseColor.toLowerCase() === "#ffffff" ? "#f7f6f2" : spec.baseColor;
-  const cord = spec.accentColor ?? (luma(paper) > 0.3 ? "#1d1d20" : "#ece6d8");
+  // Corda branca, como na foto do produto (revisão da Padrão de 25/10/2026).
+  const cord = spec.accentColor ?? "#f1eee6";
   const scale = TARGET / Math.max(W, H + drop);
 
   return (

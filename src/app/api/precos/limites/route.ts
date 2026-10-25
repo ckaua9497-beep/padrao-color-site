@@ -6,12 +6,14 @@ import { catalogProduct, quantityLimits, variationQuantityLimits } from "@/lib/a
  * Limites de quantidade dos produtos do carrinho (catálogo, iguais para todo cliente: pode ir para cache).
  * `variations`: faixa própria de cada variação que tem uma (id → [mínimo, máximo]).
  */
-export function GET(request: NextRequest) {
+export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get("grupos") ?? "";
   const ids = [...new Set(raw.split(",").map((value) => value.trim()))].filter((value) => /^\d{1,9}$/.test(value)).slice(0, 60);
   const limits: Record<string, { minQty: number; maxQty: number; variations?: Record<string, [number, number]> }> = {};
-  for (const id of ids) {
-    const product = catalogProduct(Number(id));
+  // Produtos do carrinho: os da visão do catálogo em cache (catálogo em tempo real), sem ir à API por grupo.
+  const products = await Promise.all(ids.map((id) => catalogProduct(Number(id), { listagem: true })));
+  for (const [i, id] of ids.entries()) {
+    const product = products[i];
     if (!product) continue;
     const variations = variationQuantityLimits(product);
     limits[id] = { ...quantityLimits(product), ...(variations ? { variations } : {}) };

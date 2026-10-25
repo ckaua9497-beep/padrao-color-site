@@ -4,10 +4,13 @@ import { FacadeSpecs } from "@/components/facade/FacadeSpecs";
 import { IconCorners, IconDownload, IconImage, IconLock, IconRuler, IconStore } from "@/components/facade/icons";
 import Faq from "@/components/home/Faq";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { getProducts } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { DPI_MIN, DPI_RECOMMENDED, MAX_PHOTOS, buildFacadeMaterials, formatPixels, requiredPixels } from "@/lib/facade";
 import { formatBRL, spectrumAt } from "@/lib/format";
 import { STORE } from "@/lib/store";
+
+// Catálogo em tempo real (src/lib/catalogo-vivo.ts): só produtos ativos, com os dados de agora; refeita a cada 10 min.
+export const revalidate = 600;
 
 export const metadata: Metadata = {
   title: "Fachadas: crie a arte e veja a fachada em 3D",
@@ -26,8 +29,8 @@ const STEPS = [
   { Icon: IconRuler, title: "Escolha o material", text: "Lona, adesivo ou placa, com preço por m². O arquivo da arte vai junto do pedido." },
 ];
 
-export default function FacadesPage() {
-  const materials = buildFacadeMaterials(getProducts());
+export default async function FacadesPage() {
+  const materials = buildFacadeMaterials((await catalogoVivo()).getProducts());
   const cheapest = materials.length > 0 ? Math.min(...materials.map((m) => m.price)) : null;
   const example = requiredPixels(4, 1, DPI_MIN);
 

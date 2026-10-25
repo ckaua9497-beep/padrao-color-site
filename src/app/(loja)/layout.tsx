@@ -3,21 +3,21 @@ import SiteFooter from "@/components/SiteFooter";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
 import CartDrawer from "@/components/cart/CartDrawer";
 import PageTracker from "@/components/PageTracker";
-import { getCategory } from "@/lib/catalog";
+import { catalogoVivo } from "@/lib/catalogo-vivo";
 import { MENU_GROUPS } from "@/lib/menu";
 import { categoriaComMidia } from "@/lib/midia";
 import { midiaDoSite } from "@/lib/midia-servidor";
 
 export default async function LojaLayout({ children }: { children: React.ReactNode }) {
-  // Imagens de categoria trocadas no admin (admin → Site → Imagens) também no menu.
-  const midia = await midiaDoSite();
+  // Imagens de categoria trocadas no admin (admin → Site → Imagens) também no menu; contagens dos produtos ativos.
+  const [midia, catalogo] = await Promise.all([midiaDoSite(), catalogoVivo()]);
   const menu: MenuGroup[] = MENU_GROUPS.map((group) => ({
     label: group.label,
     blurb: group.blurb,
     benefits: [...group.benefits],
     more: "more" in group ? group.more : undefined,
     categories: group.categories
-      .map((slug) => getCategory(slug))
+      .map((slug) => catalogo.getCategory(slug))
       .filter((c) => c !== undefined)
       .map((c) => categoriaComMidia(c, midia))
       .map((c) => ({ slug: c.slug, name: c.name, count: c.count, image: c.image, minLeadDays: c.minLeadDays })),

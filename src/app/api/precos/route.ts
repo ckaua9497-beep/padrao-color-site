@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get("grupo") ?? "";
   const groupId = /^\d{1,9}$/.test(raw) ? Number(raw) : 0;
   if (!groupId) return fail(400, "Informe o grupo do produto.");
-  if (!catalogProduct(groupId)) return fail(404, "Produto não encontrado.");
+  if (!(await catalogProduct(groupId))) return fail(404, "Produto não encontrado.");
 
   const session = await getSession();
   try {

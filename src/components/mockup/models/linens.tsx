@@ -2,11 +2,9 @@
 
 // Cama, mesa e banho: toalhas (rosto, mão, fitness, praia), canga, cortina, lençol e toalha de mesa.
 
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { useAnimate } from "../viewer-hooks";
 import { Fabric, closedTube, useGeometriesCleanup, useInflated } from "./fabric";
 import { shapePolygon } from "./inflate";
 import { makeShape, metalColor, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
@@ -754,11 +752,16 @@ function BeachTowel({ spec, art, label }: ModelProps) {
 
 // ---------------------------------------------------------------------------- canga
 
-const BRASS = "#c9a25e";
+/** Rugas leves de musseline estendida (cristas largas e cruzadas, nunca abaixo do chão). */
+function cangaWrinkle(x: number, z: number) {
+  const n = 0.6 + 0.4 * Math.sin(x * 0.045 + z * 0.028 + 0.4);
+  return (2.1 * ridge(x * 0.06 + z * 0.025 + 0.6, 4) + 1.4 * ridge(-x * 0.045 + z * 0.065 + 2.1, 6) + 0.8 * ridge(x * 0.11 - z * 0.08 + 1.3, 8)) * n;
+}
 
 /**
- * Canga de musseline presa por argolas com prendedor num varão de madeira suspenso por cordão.
- * Entre as argolas o tecido cede em festões; embaixo ganha pregas soltas e balança devagar.
+ * Canga simples estendida no chão da praia (revisão da Padrão de 25/10/2026: pendurada num varão parecia cortina):
+ * musseline fina com rugas soltas e o canto da frente à direita virado por cima, mostrando o avesso com a estampa
+ * vazada.
  */
 function Canga({ spec, art, label }: ModelProps) {
   const W = Math.max(20, spec.widthCm);
@@ -766,14 +769,11 @@ function Canga({ spec, art, label }: ModelProps) {
   const half = 0.07;
   const texture = useArtTexture(W / H, "front", art, label);
   const crinkle = usePattern("crinkle", W / 18, H / 18);
-  const wood = usePattern("wood", 1, 1);
-  const clips = clamp(Math.round(W / 30) + 1, 3, 7);
-  const spacing = (W - 3) / (clips - 1);
 
   const plan = useMemo<ClothPlan>(
     () => ({
-      as: track(-W / 2, [[W / 2, 1.4]]),
-      bs: track(0, [[H, 1.4]]),
+      as: track(-W / 2, [[W / 2, 1.2]]),
+      bs: track(0, [[H, 1.2]]),
       half,
       art: { a0: -W / 2, b0: 0, w: W, h: H },
       outer: () => 0,
@@ -782,109 +782,136 @@ function Canga({ spec, art, label }: ModelProps) {
     [W, H],
   );
 
-  const fn = useMemo<ClothFn>(
-    () => (a, b, time, out) => {
-      const phase = (a + W / 2 - 1.5) / spacing;
-      const between = Math.sin(Math.PI * (phase - Math.floor(phase))) ** 2;
-      const low = 1 - b / H;
-      const sag = 2 * between * (b / H) ** 4;
-      const cowl = 1.8 * between * smooth(H - 30, H, b);
-      const folds = 1.6 * Math.sin((a * TAU) / 26 + 0.9) * low ** 1.3 + 0.7 * Math.sin((a * TAU) / 11 + 2) * low * low;
-      const sway = 1.5 * low * low * Math.sin(time * 1.3 + a * 0.045) + 0.5 * low * Math.sin(time * 2.1 + a * 0.12 + b * 0.05);
-      out.set(a, b - sag, cowl + folds + sway);
-    },
-    [W, H, spacing],
-  );
+  const fn = useMemo<ClothFn>(() => {
+    // Dobra do canto: o tecido passa do vinco enrolando num raio curto e deita por cima, virado.
+    const dx = Math.SQRT1_2;
+    const dz = Math.SQRT1_2;
+    const reach = Math.min(W, H) * 0.2;
+    const lx = W / 2 - dx * reach;
+    const lz = H / 2 - dz * reach;
+    const r = 0.9;
+    return (a, b, _time, out) => {
+      const x = a;
+      const z = H / 2 - b;
+      const w = cangaWrinkle(x, z);
+      const s = (x - lx) * dx + (z - lz) * dz;
+      if (s <= 0) {
+        out.set(x, half + w, z);
+        return;
+      }
+      const bx = x - dx * s;
+      const bz = z - dz * s;
+      const angle = s / r;
+      const base = cangaWrinkle(bx, bz);
+      if (angle < Math.PI) {
+        out.set(bx + dx * r * Math.sin(angle), half + base + r * (1 - Math.cos(angle)), bz + dz * r * Math.sin(angle));
+        return;
+      }
+      const back = s - Math.PI * r;
+      out.set(bx - dx * back, half + base + 2 * r + 0.25 * cangaWrinkle(bx - dx * back, bz - dz * back), bz - dz * back);
+    };
+  }, [W, H]);
 
   const cloth = useCloth(plan, fn);
-  const animate = useAnimate();
-  const time = useRef(0);
-  useFrame((state, delta) => {
-    if (!animate) return;
-    time.current += Math.min(delta, 0.1);
-    fillCloth(cloth, fn, time.current);
-    state.invalidate();
-  });
-
-  const rodY = H + 6.5;
-  const rodHalf = W / 2 + 10;
-  const apex = rodY + 22;
-  const parts = useMemo(() => {
-    const knob = lathe(
-      [
-        [0, 0],
-        [1.4, 0],
-        [1.5, 0.6],
-        [2.3, 2.2],
-        [2.4, 3.2],
-        [1.9, 4.4],
-        [0.9, 5],
-        [0, 5.1],
-      ],
-      28,
-    );
-    const ring = new THREE.TorusGeometry(2.1, 0.28, 10, 36);
-    const eyelet = new THREE.TorusGeometry(0.75, 0.16, 8, 20);
-    const clip = softBox(2.4, 3.2, 1.2, 0.5, 0.4);
-    const cords = [-1, 1].map((side) => new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(side * (rodHalf - 3), rodY + 1, 0), new THREE.Vector3(0, apex, 0)), 1, 0.22, 8, false));
-    return { knob, ring, eyelet, clip, cords };
-  }, [rodY, rodHalf, apex]);
-  useGeometryCleanup(parts.knob);
-  useGeometryCleanup(parts.ring);
-  useGeometryCleanup(parts.eyelet);
-  useGeometryCleanup(parts.clip);
-  useGeometriesCleanup(parts.cords);
-
-  const clipXs = Array.from({ length: clips }, (_, k) => -W / 2 + 1.5 + k * spacing);
-
   return (
-    <group scale={2.6 / Math.max(W + 26, apex)}>
-      <group rotation-y={0.18}>
-        <ClothMesh
-          cloth={cloth}
-          rimColor={spec.baseColor}
-          outer={<meshPhysicalMaterial attach="material-0" map={texture} roughness={0.88} sheen={0.5} sheenRoughness={0.7} sheenColor="#ffffff" bumpMap={crinkle} bumpScale={1.4} />}
-          inner={<meshPhysicalMaterial attach="material-0" map={texture} color="#f0f0f0" emissive="#ffffff" emissiveIntensity={0.28} roughness={0.92} bumpMap={crinkle} bumpScale={1.4} />}
-        />
-        <mesh position-y={rodY} rotation-z={Math.PI / 2}>
-          <cylinderGeometry args={[1.3, 1.3, rodHalf * 2, 28]} />
-          <Wood map={wood} />
-        </mesh>
-        {[-1, 1].map((side) => (
-          <mesh key={side} geometry={parts.knob} position={[side * rodHalf, rodY, 0]} rotation-z={-side * (Math.PI / 2)}>
-            <Wood map={wood} />
+    <group scale={2.7 / Math.max(W, H)} rotation-y={0.18} userData={{ view: { elevation: 0.8, azimuth: 0.2 } }}>
+      <ClothMesh
+        cloth={cloth}
+        rimColor={spec.baseColor}
+        outer={<meshPhysicalMaterial attach="material-0" map={texture} roughness={0.88} sheen={0.5} sheenRoughness={0.7} sheenColor="#ffffff" bumpMap={crinkle} bumpScale={1.4} />}
+        inner={<meshPhysicalMaterial attach="material-0" map={texture} color="#f0f0f0" emissive="#ffffff" emissiveIntensity={0.28} roughness={0.92} bumpMap={crinkle} bumpScale={1.4} />}
+      />
+    </group>
+  );
+}
+
+/** Canga redonda deitada: grade polar (anéis × setores) com as rugas da musseline; a arte quadrada cortada no círculo. */
+function roundCangaGeometry(D: number, half: number) {
+  const rings = 44;
+  const segments = 180;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  positions.push(0, half + cangaWrinkle(0, 0), 0);
+  uvs.push(0.5, 0.5);
+  for (let i = 1; i <= rings; i += 1) {
+    const rr = ((D / 2) * i) / rings;
+    for (let j = 0; j < segments; j += 1) {
+      const th = (j / segments) * TAU;
+      const x = rr * Math.cos(th);
+      const z = rr * Math.sin(th);
+      positions.push(x, half + cangaWrinkle(x, z), z);
+      // u da esquerda para a direita; v = 0 na borda de perto (a arte fica de pé para quem olha da frente).
+      uvs.push(x / D + 0.5, 0.5 - z / D);
+    }
+  }
+  for (let j = 0; j < segments; j += 1) indices.push(0, 1 + ((j + 1) % segments), 1 + j);
+  for (let i = 1; i < rings; i += 1) {
+    const r0 = 1 + (i - 1) * segments;
+    const r1 = 1 + i * segments;
+    for (let j = 0; j < segments; j += 1) {
+      const j1 = (j + 1) % segments;
+      indices.push(r0 + j, r0 + j1, r1 + j1, r0 + j, r1 + j1, r1 + j);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Canga redonda com franja de pompons ("Redonda com Franja PomPom"): o círculo de musseline no chão, a fita da franja
+ * costurada na borda e um pompom a cada ~5 cm, cada um na ponta de um cordão curto.
+ */
+function RoundCanga({ spec, art, label }: ModelProps) {
+  const D = Math.max(40, Math.min(spec.widthCm, spec.heightCm));
+  const half = 0.07;
+  const texture = useArtTexture(1, "front", art, label);
+  const crinkle = usePattern("crinkle", D / 18, D / 18);
+  const parts = useMemo(() => {
+    const sheet = roundCangaGeometry(D, half);
+    const R = D / 2;
+    const band = new THREE.TorusGeometry(R - 0.3, 0.32, 8, 220);
+    band.rotateX(Math.PI / 2);
+    const count = Math.max(24, Math.round((TAU * R) / 6));
+    const cord = new THREE.CylinderGeometry(0.14, 0.14, 3, 6);
+    cord.rotateZ(Math.PI / 2);
+    const ball = new THREE.IcosahedronGeometry(1.7, 2);
+    const ends = Array.from({ length: count }, (_, k) => {
+      const th = (k / count) * TAU + 0.05 * Math.sin(k * 2.3);
+      return { id: k, th, wiggle: 0.12 * Math.sin(k * 1.7), size: 0.9 + 0.12 * Math.sin(k * 3.1) };
+    });
+    return { sheet, band, cord, ball, ends, R };
+  }, [D]);
+  useGeometryCleanup(parts.sheet);
+  useGeometryCleanup(parts.band);
+  useGeometryCleanup(parts.cord);
+  useGeometryCleanup(parts.ball);
+  const pompom = "#f4f1ea";
+  return (
+    <group scale={2.6 / (D + 8)} rotation-y={0.18} userData={{ view: { elevation: 0.85, azimuth: 0.2 } }}>
+      <mesh geometry={parts.sheet}>
+        <meshPhysicalMaterial map={texture} roughness={0.88} sheen={0.5} sheenRoughness={0.7} sheenColor="#ffffff" bumpMap={crinkle} bumpScale={1.4} />
+      </mesh>
+      <mesh geometry={parts.sheet}>
+        <meshPhysicalMaterial map={texture} color="#f0f0f0" emissive="#ffffff" emissiveIntensity={0.28} roughness={0.92} side={THREE.BackSide} />
+      </mesh>
+      <mesh geometry={parts.band} position-y={0.32}>
+        <meshStandardMaterial color={pompom} roughness={0.95} />
+      </mesh>
+      {parts.ends.map(({ id, th, wiggle, size }) => (
+        <group key={id} rotation-y={-th - wiggle}>
+          <mesh geometry={parts.cord} position={[parts.R + 1.3, 0.2, 0]}>
+            <meshStandardMaterial color={pompom} roughness={0.95} />
           </mesh>
-        ))}
-        {parts.cords.map((geometry, i) => (
-          <mesh key={i} geometry={geometry}>
-            <meshStandardMaterial color="#cdb48c" roughness={0.95} />
-          </mesh>
-        ))}
-        <group position-y={apex} rotation-x={Math.PI / 2}>
-          <mesh>
-            <cylinderGeometry args={[0.45, 0.45, 3, 12]} />
-            <meshStandardMaterial color="#8d8f93" metalness={1} roughness={0.35} />
-          </mesh>
-          {/* Cabeça do prego, para o cordão não escapar pela frente. */}
-          <mesh position-y={1.6}>
-            <cylinderGeometry args={[1, 1, 0.3, 20]} />
-            <meshStandardMaterial color="#8d8f93" metalness={1} roughness={0.35} />
+          <mesh geometry={parts.ball} position={[parts.R + 4.2, 1.6 * size, 0]} scale={size}>
+            <meshStandardMaterial color={pompom} roughness={1} flatShading={false} />
           </mesh>
         </group>
-        {clipXs.map((x) => (
-          <group key={x} position-x={x}>
-            <mesh geometry={parts.ring} position-y={rodY - 0.52} rotation-y={Math.PI / 2}>
-              <meshStandardMaterial color={BRASS} metalness={1} roughness={0.32} />
-            </mesh>
-            <mesh geometry={parts.eyelet} position-y={H + 2.75}>
-              <meshStandardMaterial color={BRASS} metalness={1} roughness={0.32} />
-            </mesh>
-            <mesh geometry={parts.clip} position-y={H - 1.4}>
-              <meshStandardMaterial color={BRASS} metalness={1} roughness={0.3} />
-            </mesh>
-          </group>
-        ))}
-      </group>
+      ))}
     </group>
   );
 }
@@ -892,11 +919,11 @@ function Canga({ spec, art, label }: ModelProps) {
 /**
  * Toalhas: rosto, mão e fitness dobradas sobre um porta-toalha cromado (atoalhado com relevo de
  * laçadas por bump procedural, barra maquinetada nas pontas; na fitness a arte é a faixa costurada);
- * praia estendida no chão com uma ponta enrolada; canga leve presa num varão, balançando.
+ * praia estendida no chão com uma ponta enrolada; canga de musseline estendida no chão (a redonda com franja de pompons).
  */
 export function TowelModel(props: ModelProps) {
   if (props.spec.variant === "beach") return <BeachTowel {...props} />;
-  if (props.spec.variant === "canga") return <Canga {...props} />;
+  if (props.spec.variant === "canga") return /\bredonda\b/.test(props.spec.details ?? "") ? <RoundCanga {...props} /> : <Canga {...props} />;
   return <HangingTowel {...props} />;
 }
 
