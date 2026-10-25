@@ -30,7 +30,7 @@ export const PARTY_BUNDLE_NAME = "Crie Sua Festa";
 
 // ------------------------------------------------------------------------------------------- tipos
 
-/** Produto do catálogo: ID do grupo na API (estável) ou slug (produto derivado, como "tags"). */
+/** Produto do catálogo: ID do grupo na API (estável) ou slug. */
 export type ProductRef = { groupId: number } | { slug: string };
 
 export type Size = { widthCm: number; heightCm: number };
@@ -361,7 +361,7 @@ export const PARTY_PRODUCTS: readonly PartyProductDef[] = [
   },
   {
     id: "tags",
-    ref: { slug: "tags" },
+    ref: { groupId: 180 },
     role: "lembrancinhas",
     title: "Tags de agradecimento",
     hint: "Com furo para cordão, para pendurar nas lembrancinhas.",

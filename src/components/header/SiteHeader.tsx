@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
 import Logo from "@/components/Logo";
-import { IconArrow, IconBalloon, IconBag, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconShield, IconStorefront, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
+import { IconArrow, IconBalloon, IconChevron, IconClock, IconClose, IconCube, IconGift, IconHeadset, IconLayers, IconMenu, IconShield, IconStorefront, IconTruck, IconUpload, IconWhatsApp } from "@/components/icons";
 import { useCart } from "@/components/cart/CartProvider";
 import { AccordionItem } from "@/components/ui/Accordion";
 import { Drawer } from "@/components/ui/Drawer";
@@ -27,7 +27,6 @@ const TAB_ICONS: Record<TabIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   balloon: IconBalloon,
   gift: IconGift,
   store: IconStorefront,
-  bag: IconBag,
 };
 
 const BENEFIT_ICONS: Record<BenefitIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
@@ -50,7 +49,7 @@ const LARGURA = "container-site";
 
 // Linha do menu (Figma: faixa cinza com itens de 14px escuros e setinha).
 const itemMenu = "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[14px] font-semibold transition-colors duration-200";
-// Linha das abas (festa, kit, fachadas, produtos novos).
+// Linha das abas (festa, kit, fachadas).
 const navItem = "flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-2 text-[14px] font-bold transition-colors duration-200 min-[1440px]:px-3.5 min-[1440px]:text-[15px] 2xl:text-nav";
 
 /**
@@ -58,7 +57,7 @@ const navItem = "flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 p
  * 1. faixa laranja do cupom (rola com a página);
  * 2. linha presa: logo, busca em pílula (a partir de lg; abaixo, a lupa abre o painel), conta e carrinho;
  * 3. linha presa do menu de categorias com os mega-menus (a partir de xl; abaixo, a gaveta do hambúrguer);
- * 4. abas de festa, kit, fachadas e produtos novos (rolam com a página).
+ * 4. abas de festa, kit e fachadas (rolam com a página).
  * A parte presa mede var(--spacing-topo): 92px, ou 136px com a linha do menu (globals.css).
  */
 export default function SiteHeader({ menu }: { menu: MenuGroup[] }) {

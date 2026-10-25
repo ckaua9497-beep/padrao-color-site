@@ -39,7 +39,6 @@ type Props = {
 const TONE: Record<ArtStatus["tone"], string> = {
   ok: "text-ink",
   own: "text-ink",
-  later: "text-muted",
   missing: "text-coral-700",
   blank: "text-muted",
 };

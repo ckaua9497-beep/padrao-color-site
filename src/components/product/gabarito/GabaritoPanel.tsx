@@ -91,7 +91,7 @@ export function GabaritoPanel({ gabarito, art, side, variant, label, slug, attac
       const blob = await buildPrintPdf(sheets, { title: `${label} — arte no gabarito`, variant, label, transparent: gabarito.transparent });
       saveBlob(blob, printFileName(slug));
     } catch {
-      setError("Não conseguimos gerar o PDF agora. Tente de novo ou envie a arte depois do pedido.");
+      setError("Não conseguimos gerar o PDF agora. Tente de novo.");
     } finally {
       setBusy(false);
     }

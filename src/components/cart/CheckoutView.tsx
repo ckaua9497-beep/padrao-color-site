@@ -18,13 +18,12 @@ import { setCustomer, useCustomer } from "@/lib/customer";
 import { formatBRL } from "@/lib/format";
 import {
   addressProblem,
-  orderTotals,
+  orderTotal,
   PAYMENT_METHODS,
   type DeliveryAddress,
   type DeliveryChoice,
   type LineError,
   type OrderPayload,
-  type OrderTotals,
   type PaymentMethod,
 } from "@/lib/orders";
 import { STORE } from "@/lib/store";
@@ -51,7 +50,7 @@ function withUploads(item: CartItem, uploaded: Record<string, { url: string; nom
 
 type AccountSummary = { customerId: number; document: string; address: DeliveryAddress | null; balance: number | null; blocked: number | null };
 type QuoteLine = { key: string; unitPrice: number; total: number; reseller: boolean };
-type Quote = { totals: OrderTotals; reseller: boolean; lines: QuoteLine[] };
+type Quote = { total: number; reseller: boolean; lines: QuoteLine[] };
 type OrderReply = { mode: "simulation"; payload: OrderPayload; quote: Quote } | { mode: "order"; order: number | null; quote: Quote; duplicate?: boolean };
 type PrintFile = { id: string; name: string; product: string };
 type Result =
@@ -265,7 +264,7 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
                         ))}
                       </ul>
                     ) : (
-                      <span className="block text-caption text-muted">arte: sem arquivo (enviar depois)</span>
+                      <span className="block text-caption text-muted">arte: sem arquivo anexado</span>
                     )}
                   </td>
                   <td className="py-2.5 pr-3 align-top">
@@ -287,7 +286,6 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
             <dt className="text-caption text-muted">pagamento</dt>
             <dd className="font-semibold">
               {payload.pagamento.tipo}
-              {payload.pagamento.desconto ? ` · desconto ${formatBRL(payload.pagamento.desconto)}` : ""}
             </dd>
           </div>
           <div>
@@ -330,7 +328,7 @@ function OrderResult({ result, onCancelled }: { result: Extract<Result, { mode: 
       ) : (
         <>
           <p className="mt-3 text-ink/75">
-            Total de {formatBRL(result.quote.totals.total)} no {method.label}. Pagamento pendente: a Padrão Color envia as instruções de pagamento pelo e-mail e telefone do seu cadastro. A produção começa depois da confirmação.
+            Total de {formatBRL(result.quote.total)} no {method.label}. Pagamento pendente: a Padrão Color envia as instruções de pagamento pelo e-mail e telefone do seu cadastro. A produção começa depois da confirmação.
           </p>
           <p className="mt-3 text-sm text-muted">Se a arte ainda não foi enviada, mande pelo pedido em Meus pedidos.</p>
           <PrintFiles files={result.files} className="mt-6 ring-1 ring-line" />
@@ -416,7 +414,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const registered = account?.address && !addressProblem(account.address) ? account.address : null;
   const kind: DeliveryChoice["kind"] = deliveryKind === "cadastro" && account && !registered ? "outro" : deliveryKind;
   const delivery: DeliveryChoice = kind === "outro" ? { kind, address } : { kind };
-  const totals = orderTotals(lines, payment);
+  const total = orderTotal(lines);
   const step = !logged ? 1 : !deliveryDone ? 2 : 3;
 
   if (result?.mode === "simulation") return <SimulationResult payload={result.payload} files={result.files} onBack={() => setResult(null)} />;
@@ -678,9 +676,9 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
             <div role="alert" className="mt-4 rounded-thumb border border-ink bg-white p-4 text-sm">
               <p className="font-semibold">Os preços foram atualizados para a sua conta.</p>
               <p className="mt-1 text-muted">
-                Total na tela: {formatBRL(totals.total)} · novo total: <strong className="text-ink">{formatBRL(quote.totals.total)}</strong>
+                Total na tela: {formatBRL(total)} · novo total: <strong className="text-ink">{formatBRL(quote.total)}</strong>
               </p>
-              <Button variant="dark" size="sm" className="mt-3" loading={busy} onClick={() => submit(quote.totals.total)}>
+              <Button variant="dark" size="sm" className="mt-3" loading={busy} onClick={() => submit(quote.total)}>
                 Confirmar com o novo total
               </Button>
             </div>
@@ -706,14 +704,14 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
             </p>
           )}
           {!quote && (
-            <Button variant="buy" size="md" block className="mt-4" loading={busy} disabled={pricing} onClick={() => submit(totals.total)}>
+            <Button variant="buy" size="md" block className="mt-4" loading={busy} disabled={pricing} onClick={() => submit(total)}>
               {sending
                 ? `Enviando os arquivos da arte (${Math.min(sending.done + 1, sending.total)} de ${sending.total})…`
                 : pricing
                   ? "Atualizando preços…"
                   : ordersEnabled
-                    ? `Finalizar pedido · ${formatBRL(totals.total)}`
-                    : `Simular pedido · ${formatBRL(totals.total)}`}
+                    ? `Finalizar pedido · ${formatBRL(total)}`
+                    : `Simular pedido · ${formatBRL(total)}`}
             </Button>
           )}
         </Step>
@@ -741,19 +739,13 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
             <dt className="text-muted">Subtotal</dt>
             <dd>{formatBRL(subtotal)}</dd>
           </div>
-          {totals.discount > 0 && (
-            <div className="flex justify-between">
-              <dt className="text-muted">Desconto no PIX</dt>
-              <dd className="font-semibold text-price-sm">− {formatBRL(totals.discount)}</dd>
-            </div>
-          )}
           <div className="flex justify-between">
             <dt className="text-muted">Entrega</dt>
             <dd>{kind === "retirada" && deliveryDone ? "Retirada (sem frete)" : "A combinar"}</dd>
           </div>
           <div className="flex justify-between border-t border-line pt-3 text-base">
             <dt className="font-bold">Total</dt>
-            <dd className="font-black">{formatBRL(totals.total)}</dd>
+            <dd className="font-black">{formatBRL(total)}</dd>
           </div>
         </dl>
       </aside>

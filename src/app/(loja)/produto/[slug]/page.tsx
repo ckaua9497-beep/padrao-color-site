@@ -47,9 +47,9 @@ export default async function ProductPage(props: PageProps<"/produto/[slug]">) {
   const { slug } = await props.params;
   const found = getProduct(slug);
   if (!found) {
-    // Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-preto"): o ID do começo do slug leva ao atual.
-    const id = /^(\d+)-/.exec(slug)?.[1];
-    const moved = id ? getProductMovedFrom(id) : undefined;
+    // Link antigo de um produto que a API juntou a outro ("404-caneca-…-interior-preto"): o ID do começo do slug leva ao
+    // atual. Sem número, o próprio slug ("tags", que saiu do site e leva à Tag do grupo 180).
+    const moved = getProductMovedFrom(/^(\d+)-/.exec(slug)?.[1] ?? slug);
     if (moved) permanentRedirect(`/produto/${moved.slug}`);
     notFound();
   }

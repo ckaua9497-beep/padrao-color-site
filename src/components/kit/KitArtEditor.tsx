@@ -14,8 +14,8 @@ import type { PartyProduct } from "@/lib/party";
 import { photoKey, type ItemView, type KitShot } from "./kit-art";
 import { MAX_UPLOAD_MB, isPdf, readArtwork, tooBig } from "./kit-upload";
 
-/** O que o editor devolve: a arte montada, o arquivo enviado só para o item e "enviar arte depois". */
-export type ItemArtDraft = { art: ArtSettings; artName: string | null; later: boolean; file: File | null };
+/** O que o editor devolve: a arte montada e o arquivo enviado só para o item. */
+export type ItemArtDraft = { art: ArtSettings; artName: string | null; file: File | null };
 
 type Props = {
   title: string;
@@ -39,7 +39,6 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
   const [artName, setArtName] = useState<string | null>(view.mode === "own" ? view.ownName : null);
   // Arquivo sem prévia (AI, CDR) enviado só para o item.
   const [attachedFile, setAttachedFile] = useState<File | null>(view.mode === "own" ? (view.ownFile ?? null) : null);
-  const [later, setLater] = useState(view.mode === "later");
   const [side, setSide] = useState<"front" | "back">("front");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -70,7 +69,7 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
   const onFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
     if (!file) return;
     if (tooBig(file)) {
-      setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor ou marque “Enviar arte depois”.`);
+      setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.`);
       return;
     }
     const seq = ++uploadSeq.current;
@@ -86,7 +85,6 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
       setArt((a) => autoFitArt({ ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null }, fitArea));
       setArtName(file.name);
       setAttachedFile(null);
-      setLater(false);
       setMissing(false);
     } catch (error) {
       if (seq !== uploadSeq.current) return;
@@ -95,7 +93,6 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
         setArtName(file.name);
         setAttachedFile(file);
         setArt((a) => ({ ...a, src: null, templateFit: null }));
-        setLater(false);
         setMissing(false);
         setUploadError(error instanceof IntakeError ? error.message : null);
       } else {
@@ -113,12 +110,11 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
     setArt(view.shared);
     setArtName(null);
     setAttachedFile(null);
-    setLater(false);
     setMissing(false);
   };
 
   const save = async () => {
-    if (!spec.blank && !later && !hasArtContent(art) && !artName) {
+    if (!spec.blank && !hasArtContent(art) && !artName) {
       setMissing(true);
       return;
     }
@@ -131,7 +127,7 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
       shot = null;
     }
     setSaving(false);
-    onSave({ art, artName, later, file: attachedFile }, shot);
+    onSave({ art, artName, file: attachedFile }, shot);
   };
 
   const intro =
@@ -164,11 +160,6 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
             onFile={onFile}
             uploadError={uploadError}
             uploading={uploading}
-            artLater={later}
-            onArtLater={(value) => {
-              setLater(value);
-              if (value) setMissing(false);
-            }}
             missing={missing}
             kind={spec.kind}
             aspect={artAspect(spec)}
@@ -180,8 +171,8 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
           />
         </ol>
         <div className="sticky bottom-0 -mx-5 mt-6 flex flex-wrap items-center gap-2 border-t border-line bg-white px-5 py-4 sm:-mx-7 sm:px-7">
-          {(!sameAsKit || later || view.mode !== "kit") && (
-            <Button variant="outline" size="sm" onClick={backToKit} disabled={sameAsKit && !later}>
+          {(!sameAsKit || view.mode !== "kit") && (
+            <Button variant="outline" size="sm" onClick={backToKit} disabled={sameAsKit}>
               Usar a arte do kit
             </Button>
           )}

@@ -603,7 +603,7 @@ export default function DesignSystemPage() {
                 </Specimen>
               </div>
 
-              <Specimen name="Price" source="ui/Price.tsx" notes="Coral só a partir de 19px bold (card e pdp). A linha do PIX usa price-sm (coral-700). total é preto: é soma, não oferta.">
+              <Specimen name="Price" source="ui/Price.tsx" notes="Coral só a partir de 19px bold (card e pdp). A linha do PIX (só nas lojas da multiloja, com pix) usa price-sm (coral-700). total é preto: é soma, não oferta.">
                 <div className="grid gap-8 sm:grid-cols-3">
                   <div>
                     <p className="mb-2 text-caption font-bold text-muted">card</p>
@@ -695,15 +695,16 @@ export default function DesignSystemPage() {
               <ConfiguratorDemo />
             </div>
 
-            <h3 className="mt-14 text-lg font-bold">Preço com PIX</h3>
+            <h3 className="mt-14 text-lg font-bold">Preço com PIX (lojas da multiloja)</h3>
             <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               <div className="rounded-panel bg-coral-50 p-6 md:p-8">
                 <Badge tone="pix">{Math.round(PIX_DISCOUNT * 100)}% no PIX</Badge>
-                <Price size="pdp" value={samplePrice} unit="por unidade" className="mt-4" />
+                <Price size="pdp" value={samplePrice} unit="por unidade" className="mt-4" pix />
               </div>
               <div className="rounded-panel border border-line bg-white p-6 text-sm md:p-8">
                 <p className="font-bold">Regra</p>
                 <ul className="mt-3 grid gap-2 text-muted">
+                  <li>A loja principal não dá desconto no PIX (revisão da Padrão de 25/10/2026). A linha aparece só com <TokenName>pix</TokenName>, que as lojas da multiloja ligam.</li>
                   <li>
                     PIX = preço × (1 − {PIX_DISCOUNT.toLocaleString("pt-BR")}) → <span className="font-semibold text-ink">{formatBRL(pixPrice(samplePrice))}</span> ({formatBRL(samplePrice)} de tabela)
                   </li>

@@ -144,11 +144,19 @@ export type BusinessType = {
   groupIds: number[];
 };
 
-// Catálogo da Padrão (sync:catalog) + produtos novos da API própria (sync:novos).
-const catalog = mergeCatalogs(data as unknown as CatalogFile, novosData as unknown as CatalogFile);
+/**
+ * Produtos novos da API própria (sync:novos) no site. Desligado desde a revisão da Padrão de 25/10/2026: o site só
+ * mostra produtos que vêm da API da Padrão. Os dados, a API própria e os modelos 3D continuam no projeto; quando a
+ * Padrão cadastrar esses produtos, eles chegam pelo sync:catalog com os IDs dela.
+ */
+const PRODUTOS_NOVOS_NO_SITE = false;
+
+// Catálogo da Padrão (sync:catalog) + produtos novos da API própria (sync:novos). A junção valida as colisões de ID.
+const catalogComNovos = mergeCatalogs(data as unknown as CatalogFile, novosData as unknown as CatalogFile);
+const catalog = PRODUTOS_NOVOS_NO_SITE ? catalogComNovos : (data as unknown as CatalogFile);
 
 /** Categorias dos produtos novos (API própria): na home elas vêm logo depois das em destaque. */
-const NEW_CATEGORY_SLUGS = new Set((novosData as unknown as CatalogFile).categories.map((c) => c.slug));
+const NEW_CATEGORY_SLUGS = new Set(PRODUTOS_NOVOS_NO_SITE ? (novosData as unknown as CatalogFile).categories.map((c) => c.slug) : []);
 
 export const storefront = storefrontData as unknown as Storefront;
 export const businessTypes = businessTypesData as unknown as BusinessType[];
@@ -171,7 +179,19 @@ export function getProduct(slug: string): Product | undefined {
   return catalog.products.find((p) => p.slug === slug);
 }
 
-/** Produto pelo ID do catálogo ("180", "tags") ou pelo slug ("180-tag"). */
+/**
+ * Produtos das páginas internas de QA (/design-system): o catálogo com os produtos novos da API própria, mesmo
+ * desligados no site, para os modelos 3D deles continuarem conferidos e fotografados (npm run fotos:novos).
+ */
+export function getQaProducts(): Product[] {
+  return catalogComNovos.products;
+}
+
+export function getQaProduct(slug: string): Product | undefined {
+  return catalogComNovos.products.find((p) => p.slug === slug);
+}
+
+/** Produto pelo ID do catálogo ("180") ou pelo slug ("180-tag"). */
 export function getProductById(idOrSlug: string): Product | undefined {
   return catalog.products.find((p) => p.id === idOrSlug) ?? getProduct(idOrSlug);
 }
@@ -179,7 +199,8 @@ export function getProductById(idOrSlug: string): Product | undefined {
 /**
  * Grupos que a API juntou a outro e apagou (23/10/2026: as canecas por cor viraram a opção Cor de um grupo só e a
  * Sacola Presente em Tecido virou variações da Sacola Mochila). Vale o primeiro grupo que existir no catálogo: a
- * caneca com glitter na base (532) vem com erro da API e fica fora até ela responder.
+ * caneca com glitter na base (532) vem com erro da API e fica fora até ela responder. "tags" era uma cópia do
+ * grupo 180 criada no site; saiu em 25/10/2026 (só produtos da API) e o link leva à Tag.
  */
 const GRUPOS_JUNTADOS: Record<string, string[]> = {
   "429": ["533"],
@@ -197,11 +218,14 @@ const GRUPOS_JUNTADOS: Record<string, string[]> = {
   "432": ["532", "366"],
   "423": ["367"],
   "71": ["50"],
+  tags: ["180"],
 };
 
-/** Produto atual de um ID de grupo de link antigo: o próprio grupo ou aquele em que a API o juntou. */
+/** Produto atual de um ID de link antigo ("71", "tags"): o próprio grupo ou aquele em que a API o juntou. */
 export function getProductMovedFrom(id: string): Product | undefined {
-  return catalog.products.find((p) => p.id === id) ?? (GRUPOS_JUNTADOS[id] ?? []).map((to) => catalog.products.find((p) => p.id === to)).find(Boolean);
+  // hasOwn: o ID vem da URL ("constructor" não pode cair no protótipo do objeto).
+  const targets = Object.hasOwn(GRUPOS_JUNTADOS, id) ? GRUPOS_JUNTADOS[id] : [];
+  return catalog.products.find((p) => p.id === id) ?? targets.map((to) => catalog.products.find((p) => p.id === to)).find(Boolean);
 }
 
 /** Produtos com gabarito (campo `gabarito` de GET /grupos), em ordem alfabética. */
@@ -231,7 +255,7 @@ export function seoTitle(metaTitle: string | undefined, fallback: string): Metad
   return /padr[aã]o\s*color/i.test(title) ? { absolute: title } : title;
 }
 
-/** Produto pelo ID do grupo na API (o "Tags" derivado não entra: ele tem ID próprio). */
+/** Produto pelo ID do grupo na API. */
 export function getProductByGroupId(groupId: number): Product | undefined {
   return catalog.products.find((p) => p.groupId === groupId && p.id === String(groupId));
 }

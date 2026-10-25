@@ -119,7 +119,8 @@ function GroupBox({ group, children, onRemove }: { group: CartGroup; children: R
   );
 }
 
-export default function CartDrawer() {
+/** `pix`: linha do preço no PIX, só nas lojas da multiloja (a loja principal não dá desconto no PIX). */
+export default function CartDrawer({ pix = false }: { pix?: boolean } = {}) {
   const { lines, groups, open, setOpen, subtotal, reseller, pricing, removeBundle } = useCart();
   const close = useCallback(() => setOpen(false), [setOpen]);
 
@@ -165,7 +166,7 @@ export default function CartDrawer() {
               <span className="text-muted">Subtotal</span>
               <span className="text-lg font-bold">{formatBRL(subtotal)}</span>
             </div>
-            <p className="-mt-2 text-right text-caption font-semibold text-price-sm">{formatBRL(pixPrice(subtotal))} no PIX</p>
+            {pix && <p className="-mt-2 text-right text-caption font-semibold text-price-sm">{formatBRL(pixPrice(subtotal))} no PIX</p>}
             <Button href="/checkout" variant="buy" size="md" block onClick={close}>
               Finalizar compra
             </Button>

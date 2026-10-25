@@ -159,7 +159,7 @@ export function QtyStepperDemo() {
 
 const FAQ = [
   { q: "Qual o prazo de produção?", a: "Conta a partir da aprovação da arte, em dias úteis. O prazo aparece na página de cada produto." },
-  { q: "Posso enviar a arte depois?", a: "Sim. Marque “enviar arte depois” no último passo e mande o arquivo pelo WhatsApp." },
+  { q: "Posso enviar a arte em PDF ou CorelDRAW?", a: "Sim. Envie o arquivo no último passo: ele vai para a produção como você mandou." },
   { q: "O mockup 3D é fiel?", a: "É uma simulação com a sua arte em proporção real. A cor impressa segue o arquivo enviado." },
 ];
 

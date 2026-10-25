@@ -300,7 +300,10 @@ export function displayOrder(key: string, values: readonly string[]): string[] {
   return [...values].sort((a, b) => lead(a) - lead(b));
 }
 
-/** Desconto no PIX sobre o preço de tabela (padrao-loja/BRIEFING.md). */
+/**
+ * Desconto no PIX sobre o preço de tabela: só nas lojas da multiloja. A loja principal deixou de dar o desconto
+ * (revisão da Padrão de 25/10/2026, "Observações Site Novo").
+ */
 export const PIX_DISCOUNT = 0.05;
 
 export function pixPrice(value: number): number {

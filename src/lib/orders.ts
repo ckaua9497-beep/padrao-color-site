@@ -2,7 +2,7 @@ import type { ApiEndereco } from "./api/types";
 import type { CustomSize, Variation } from "./catalog";
 import { orderAttachments, parseUploadedFiles, type ArtAttachment, type UploadedArtFile } from "./art-files.ts";
 import { cotarAcabamentos, parseAcabamentosEscolhidos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido, type CotacaoAcabamentos } from "./acabamentos.ts";
-import { areaQuote, cleanOptionLabel, PIX_DISCOUNT, pixPrice } from "./pricing.ts";
+import { areaQuote, cleanOptionLabel } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
 
 /*
@@ -28,16 +28,16 @@ import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
  * - entrega: o exemplo traz a loja de retirada ({id, nome}); o site manda {tipo, endereco} até a lista de lojas e o
  *   formato da entrega com endereço chegarem.
  * - Extras do site que o exemplo não tem: unidades (lotes × unidades do lote), largura/altura/area (m²) e kit.
- * - pagamento.status 0 = aguardando; forma, parcelas e desconto vão junto.
+ * - pagamento.status 0 = aguardando; forma e parcelas vão junto.
  * - tipo_compra = "Site"; nome_trabalho = texto da arte do primeiro item (ou o nome) + "+ N itens"; precoTotal =
- *   soma dos itens no preço do cliente (balcão ou revenda) menos o desconto do PIX.
+ *   soma dos itens no preço do cliente (balcão ou revenda). Sem desconto no PIX (revisão da Padrão de 25/10/2026).
  * O servidor recalcula tudo a partir da variação: o preço que vem do navegador só serve para comparar.
  */
 
 export type PaymentMethod = "pix" | "cartao" | "boleto";
 
 export const PAYMENT_METHODS: Record<PaymentMethod, { label: string; hint: string; apiType: string }> = {
-  pix: { label: "Pix", hint: `Pagamento instantâneo com ${Math.round(PIX_DISCOUNT * 100)}% de desconto`, apiType: "PIX" },
+  pix: { label: "Pix", hint: "Pagamento instantâneo", apiType: "PIX" },
   cartao: { label: "Cartão de crédito", hint: "Pagamento com cartão de crédito", apiType: "Cartão de Crédito" },
   boleto: { label: "Boleto bancário", hint: "Pagamento bancário", apiType: "Boleto Bancário" },
 };
@@ -112,6 +112,17 @@ export function isLineError(line: PricedLine | LineError): line is LineError {
   return "error" in line;
 }
 
+/** Item sem arte na loja principal (carrinho de antes da retirada do "Enviar arte depois"). */
+export const MISSING_ART = "Este item está sem arte. Abra o produto, envie a arte ou escreva o texto e adicione de novo.";
+
+/**
+ * A loja principal não aceita "enviar arte depois" (revisão da Padrão de 25/10/2026): todo item chega com a linha da
+ * arte (arquivo, texto, "produto sem impressão" ou "modelo pronto"). As lojas da multiloja recebem a arte depois.
+ */
+export function missingArt(input: Pick<OrderItemInput, "key" | "name" | "artName">): LineError | null {
+  return input.artName ? null : { key: input.key, name: input.name, error: MISSING_ART };
+}
+
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 /**
@@ -184,12 +195,9 @@ export function priceLine(input: OrderItemInput, prices: LinePrices | null | und
   };
 }
 
-export type OrderTotals = { subtotal: number; discount: number; total: number };
-
-export function orderTotals(lines: { total: number }[], method: PaymentMethod): OrderTotals {
-  const subtotal = round2(lines.reduce((sum, line) => sum + line.total, 0));
-  const total = method === "pix" ? pixPrice(subtotal) : subtotal;
-  return { subtotal, discount: round2(subtotal - total), total };
+/** Total do pedido: a soma dos itens, igual em qualquer forma de pagamento (sem desconto no PIX). */
+export function orderTotal(lines: { total: number }[]): number {
+  return round2(lines.reduce((sum, line) => sum + line.total, 0));
 }
 
 /** O total mudou mais que um centavo? */
@@ -378,7 +386,7 @@ export type OrderProduct = {
   kit: { id: string; nome: string } | null;
 };
 
-export type OrderPayment = { tipo: string; valor: number; status: number; forma: PaymentMethod; parcelas: number; desconto: number };
+export type OrderPayment = { tipo: string; valor: number; status: number; forma: PaymentMethod; parcelas: number };
 
 export type OrderPayload = {
   data: string;
@@ -451,7 +459,7 @@ type PayloadInput = {
 };
 
 export function buildOrderPayload({ customerId, lines, method, delivery, facts, now = new Date() }: PayloadInput): OrderPayload {
-  const totals = orderTotals(lines, method);
+  const total = orderTotal(lines);
   const clock = brasiliaClock(now);
   return {
     data: clock.data,
@@ -459,11 +467,11 @@ export function buildOrderPayload({ customerId, lines, method, delivery, facts, 
     previsao: orderForecast(clock.iso, lines.map((line) => line.leadDays)),
     idCliente: customerId,
     produtos: lines.map((line) => toOrderProduct(line, facts?.(line) ?? NO_FACTS)),
-    pagamento: { tipo: PAYMENT_METHODS[method].apiType, valor: totals.total, status: 0, forma: method, parcelas: 1, desconto: totals.discount },
+    pagamento: { tipo: PAYMENT_METHODS[method].apiType, valor: total, status: 0, forma: method, parcelas: 1 },
     entrega: delivery,
     tipo_compra: PURCHASE_TYPE,
     nome_trabalho: orderJobName(lines),
-    precoTotal: totals.total,
+    precoTotal: total,
   };
 }
 

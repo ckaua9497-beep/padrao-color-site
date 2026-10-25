@@ -96,7 +96,7 @@ export default async function VitrineLayout(props: LayoutProps<"/vitrine/[host]"
           <IconWhatsApp aria-hidden className="size-8" />
         </a>
       )}
-      <CartDrawer />
+      <CartDrawer pix />
       <RefTracker />
       <PageTracker />
     </div>

@@ -115,10 +115,9 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
   const [daysUntil, setDaysUntil] = useState<number | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>(null);
-  // Arte do kit: o logo (enviado uma vez), o jeito dela, "mandar as artes depois" e o que cada item tem de próprio.
+  // Arte do kit: o logo (enviado uma vez), o jeito dela e o que cada item tem de próprio.
   const [logo, setLogo] = useState<KitLogo | null>(null);
   const [look, setLook] = useState<KitLook>(DEFAULT_KIT_LOOK);
-  const [kitLater, setKitLater] = useState(false);
   const [itemArts, setItemArts] = useState<Record<string, ItemArtState>>({});
   const [artMissing, setArtMissing] = useState(false);
   // Foto 3D de cada item com a arte (miniatura do card e do carrinho), com a chave da peça e da arte.
@@ -183,7 +182,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
   const moreSuggestions = candidates.filter(({ item }) => !items.some((inside) => inside.key === item.key));
   const tight = daysUntil !== null && totals.leadDays !== null && daysUntil <= totals.leadDays + 2;
 
-  // A arte de cada item: a do kit encaixada na peça, a própria (editor do item) ou "mandar depois".
+  // A arte de cada item: a do kit encaixada na peça ou a própria (editor do item).
   const baseArt = useMemo(() => kitBaseArt(details, look, logo), [details, look, logo]);
   const kitHasArt = Boolean(logo) || details.brand.trim().length > 0;
   const views = useMemo(() => {
@@ -194,12 +193,12 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
       const spec = kitItemSpec(plan);
       const shared = sharedItemArt(baseArt, spec, logo);
       const state = itemArts[item.key];
-      const mode: KitArtMode = state ? (state.later ? "later" : state.own ? "own" : "kit") : kitLater ? "later" : "kit";
+      const mode: KitArtMode = state?.own ? "own" : "kit";
       const art = state?.own ?? shared;
       map.set(item.key, { key: item.key, spec, shared, art, mode, ownName: state?.ownName ?? null, ownFile: state?.ownFile ?? null, photoKey: photoKey(spec, art) });
     }
     return map;
-  }, [items, plans, baseArt, logo, itemArts, kitLater]);
+  }, [items, plans, baseArt, logo, itemArts]);
   const shotOf = (key: string): KitShot | null => {
     const view = views.get(key);
     const shot = shots[key];
@@ -212,7 +211,6 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
   });
   const artCount = {
     ready: statuses.filter((s) => s.tone === "ok" || s.tone === "own").length,
-    later: statuses.filter((s) => s.tone === "later").length,
     missing: statuses.filter((s) => s.tone === "missing").length,
   };
 
@@ -328,12 +326,6 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
     setStatus(null);
   };
 
-  const changeKitLater = (value: boolean) => {
-    setKitLater(value);
-    if (value) setArtMissing(false);
-    setStatus(null);
-  };
-
   const preview = (key: string) => {
     setFocusKey(key);
     if (window.matchMedia("(max-width: 1023px)").matches) document.getElementById("kit-previa")?.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
@@ -345,7 +337,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
     setEditingKey(key);
   };
 
-  /** O editor do item salvou: arte própria (ou de volta à do kit), "enviar depois" e a foto 3D do ângulo do carrinho. */
+  /** O editor do item salvou: arte própria (ou de volta à do kit) e a foto 3D do ângulo do carrinho. */
   const saveItemArt = (key: string, draft: ItemArtDraft, shot: KitShot | null) => {
     const view = views.get(key);
     setEditingKey(null);
@@ -353,9 +345,9 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
     const sameAsKit = !draft.artName && JSON.stringify(draft.art) === JSON.stringify(view.shared);
     const own = sameAsKit ? null : draft.art;
     setItemArts((current) => {
-      // Sem nada próprio e seguindo o kit ("mandar depois" do kit inteiro vale de novo): o item volta ao padrão.
-      if (!own && draft.later === kitLater) return omit(current, key);
-      return { ...current, [key]: { own, ownName: own ? draft.artName : null, later: draft.later, ownFile: own ? draft.file : null } };
+      // Sem nada próprio: o item volta à arte do kit.
+      if (!own) return omit(current, key);
+      return { ...current, [key]: { own, ownName: draft.artName, ownFile: draft.file } };
     });
     if (shot) onShot(key, shot);
     setStatus(null);
@@ -380,7 +372,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
         return;
       }
       setArtMissing(true);
-      setStatus({ tone: "error", text: "Falta a arte do kit: envie o logo, escreva o nome da marca ou marque “mandar as artes depois”." });
+      setStatus({ tone: "error", text: "Falta a arte do kit: envie o logo ou escreva o nome da marca." });
       document.getElementById("kit-arte")?.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
       return;
     }
@@ -409,7 +401,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
       const line = lines[item.key] ?? initialLine(item);
       if (!plan || !view) continue;
       const sources: { file: File | null | undefined; kind: "arquivo" | "verso" }[] =
-        view.mode === "later" || view.spec.blank
+        view.spec.blank
           ? []
           : view.mode === "own"
             ? [
@@ -418,7 +410,7 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
               ]
             : [{ file: logo?.file, kind: "arquivo" }];
       const artFiles = await keepArtFiles(sources, plan.item.product.name, kept);
-      const art = view.mode === "later" || view.spec.blank ? {} : artSummary(view.art, artFamily(view.spec.kind));
+      const art = view.spec.blank ? {} : artSummary(view.art, artFamily(view.spec.kind));
       // Arte do kit com o nome da marca ou o fundo na cor da marca: o nome das cores (o resumo traz os códigos).
       const palette = view.mode === "kit" && !view.spec.blank && (Boolean(art["Texto da arte"]) || (Boolean(logo?.src) && look.background === "marca"));
       const options = { ...context.options, "Por kit": perKitLabel(item, line, plan), ...art, ...(palette ? { "Cores da marca": getPalette(details.palette).label } : {}) };
@@ -686,8 +678,6 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
               logo={logo}
               onLogo={changeLogo}
               art={baseArt}
-              later={kitLater}
-              onLater={changeKitLater}
               missing={artMissing}
               count={items.length}
               onGallery={() => setGallery("ver")}
@@ -794,15 +784,13 @@ export default function KitBuilder({ catalog }: { catalog: KitItem[] }) {
                 {totals.errors === 1 ? "Um item precisa de ajuste" : `${totals.errors} itens precisam de ajuste`} antes de ir para o carrinho.
               </p>
             )}
-            {artCount.missing + artCount.ready + artCount.later > 0 && (
+            {artCount.missing + artCount.ready > 0 && (
               <p className={cx("mt-3 flex items-start gap-1.5 text-sm font-medium", artCount.missing ? "text-coral-700" : "text-ink/80")}>
                 {!artCount.missing && <IconCheck className="mt-0.5 size-4 shrink-0" strokeWidth={2.4} />}
                 <span>
                   {artCount.missing
                     ? `Falta a arte em ${artCount.missing} ${artCount.missing === 1 ? "item" : "itens"}.`
-                    : !artCount.ready
-                      ? "Você manda as artes depois do pedido; a equipe entra em contato."
-                      : `Arte pronta em ${artCount.ready} ${artCount.ready === 1 ? "item" : "itens"}${artCount.later ? ` · ${artCount.later} para mandar depois` : ""}.`}
+                    : `Arte pronta em ${artCount.ready} ${artCount.ready === 1 ? "item" : "itens"}.`}
                 </span>
               </p>
             )}

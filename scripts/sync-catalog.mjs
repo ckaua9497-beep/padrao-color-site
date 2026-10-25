@@ -162,31 +162,13 @@ const products = grupos.flatMap((grupo, index) => {
   return [mapGroup(grupo, rows, { featured: highlightIds.includes(grupo.id), site: SITE })];
 });
 
-// "Tags" (checklist): reaproveita o produto de tag de presente que já existe (grupo 180) com nome e texto próprios.
-const tagBase = products.find((p) => p.groupId === 180);
-if (tagBase) {
-  products.push({
-    ...tagBase,
-    id: "tags",
-    slug: "tags",
-    name: "Tags",
-    summary:
-      "Tags personalizadas para roupas, presentes, embalagens e lembrancinhas, nos formatos redondo, oval e retangular, com furo para cordão.",
-    metaTitle: "Tags Personalizadas | Padrão Color",
-    featured: false,
-    // Produto novo no site: aparece com o selo de lançamento nas listagens e no menu.
-    isNew: true,
-    related: [180, ...tagBase.related.filter((id) => id !== 180)],
-  });
-}
-
 // ------------------------------------------------------------------------------------- categorias
 
 const categories = buildCategories(categorias, products);
 
 // ------------------------------------------------------------------------------------- vitrine
 
-const productSlugs = new Map(products.filter((p) => typeof p.groupId === "number" && p.id !== "tags").map((p) => [p.groupId, p.slug]));
+const productSlugs = new Map(products.filter((p) => typeof p.groupId === "number").map((p) => [p.groupId, p.slug]));
 const categoryById = new Map(categories.map((c) => [c.id, c.slug]));
 const byTipo = (tipo) => configuracoes.filter((c) => c.tipo === tipo);
 

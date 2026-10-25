@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import MockupInspector from "@/components/design-system/MockupInspector";
-import { getProduct, getProducts } from "@/lib/catalog";
+import { getQaProduct, getQaProducts } from "@/lib/catalog";
 import { mockupSpec, type KindSource } from "@/lib/mockup";
 import { KIND_INFO, MOCKUP_KINDS, type MockupKind } from "@/lib/mockup-kinds";
 
@@ -32,7 +32,7 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
   const kind = first(raw.kind) as MockupKind | undefined;
   const source = first(raw.source) as KindSource | undefined;
 
-  const rows = getProducts().map((p) => {
+  const rows = getQaProducts().map((p) => {
     const spec = mockupSpec(p, {});
     return { slug: p.slug, name: p.name, category: p.category, kind: spec.kind, source: spec.source, blank: spec.blank, variant: spec.variant };
   });
@@ -40,7 +40,7 @@ export default async function MockupsPage({ searchParams }: { searchParams: Prom
   for (const row of rows) counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1);
 
   const visible = rows.filter((r) => (!kind || r.kind === kind) && (!source || r.source === source));
-  const selected = getProduct(first(raw.p) ?? visible[0]?.slug ?? "");
+  const selected = getQaProduct(first(raw.p) ?? visible[0]?.slug ?? "");
 
   return (
     <div className="container-site py-10">

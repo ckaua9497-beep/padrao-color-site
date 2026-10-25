@@ -734,10 +734,10 @@ export function emptyKitDetails(): KitDetails {
 }
 
 /**
- * De onde vem a arte de um item: a arte do kit (o logo ou o nome da marca, encaixados na área de cada peça), a
- * arte própria que o cliente montou só para ele, ou o arquivo que ele manda depois do pedido.
+ * De onde vem a arte de um item: a arte do kit (o logo ou o nome da marca, encaixados na área de cada peça) ou a
+ * arte própria que o cliente montou só para ele.
  */
-export type KitArtMode = "kit" | "own" | "later";
+export type KitArtMode = "kit" | "own";
 
 /** "25 pessoas", "1 kit". */
 export function unitsLabel(count: number, unit: [string, string]): string {

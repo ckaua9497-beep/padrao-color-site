@@ -72,8 +72,9 @@ type Props = {
   onFile: (file: File | undefined, options?: { raw?: boolean }) => void;
   uploadError: string | null;
   uploading: boolean;
-  artLater: boolean;
-  onArtLater: (value: boolean) => void;
+  /** "Enviar arte depois": só nas lojas da multiloja, que recebem a arte na página do pedido. Sem `onArtLater`, some. */
+  artLater?: boolean;
+  onArtLater?: (value: boolean) => void;
   missing: boolean;
   /** Tipo da peça e proporção da área de arte: as prévias dos estilos saem no formato real. */
   kind?: MockupKind;
@@ -119,12 +120,12 @@ const NO_MANNEQUIN_VARIANTS = new Set(["body", "pajama"]);
 const MAX_UPLOAD_MB = 25;
 
 /**
- * Passo "Sua arte": estilo, texto e subtexto (aparecem no mockup na hora) ou imagem enviada, ou enviar
- * depois. Inclui o editor 2D da área de impressão (posição livre), frente e verso nas camisas e
+ * Passo "Sua arte": estilo, texto e subtexto (aparecem no mockup na hora) ou imagem enviada. Inclui o
+ * editor 2D da área de impressão (posição livre), frente e verso nas camisas e
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, artLater, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
@@ -506,14 +507,16 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
       ) : (
-        <label className="mt-3 flex items-center gap-2.5 text-sm">
-          <input type="checkbox" checked={artLater} onChange={(event) => onArtLater(event.target.checked)} className="size-4 accent-coral-700" />
-          Enviar arte depois (a equipe entra em contato)
-        </label>
+        onArtLater && (
+          <label className="mt-3 flex items-center gap-2.5 text-sm">
+            <input type="checkbox" checked={artLater} onChange={(event) => onArtLater(event.target.checked)} className="size-4 accent-coral-700" />
+            Enviar arte depois (a equipe entra em contato)
+          </label>
+        )
       )}
       {missing && (
         <p role="alert" className="mt-2 text-sm font-semibold text-coral-700">
-          Escreva um texto, envie a arte ou marque “Enviar arte depois” para continuar.
+          {onArtLater ? "Escreva um texto, envie a arte ou marque “Enviar arte depois” para continuar." : "Escreva um texto ou envie a arte para continuar."}
         </p>
       )}
     </li>

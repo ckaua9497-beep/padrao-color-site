@@ -103,8 +103,6 @@ export type ClientProduct = {
 const MAX_UPLOAD_MB = 25;
 /** Teto da medida usada no 3D (a faixa vai até 50 m; o modelo não precisa passar disso). */
 const MAX_MODEL_CM = 5000;
-/** Arte da peça lisa no 3D (variação sem personalização). */
-const PLAIN_ART: ArtSettings = { ...DEFAULT_ART, plain: true };
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
 const fmtCm = (cm: number) => cm.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
@@ -149,7 +147,11 @@ function StepTitle({ n, total, title }: { n: number; total: number; title: strin
 
 export { artSummary };
 
-export default function ProductExperience({ product }: { product: ClientProduct }) {
+/**
+ * `pix` e `allowArtLater`: só nas lojas da multiloja, que dão desconto no PIX e recebem a arte depois, na página do
+ * pedido. A loja principal não tem nenhum dos dois (revisão da Padrão de 25/10/2026).
+ */
+export default function ProductExperience({ product, pix = false, allowArtLater = false }: { product: ClientProduct; pix?: boolean; allowArtLater?: boolean }) {
   const keys = useMemo(() => optionKeys(product.options), [product.options]);
   const [selection, setSelection] = useState<Selection>(() => initialSelection(product));
   const [size, setSize] = useState<SizeText>(() => initialSize(product));
@@ -167,6 +169,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   const [extraFiles, setExtraFiles] = useState<Record<string, File>>({});
   // Acabamentos extras escolhidos (os que a variação atual não aceita ficam de fora no cálculo).
   const [finishing, setFinishing] = useState<AcabamentoEscolhido[]>([]);
+  // "Enviar arte depois" (só multiloja).
   const [artLater, setArtLater] = useState(false);
   const [artMissing, setArtMissing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -340,8 +343,10 @@ export default function ProductExperience({ product }: { product: ClientProduct 
   // Variação sem personalização não tem o passo da arte.
   const artStep = finishStep + (finishes.length ? 1 : 0);
   const totalSteps = semArte ? artStep - 1 : artStep;
-  // No 3D, a peça lisa (o neon pronto segue com o desenho de exemplo do modelo).
-  const viewArt = semArte && !modeloPronto ? PLAIN_ART : art;
+  // Variação sem personalização (produto liso, neon pronto): só as fotos, sem o 3D. A peça é vendida como na foto
+  // (revisão da Padrão de 25/10/2026, "Mockups 3d para produtos sem personalização: recomendo não exibir").
+  const show3d = !semArte;
+  const view = show3d ? tab : "fotos";
 
   // Linhas extras do carrinho. "Medida" segue o formato das páginas de festa e kit ("200 × 150 cm"), para o
   // carrinho e o checkout tratarem toda linha por m² igual; a área cobrada aparece só na pré-visualização.
@@ -377,7 +382,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     if (!file) return;
     // Grande demais: avisa sem cancelar um envio que ainda está em andamento.
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-      setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor ou marque “Enviar arte depois”.`);
+      setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.`);
       return;
     }
     const seq = ++uploadSeq.current;
@@ -444,7 +449,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     setAdding(true);
     let thumb: string | null = null;
     try {
-      const shot = captureRef.current?.();
+      const shot = show3d ? captureRef.current?.() : null;
       if (shot) thumb = await thumbnailOf(shot, 360);
       else if (art.src) thumb = await thumbnailOf(art.src, 360);
     } catch {
@@ -468,17 +473,16 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       }
     }
     // Arquivos que o cliente enviou (frente e verso): ficam no navegador até o checkout mandar para o Bunny.
-    const artFiles =
-      semArte || artLater
-        ? []
-        : await keepArtFiles(
-            [
-              { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" },
-              { file: uploadedFileOf(art.back?.src), kind: "verso" },
-              ...complementares.map((tipo) => ({ file: extraFiles[tipo], kind: "extra" as const, tipo })),
-            ],
-            product.name,
-          );
+    const artFiles = semArte || artLater
+      ? []
+      : await keepArtFiles(
+          [
+            { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" },
+            { file: uploadedFileOf(art.back?.src), kind: "verso" },
+            ...complementares.map((tipo) => ({ file: extraFiles[tipo], kind: "extra" as const, tipo })),
+          ],
+          product.name,
+        );
     add({
       slug: product.slug,
       name: product.name,
@@ -504,7 +508,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
       variationId: price.variation?.id,
       ...(area ? { widthCm, heightCm } : {}),
       express: expressChosen,
-      // O carrinho mostra "Arte: …"; null vira "enviar depois".
+      // O carrinho mostra "Arte: …"; null = enviar depois (só multiloja).
       artName: modeloPronto ? "modelo pronto" : semArte ? "produto sem impressão" : artLater ? null : (artName ?? (typedArt ? `texto no mockup · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
     });
     setAdding(false);
@@ -515,24 +519,26 @@ export default function ProductExperience({ product }: { product: ClientProduct 
     <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] xl:gap-14">
       {/* Preso ao rolar: o quadro do 3D encolhe em telas baixas (notebooks) para a barra dele não sair da tela. */}
       <div className="lg:sticky lg:top-painel lg:self-start lg:[--lado:min(100%,calc(100dvh-var(--spacing-painel)-7.5rem))]">
-        <SegmentedControl
-          label="Visualização do produto"
-          className="mb-3"
-          value={tab}
-          onChange={setTab}
-          options={[
-            {
-              value: "3d",
-              label: (
-                <>
-                  <IconCube className="size-4" /> Mockup 3D
-                </>
-              ),
-            },
-            { value: "fotos", label: "Fotos" },
-          ]}
-        />
-        {tab === "3d" ? (
+        {show3d && (
+          <SegmentedControl
+            label="Visualização do produto"
+            className="mb-3"
+            value={tab}
+            onChange={setTab}
+            options={[
+              {
+                value: "3d",
+                label: (
+                  <>
+                    <IconCube className="size-4" /> Mockup 3D
+                  </>
+                ),
+              },
+              { value: "fotos", label: "Fotos" },
+            ]}
+          />
+        )}
+        {view === "3d" ? (
           preview ? (
             <div className="aspect-square w-full overflow-hidden rounded-card bg-mist lg:mx-auto lg:w-(--lado)">
               {pageShot ? (
@@ -543,7 +549,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
               )}
             </div>
           ) : (
-            <Mockup3D spec={spec} art={viewArt} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
+            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
           )
         ) : (
           <div className="flex gap-3 lg:mx-auto lg:w-[min(100%,calc(var(--lado)+4.75rem))]">
@@ -567,24 +573,24 @@ export default function ProductExperience({ product }: { product: ClientProduct 
             </div>
           </div>
         )}
-        <p className="mt-3 text-caption text-muted">
-          {semArte ? "Mockup ilustrativo do produto" : "Mockup ilustrativo gerado com a sua arte"}
-          {area && !area.error ? `, na medida ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm` : ""}.{semArte ? "" : " A cor impressa segue o arquivo enviado."}
-        </p>
+        {show3d && (
+          <p className="mt-3 text-caption text-muted">
+            Mockup ilustrativo gerado com a sua arte{area && !area.error ? `, na medida ${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm` : ""}. A cor impressa segue o arquivo enviado.
+          </p>
+        )}
       </div>
 
       <div>
         <div className="flex flex-wrap gap-2">
-          <Badge tone="brand">Mockup 3D grátis</Badge>
+          {show3d && <Badge tone="brand">Mockup 3D grátis</Badge>}
           {reseller && <Badge tone="new">Preço de revendedor</Badge>}
           {modeloPronto ? <Badge tone="neutral">Modelo pronto</Badge> : semArte && <Badge tone="neutral">Vendido sem impressão</Badge>}
           {product.bestSeller && <Badge tone="dark">Mais vendido</Badge>}
           {product.isNew && <Badge tone="new">Lançamento</Badge>}
-          {areaMode && <Badge tone="neutral">Medida sob medida</Badge>}
         </div>
         <h1 className="mt-3 text-title font-normal">{product.name}</h1>
         {product.summary && <p className="mt-2 max-w-xl text-[17px] leading-relaxed text-ink/75">{product.summary}</p>}
-        <Price className="mt-4" size="pdp" value={display.value} from={!price.exact} unit={display.unit} live />
+        <Price className="mt-4" size="pdp" value={display.value} from={!price.exact} unit={display.unit} pix={pix} live />
         {leadLabel(leadDays) && (
           <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-ink/80">
             <IconClock className="size-4 text-coral-700" /> {leadLabel(leadDays)}
@@ -660,11 +666,15 @@ export default function ProductExperience({ product }: { product: ClientProduct 
               onFile={onFile}
               uploadError={uploadError}
               uploading={uploading}
-              artLater={artLater}
-              onArtLater={(value) => {
-                setArtLater(value);
-                if (value) setArtMissing(false);
-              }}
+              {...(allowArtLater
+                ? {
+                    artLater,
+                    onArtLater: (value: boolean) => {
+                      setArtLater(value);
+                      if (value) setArtMissing(false);
+                    },
+                  }
+                : {})}
               missing={artMissing}
               kind={spec.kind}
               aspect={artAspect(spec)}
@@ -707,9 +717,11 @@ export default function ProductExperience({ product }: { product: ClientProduct 
                   label={perUnit ? "Quantidade de unidades" : area ? "Quantidade de peças" : "Quantidade de pedidos"}
                 />
               )}
-              <Button variant="preview" size="md" className="grow px-5 sm:grow-0" onClick={openPreview} icon={<IconCube className="size-5" />}>
-                Pré-visualizar
-              </Button>
+              {show3d && (
+                <Button variant="preview" size="md" className="grow px-5 sm:grow-0" onClick={openPreview} icon={<IconCube className="size-5" />}>
+                  Pré-visualizar
+                </Button>
+              )}
             </div>
           </div>
           {perUnit && minQty > 1 && <p className="mt-2 text-caption text-muted">Pedido mínimo de {minQty.toLocaleString("pt-BR")} unidades.</p>}
@@ -737,7 +749,7 @@ export default function ProductExperience({ product }: { product: ClientProduct 
           onAdd={addToCart}
           adding={adding}
           spec={spec}
-          art={viewArt}
+          art={art}
           name={product.name}
           fallbackImage={product.image}
           captureRef={captureRef}

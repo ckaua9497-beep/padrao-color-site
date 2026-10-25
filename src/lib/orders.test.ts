@@ -13,7 +13,9 @@ import {
   itemJobName,
   orderDelivery,
   orderJobName,
-  orderTotals,
+  orderTotal,
+  missingArt,
+  MISSING_ART,
   parseOrderRequest,
   priceLine,
   resolveVariationId,
@@ -101,10 +103,15 @@ test("variação que sumiu vira erro do item; item antigo acha a variação pela
   assert.equal(legacy.variation.id, 23);
 });
 
-test("totais: desconto do PIX só no PIX", () => {
-  const lines = [{ total: 130.38 }, { total: 120 }];
-  assert.deepEqual(orderTotals(lines, "boleto"), { subtotal: 250.38, discount: 0, total: 250.38 });
-  assert.deepEqual(orderTotals(lines, "pix"), { subtotal: 250.38, discount: 12.52, total: 237.86 });
+test("loja principal: item sem arte volta para a página do produto", () => {
+  assert.equal(missingArt(item()), null);
+  assert.equal(missingArt(item({ artName: "produto sem impressão" })), null);
+  assert.deepEqual(missingArt(item({ artName: null })), { key: "a", name: "Cartão de Visita", error: MISSING_ART });
+});
+
+test("total: a soma dos itens, sem desconto no PIX", () => {
+  assert.equal(orderTotal([{ total: 130.38 }, { total: 120 }]), 250.38);
+  assert.equal(orderTotal([{ total: 0.1 }, { total: 0.2 }]), 0.3, "em centavos");
   assert.equal(totalsDiffer(237.86, 237.865), false);
   assert.equal(totalsDiffer(237.86, 237.88), true);
 });
@@ -142,8 +149,8 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
   assert.equal(payload.idCliente, 575);
   assert.equal(payload.tipo_compra, "Site");
   assert.equal(payload.nome_trabalho, "Padaria Pão Quente + 1 item");
-  assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 161.86, status: 0, forma: "pix", parcelas: 1, desconto: 8.52 });
-  assert.equal(payload.precoTotal, 161.86, "(130,38 + 40) × 0,95");
+  assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 170.38, status: 0, forma: "pix", parcelas: 1 });
+  assert.equal(payload.precoTotal, 170.38, "130,38 + 40, sem desconto no PIX");
   assert.deepEqual(payload.entrega, { tipo: "Retirada", endereco: null });
   assert.deepEqual(payload.produtos[0], {
     id: 22,

@@ -54,15 +54,14 @@ export const MENU_GROUPS = [
   },
 ] as const satisfies readonly { label: string; blurb: string; categories: readonly string[]; benefits: readonly MenuBenefit[]; more?: { href: string; label: string } }[];
 
-export type TabIcon = "balloon" | "gift" | "store" | "bag";
+export type TabIcon = "balloon" | "gift" | "store";
 
 /**
- * Segunda linha do menu: abas do checklist (festa sob medida, kits prontos e simulador de fachada) e a
- * categoria dos produtos novos da API própria (/api/novos).
+ * Segunda linha do menu: abas do checklist (festa sob medida, kits prontos e simulador de fachada). A aba "Produtos
+ * Novos" (API própria) saiu em 25/10/2026: o site só mostra produtos da API da Padrão.
  */
 export const EXTRA_TABS = [
   { href: "/crie-sua-festa", label: "Crie Sua Festa", icon: "balloon" },
   { href: "/monte-seu-kit", label: "Monte Seu Kit", icon: "gift" },
   { href: "/fachadas", label: "Fachadas", icon: "store" },
-  { href: "/categoria/produtos-novos", label: "Produtos Novos", icon: "bag" },
 ] as const satisfies readonly { href: string; label: string; icon: TabIcon }[];

@@ -26,8 +26,6 @@ type Props = {
   onLogo: (logo: KitLogo | null) => void;
   /** A arte comum do kit (prévias dos estilos). */
   art: ArtSettings;
-  later: boolean;
-  onLater: (value: boolean) => void;
   /** Tentou adicionar ao carrinho sem arte nenhuma. */
   missing: boolean;
   /** Itens que recebem a arte do kit. */
@@ -40,7 +38,7 @@ type Props = {
  * da marca e o fundo atrás do logo. Cada item recebe essa arte encaixada na área dele; o ajuste fino de um item
  * fica no editor do próprio item.
  */
-export function KitArtPanel({ details, onDetails, daysUntil, look, onLook, logo, onLogo, art, later, onLater, missing, count, onGallery }: Props) {
+export function KitArtPanel({ details, onDetails, daysUntil, look, onLook, logo, onLogo, art, missing, count, onGallery }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Cada envio ganha um número: um envio anterior que termina depois não troca o logo mais novo.
@@ -140,17 +138,11 @@ export function KitArtPanel({ details, onDetails, daysUntil, look, onLook, logo,
         </Button>
       </div>
 
-      <div>
-        <label className="flex items-center gap-2.5 text-sm">
-          <input type="checkbox" checked={later} onChange={(event) => onLater(event.target.checked)} className="size-4 accent-coral-700" />
-          Prefiro mandar as artes depois (a equipe entra em contato)
-        </label>
-        {missing && (
-          <p role="alert" className="mt-2 text-sm font-semibold text-coral-700">
-            Envie o logo, escreva o nome da marca ou marque “mandar as artes depois” para continuar.
-          </p>
-        )}
-      </div>
+      {missing && (
+        <p role="alert" className="text-sm font-semibold text-coral-700">
+          Envie o logo ou escreva o nome da marca para continuar.
+        </p>
+      )}
     </div>
   );
 }

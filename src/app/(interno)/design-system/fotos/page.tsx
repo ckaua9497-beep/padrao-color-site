@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import CatalogPhotoClient from "@/components/design-system/CatalogPhotoClient";
-import { getProduct } from "@/lib/catalog";
+import { getQaProduct } from "@/lib/catalog";
 
 export const metadata: Metadata = { title: "Foto de catálogo" };
 
@@ -15,7 +15,7 @@ function first(value: string | string[] | undefined): string | undefined {
  */
 export default async function PhotoPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const raw = await searchParams;
-  const product = getProduct(first(raw.p) ?? "");
+  const product = getQaProduct(first(raw.p) ?? "");
   if (!product) notFound();
   const selection: Record<string, string> = {};
   for (const pair of (first(raw.op) ?? "").split(";")) {

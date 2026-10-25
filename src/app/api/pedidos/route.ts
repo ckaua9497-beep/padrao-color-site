@@ -13,8 +13,9 @@ import {
   buildOrderPayload,
   extractOrderNumber,
   isLineError,
+  missingArt,
   orderDelivery,
-  orderTotals,
+  orderTotal,
   parseOrderRequest,
   priceLine,
   totalsDiffer,
@@ -93,14 +94,14 @@ export async function POST(request: Request) {
     return apiFailure(error, { session: true, fallback: "Não foi possível confirmar os preços agora. Tente de novo." });
   }
 
-  const priced = items.map((item) => priceLine(item, item.groupId ? prices.get(item.groupId) : null));
+  const priced = items.map((item) => missingArt(item) ?? priceLine(item, item.groupId ? prices.get(item.groupId) : null));
   const problems = priced.filter(isLineError);
   if (problems.length) return fail(422, "Alguns itens do carrinho precisam de atenção.", { items: problems });
   const lines = priced as PricedLine[];
 
-  const totals = orderTotals(lines, payment);
-  const quote = { totals, reseller: profile.reseller, lines: lines.map((line) => ({ key: line.key, unitPrice: line.unitPrice, total: line.total, reseller: line.reseller })) };
-  if (totalsDiffer(totals.total, expectedTotal)) {
+  const total = orderTotal(lines);
+  const quote = { total, reseller: profile.reseller, lines: lines.map((line) => ({ key: line.key, unitPrice: line.unitPrice, total: line.total, reseller: line.reseller })) };
+  if (totalsDiffer(total, expectedTotal)) {
     return fail(409, "Os preços foram atualizados para a sua conta. Confira o novo total antes de confirmar.", { quote });
   }
 
@@ -118,7 +119,7 @@ export async function POST(request: Request) {
       visitante: isTrackingId(visitante) ? visitante : null,
       sessao: isTrackingId(sessaoRastreio) ? sessaoRastreio : null,
       codigo,
-      total: totals.total,
+      total,
       itens: lines.map((line) => ({ produto: getProduct(line.input.slug)?.id ?? String(line.groupId), quantidade: line.units, valor: line.total })),
     });
   if (!ordersEnabled()) {

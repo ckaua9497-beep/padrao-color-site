@@ -100,6 +100,8 @@ export default async function VitrineProduto(props: PageProps<"/vitrine/[host]/p
             bestSeller: product.bestSeller,
             source: product.source,
           }}
+          pix
+          allowArtLater
         />
       </div>
 

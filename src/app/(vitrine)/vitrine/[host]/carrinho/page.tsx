@@ -11,6 +11,7 @@ export default function VitrineCarrinho() {
         <h1 className="mb-8 text-section font-bold">Carrinho</h1>
         <CartPageView
           resellerHint={false}
+          pix
           deliveryNote={freteApi() ? "Calculado no checkout pelo CEP: você escolhe a forma de entrega." : "O valor do frete aparece no checkout."}
         />
       </div>

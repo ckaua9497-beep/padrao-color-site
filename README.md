@@ -53,7 +53,7 @@ npm run dev -- -p 3100 # http://localhost:3100
   (liberado em `next.config.ts`).
 - **Checkout de demonstração.** Carrinho (guardado no `localStorage` do navegador), CEP e finalização funcionam de ponta a ponta,
   mas **nenhum pagamento é processado** e nenhum pedido chega à gráfica: o checkout mostra "Pedido de demonstração registrado".
-- O desconto de 5% no PIX (`PIX_DISCOUNT` em `src/lib/pricing.ts`) é aplicado em todos os preços exibidos.
+- A loja principal não dá desconto no PIX (revisão da Padrão de 25/10/2026). O desconto de 5% (`PIX_DISCOUNT` em `src/lib/pricing.ts`) vale só nas lojas da multiloja, que ligam a linha do PIX com a prop `pix` (`Price`, `ProductExperience`, `CartDrawer`, `CartPageView`).
 
 ## Catálogo, vitrine e ambiente
 
@@ -93,7 +93,8 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   personalizado sem `tipos_anexo` aceita "Arquivo Único"; nome ou opção "Sem Impressão"/"Produto sem Personalização" = sem
   personalização; web2print só com template). Na página do produto, os anexos além da arte (faca de corte, máscara de
   branco, verniz, capa, miolo, posição do LED) viram "Arquivos complementares" opcionais, enviados como `kind: "extra"` com
-  o `tipo` e mandados no pedido com esse `tipoArquivo`.
+  o `tipo` e mandados no pedido com esse `tipoArquivo`. A variação sem personalização (produto liso, neon pronto) mostra só
+  as fotos, sem o 3D nem o "Pré-visualizar" (revisão da Padrão de 25/10/2026): a peça é vendida como na foto.
 - **Pedido (`POST /gerarpedido`).** Os produtos seguem o exemplo de pedido da Padrão (`src/lib/orders.ts`): `id` (variação),
   `groupId`, `groupCategoryId`, `productName`, `productImage`, `productType`, `quantidade` (lotes), `price` (um lote),
   `precoTotal`, `variations` (opções da variação), `package` (embalagem da variação), `tipoProducao`, `productionTime`,
@@ -224,8 +225,12 @@ npm test
   `src/lib/catalog-merge.ts` derruba o build se um slug, grupo ou ID de variação colidir com o `catalog.json`.
 - **Sincronização:** `scripts/sync-novos.mjs` usa o mesmo mapeamento do `sync-catalog.mjs` (`scripts/lib/catalog-map.mjs`).
   `NOVOS_API_URL` aponta para outro endereço (padrão `http://localhost:3100/api/novos`); `--local` lê a fonte sem servidor.
-- **No site:** categoria "Produtos Novos" (`/categoria/produtos-novos`), aba na 2ª linha do menu e logo depois das categorias em
-  destaque na home. O produto leva `source: "site"`: sem tabela de revenda (não existe na API da Padrão), e com o pedido real
+- **Fora do site desde 25/10/2026.** A revisão da Padrão ("Observações Site Novo") pede que o site mostre só produtos da API
+  dela, então `PRODUTOS_NOVOS_NO_SITE` (`src/lib/catalog.ts`) está `false`: sem a categoria "Produtos Novos", sem a aba do menu
+  e sem as páginas de produto. A fonte, a API própria, os modelos 3D e as fotos continuam no projeto, e as páginas internas de
+  QA (`/design-system/mockups`, `/design-system/fotos`, `fotos:novos`) seguem vendo esses produtos (`getQaProducts`).
+- **Ligado (`true`):** categoria "Produtos Novos" (`/categoria/produtos-novos`), aba na 2ª linha do menu (volta em `EXTRA_TABS`)
+  e logo depois das categorias em destaque na home. O produto leva `source: "site"`: sem tabela de revenda (não existe na API da Padrão), e com o pedido real
   ligado o item volta do checkout com o aviso de fechar pelo atendimento, porque o ID dele não existe no `gerarpedido`. Quando a
   Padrão cadastrar o produto, ele sai da fonte e passa a vir pelo `sync:catalog`.
 - **Preços e prazos** são valores de referência a validar pela Padrão; a fonte marca isso em `parametros.precos` e
@@ -365,14 +370,14 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
     pode entrar junto. Cores da marca (paletas) e fundo atrás do logo (branco ou a cor da marca).
   - *Um item por vez:* "Personalizar" abre o passo "Sua arte" da página de produto (`ArtStep`: texto, imagem, editor 2D, frente e
     verso, manequim) com o 3D da peça ao lado, começando pela arte do kit encaixada. O que muda fica só no item (`ItemArtState`);
-    "Usar a arte do kit" volta para a comum. Cada item também pode ficar para "enviar a arte depois", e o kit inteiro também.
+    "Usar a arte do kit" volta para a comum. Não há "enviar a arte depois" (revisão da Padrão de 25/10/2026): todo item vai com arte.
   - *Fotos:* a prévia guarda a foto 3D do item quando o modelo fica pronto (`KitPreview`); "Ver o kit inteiro com a arte"
     (`KitGallery`) fotografa os itens que faltam, um por vez num único visualizador (um contexto WebGL). A foto vale enquanto a
     peça e a arte não mudam (`photoKey`) e é a miniatura do card e do carrinho.
-  - *Carrinho:* "Adicionar kit ao carrinho" confere a arte (sem logo, nome ou "enviar depois", aponta o painel), termina as fotos
+  - *Carrinho:* "Adicionar kit ao carrinho" confere a arte (sem logo nem nome, aponta o painel), termina as fotos
     que faltam na galeria e manda cada item como produto comum: grupo do kit (`bundle`), opções do kit (Kit, Kits, Marca, Entrega
     desejada, Por kit), o resumo da arte da peça (`artSummary`, mais "Cores da marca"), a linha "Arte: …" (logo do kit, arte
-    ajustada no item, texto ou enviar depois) e a foto 3D. O gabarito em PDF ainda não é gerado para os itens do kit.
+    ajustada no item ou texto) e a foto 3D. O gabarito em PDF ainda não é gerado para os itens do kit.
 - **Kits de festa prontos** (`/monte-seu-kit/<slug>`, `src/lib/party.ts`): composição fechada feita dos produtos do Crie Sua Festa.
 
 ## Multiloja (lojas de influenciadores e fornecedores)

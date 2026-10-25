@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import ContactSheet, { type SheetItem } from "@/components/design-system/ContactSheet";
-import { getProducts } from "@/lib/catalog";
+import { getQaProducts } from "@/lib/catalog";
 import { mockupSpec } from "@/lib/mockup";
 
 export const metadata: Metadata = { title: "Folha de contato dos mockups" };
@@ -18,7 +18,7 @@ export default async function ContactSheetPage({ searchParams }: { searchParams:
   const text = first(raw.texto) ?? "";
 
   const seen = new Map<string, SheetItem>();
-  for (const p of getProducts()) {
+  for (const p of getQaProducts()) {
     const spec = mockupSpec(p, {});
     if (kind && !kind.split(",").includes(spec.kind)) continue;
     const key = spec.variant ? `${spec.kind}:${spec.variant}` : spec.kind;

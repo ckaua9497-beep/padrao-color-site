@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/Button";
 import { OptionGroup } from "@/components/ui/OptionGroup";
 import { Price } from "@/components/ui/Price";
 import { formatBRL } from "@/lib/format";
-import { PIX_DISCOUNT, pixPrice } from "@/lib/pricing";
 
 // Tabela de exemplo: preço base por quantidade, somado aos adicionais de papel e acabamento.
 type Step = { key: string; values: string[]; add: number[] };
@@ -17,7 +16,7 @@ const STEPS: Step[] = [
 ];
 const BASE = [59.9, 79.9, 119.9];
 
-/** Passo do configurador como na página de produto: opções numeradas e preço ao vivo com a linha do PIX. */
+/** Passo do configurador como na página de produto: opções numeradas e preço ao vivo. */
 export function ConfiguratorDemo() {
   const [picked, setPicked] = useState<number[]>([1, 0, 1]);
   const total = BASE[picked[0]] + STEPS[1].add[picked[1]] + STEPS[2].add[picked[2]];
@@ -69,12 +68,8 @@ export function ConfiguratorDemo() {
       <aside aria-label="Resumo do preço" className="self-start rounded-card bg-mist p-5">
         <Price size="pdp" value={total} unit={`por ${STEPS[0].values[picked[0]]}`} live />
         <dl className="mt-4 grid grid-cols-[1fr_auto] gap-y-1.5 border-t border-line-strong/60 pt-4 text-sm tabular-nums">
-          <dt className="text-muted">Preço de tabela</dt>
-          <dd>{formatBRL(total)}</dd>
-          <dt className="text-muted">Desconto PIX ({Math.round(PIX_DISCOUNT * 100)}%)</dt>
-          <dd className="font-semibold text-price-sm">− {formatBRL(total - pixPrice(total))}</dd>
-          <dt className="font-bold">No PIX</dt>
-          <dd className="font-bold">{formatBRL(pixPrice(total))}</dd>
+          <dt className="font-bold">Total</dt>
+          <dd className="font-bold">{formatBRL(total)}</dd>
         </dl>
         <Button variant="preview" size="sm" block className="mt-5" icon={<IconCube className="size-4" />}>
           Pré-visualizar

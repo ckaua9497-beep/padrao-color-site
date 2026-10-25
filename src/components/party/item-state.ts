@@ -42,7 +42,7 @@ export function lineDetails(item: PartyItem, line: PricedLine, size: PricedItem[
 type CartContext = {
   /** Opções da festa ou do kit (Festa, Tema, Texto da arte…), depois das opções do produto. */
   options: Record<string, string>;
-  /** Linha "Arte: …" (null = enviar depois). */
+  /** Linha "Arte: …". */
   artName: string | null;
   bundle: { id: string; name: string };
   /** Grade de tamanhos digitada (camisetas). */

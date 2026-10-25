@@ -18,14 +18,14 @@ type Props = {
   /** "por unidade", "por 1.000 un." */
   unit?: string;
   size?: Size;
-  /** Linha com o preço no PIX. */
+  /** Linha com o preço no PIX: só nas lojas da multiloja (a loja principal não dá desconto no PIX). */
   pix?: boolean;
   /** Anuncia mudanças de preço para leitores de tela (página de produto). */
   live?: boolean;
   className?: string;
 };
 
-export function Price({ value, from = false, unit, size = "card", pix = true, live = false, className }: Props) {
+export function Price({ value, from = false, unit, size = "card", pix = false, live = false, className }: Props) {
   return (
     <div className={cx("tabular-nums", className)} aria-live={live ? "polite" : undefined}>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

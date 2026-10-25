@@ -112,7 +112,6 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
   const [artName, setArtName] = useState<string | null>(null);
   // Arquivo sem prévia (AI, CDR, EPS): vai para a produção como foi enviado.
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
-  const [artLater, setArtLater] = useState(false);
   const [artMissing, setArtMissing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -348,7 +347,7 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
   const onFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
     if (!file) return;
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-      setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor ou marque “Enviar arte depois”.`);
+      setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.`);
       return;
     }
     const seq = ++uploadSeq.current;
@@ -359,7 +358,6 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
       setArtName(file.name);
       setAttachedFile(file);
       setArt((a) => ({ ...a, src: null, templateFit: null }));
-      setArtLater(false);
       setArtMissing(false);
       setUploadError(message);
     };
@@ -402,11 +400,11 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
 
   // ---------------------------------------------------------------------------------- pedido
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
-  const hasArt = artLater || Boolean(artName) || typedArt;
+  const hasArt = Boolean(artName) || typedArt;
   const problems: string[] = [];
   if (!size) problems.push("Informe a largura e a altura da fachada (passo 1).");
   else if (priced?.error) problems.push(`${material.label}: ${priced.error.replace(/\.$/, "")}. Escolha outro material ou fale com a equipe para dividir a fachada em partes.`);
-  if (!hasArt) problems.push("Escreva o texto da fachada no editor, envie a sua arte ou marque “Enviar arte depois” (passo 2).");
+  if (!hasArt) problems.push("Escreva o texto da fachada no editor, ou envie a sua arte (passo 2).");
 
   const addToCart = async () => {
     setAttempted(true);
@@ -426,7 +424,7 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
       preview = null;
     }
     // O arquivo que o cliente enviou fica no navegador até o checkout mandar para o Bunny.
-    const artFiles = artLater ? [] : await keepArtFiles([{ file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" }], material.name);
+    const artFiles = await keepArtFiles([{ file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" }], material.name);
     add({
       slug: material.slug,
       name: `Fachada · ${material.name}`,
@@ -442,14 +440,14 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
           billedArea: priced.billedArea,
           rotated: priced.rotated,
         }),
-        ...(!artLater ? artSummary(art, "sign") : {}),
+        ...artSummary(art, "sign"),
       },
       unitPrice: priced.price,
       setQty: 1,
       quantity: 1,
       leadDays: perM2.leadDays,
-      // O carrinho mostra "Arte: …"; null vira "enviar depois".
-      artName: artLater ? null : (artName ?? (typedArt ? `texto no editor · estilo ${styleLabel(art.style).toLowerCase()}` : null)),
+      // O carrinho mostra "Arte: …" (o botão só chega aqui com arte: arquivo ou texto).
+      artName: artName ?? (typedArt ? `texto no editor · estilo ${styleLabel(art.style).toLowerCase()}` : null),
       groupId: material.groupId,
       variationId: perM2.variation?.id,
       // Peça girada vai no sentido do material; a medida real da fachada fica nas opções.
@@ -682,11 +680,6 @@ export default function FacadeStudio({ materials }: { materials: FacadeMaterial[
             onFile={onFile}
             uploadError={uploadError}
             uploading={uploading}
-            artLater={artLater}
-            onArtLater={(value) => {
-              setArtLater(value);
-              if (value) setArtMissing(false);
-            }}
             missing={artMissing}
             kind="storefront"
             aspect={artAspect(spec)}

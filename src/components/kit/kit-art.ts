@@ -8,8 +8,7 @@ import { getPalette } from "@/lib/party";
 /*
  * Arte do kit: o cliente envia o logo e escreve o nome uma vez, e cada item recebe a arte encaixada na área de
  * impressão dele (o mesmo tratador da página de produto: logo inteiro e centralizado, foto preenchendo, sem o
- * fundo branco nas camisetas). Um item pode ganhar arte própria no editor (a mesma da página de produto) ou ficar
- * para o cliente mandar o arquivo depois do pedido.
+ * fundo branco nas camisetas). Um item pode ganhar arte própria no editor (a mesma da página de produto).
  */
 
 /** Como a arte do kit aparece: o estilo do nome, o nome junto do logo e o fundo atrás do logo. */
@@ -30,11 +29,10 @@ export type KitLogo = {
   note: string | null;
 };
 
-/** O que o cliente fez num item: arte própria (montada no editor) e/ou arquivo mandado depois. */
+/** O que o cliente fez num item: arte própria, montada no editor. */
 export type ItemArtState = {
-  own: ArtSettings | null;
+  own: ArtSettings;
   ownName: string | null;
-  later: boolean;
   /** Arquivo sem prévia (AI, CDR) enviado só para o item: vai para a produção como foi enviado. */
   ownFile?: File | null;
 };
@@ -99,17 +97,16 @@ export function photoKey(spec: MockupSpec, art: ArtSettings): string {
   return JSON.stringify([spec, art]);
 }
 
-/** O item ainda não tem arte: nem o logo ou o nome do kit, nem arte própria, nem "enviar depois". */
+/** O item ainda não tem arte: nem o logo ou o nome do kit, nem arte própria. */
 export function itemMissingArt(view: Pick<ItemView, "mode" | "art" | "ownName" | "spec">, kitHasArt: boolean): boolean {
-  if (view.spec.blank || view.mode === "later") return false;
+  if (view.spec.blank) return false;
   if (view.mode === "own") return !hasArtContent(view.art) && !view.ownName;
   return !kitHasArt;
 }
 
-/** Linha "Arte: …" do item no carrinho e no pedido (null = enviar depois). */
+/** Linha "Arte: …" do item no carrinho e no pedido (null = sem arte, que o kit não deixa ir para o carrinho). */
 export function itemArtName(view: Pick<ItemView, "mode" | "art" | "ownName" | "spec">, logo: KitLogo | null): string | null {
   if (view.spec.blank) return "produto sem impressão";
-  if (view.mode === "later") return null;
   const text = Boolean(view.art.text.trim() || (view.art.subtext ?? "").trim());
   const typed = `texto no mockup · estilo ${styleLabel(view.art.style).toLowerCase()}`;
   if (view.mode === "own") {
@@ -130,12 +127,11 @@ export function areaLabel(spec: MockupSpec): string {
   return `${cm(area.widthCm)} × ${cm(area.heightCm)} cm`;
 }
 
-export type ArtStatus = { label: string; detail: string; tone: "ok" | "own" | "later" | "missing" | "blank" };
+export type ArtStatus = { label: string; detail: string; tone: "ok" | "own" | "missing" | "blank" };
 
 /** Situação da arte do item (linha "Arte" do card, galeria do kit e resumo). */
 export function itemArtStatus(view: ItemView, logo: KitLogo | null, kitHasArt: boolean): ArtStatus {
   if (view.spec.blank) return { label: "Vendido sem impressão", detail: "A arte aparece só na simulação.", tone: "blank" };
-  if (view.mode === "later") return { label: "Arte enviada depois", detail: "A equipe pede o arquivo depois do pedido.", tone: "later" };
   if (view.mode === "own") {
     if (itemMissingArt(view, kitHasArt)) return { label: "Falta a arte deste item", detail: "Escreva um texto ou envie uma imagem no editor.", tone: "missing" };
     const what = view.ownName ?? (view.art.src ? "imagem" : `texto no estilo ${styleLabel(view.art.style).toLowerCase()}`);

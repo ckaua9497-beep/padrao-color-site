@@ -177,7 +177,7 @@ test("contagem por tipo (snapshot; atualizar de propósito quando as regras muda
     flag: 9,
     flipflop: 1,
     folded: 8,
-    hangtag: 2,
+    hangtag: 1,
     hardware: 3,
     keychain: 1,
     lanyard: 1,

@@ -21,7 +21,7 @@ export function CardPrice({ product, className }: { product: Priced; className?:
   const qty = from?.q ?? product.priceQty;
   return (
     <div aria-busy={from === undefined || undefined} className={cx("transition-opacity motion-reduce:transition-none", from === undefined && "opacity-50", className)}>
-      <Price className="flex flex-col items-center" value={value} from unit={product.perM2 ? "por m²" : quantityLabel(qty)} />
+      <Price className="flex flex-col items-center" value={value} from unit={product.perM2 ? "por m²" : quantityLabel(qty)} pix />
     </div>
   );
 }
@@ -30,7 +30,7 @@ export function CardPrice({ product, className }: { product: Priced; className?:
  * Preço do card do Figma (VitrineCard): "A partir de:" numa linha, o valor grande em laranja na outra (≥ 24px, texto
  * grande: o laranja passa no contraste) e a unidade sempre numa terceira linha. Com a mesma estrutura em todos os cards,
  * o "A partir de:" fica na mesma altura nos vizinhos (a unidade ao lado do valor quebrava só em alguns e desalinhava).
- * Sem a linha do PIX (ela fica na página do produto).
+ * Sem a linha do PIX: a loja principal não dá desconto no PIX (o ProductCard das lojas da multiloja mostra).
  */
 export function VitrinePrice({ product, className }: { product: Priced; className?: string }) {
   const from = useFromPrices([product.groupId])(product.groupId);

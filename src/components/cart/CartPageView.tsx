@@ -55,7 +55,8 @@ const DELIVERY_NOTE = "Entrega no seu endereço ou retirada na loja: o frete é 
  * `resellerHint`: convite ao revendedor da Padrão para entrar na conta (fica de fora nas lojas da multiloja).
  * `deliveryNote`: como o frete é cobrado (as lojas da multiloja cotam no checkout).
  */
-export default function CartPageView({ resellerHint = true, deliveryNote = DELIVERY_NOTE }: { resellerHint?: boolean; deliveryNote?: string } = {}) {
+/** `pix`: linha do preço no PIX, só nas lojas da multiloja (a loja principal não dá desconto no PIX). */
+export default function CartPageView({ resellerHint = true, deliveryNote = DELIVERY_NOTE, pix = false }: { resellerHint?: boolean; deliveryNote?: string; pix?: boolean } = {}) {
   const { lines, groups, subtotal, reseller, pricing, removeBundle } = useCart();
   const customer = useCustomer();
 
@@ -119,7 +120,7 @@ export default function CartPageView({ resellerHint = true, deliveryNote = DELIV
             <dt className="text-muted">Total</dt>
             <dd>
               <span className="text-lg font-bold">{formatBRL(subtotal)}</span>
-              <span className="block text-caption font-semibold text-price-sm">{formatBRL(pixPrice(subtotal))} no PIX</span>
+              {pix && <span className="block text-caption font-semibold text-price-sm">{formatBRL(pixPrice(subtotal))} no PIX</span>}
             </dd>
           </div>
         </dl>
