@@ -81,9 +81,14 @@ export type SceneMode = {
    * luzes dele (os refletores da placa).
    */
   focus: boolean;
+  /**
+   * Superfície extra em edição (id de src/lib/superficies.ts: lâmina do photobook, miolo, aba do passaporte, lado da
+   * caixa…): o modelo mostra essa parte (abre o livro na lâmina, a capa do passaporte aberta). null = frente/verso.
+   */
+  face: string | null;
 };
 
-const STUDIO_MODE: SceneMode = { room: null, back: false, motion: true, focus: false };
+const STUDIO_MODE: SceneMode = { room: null, back: false, motion: true, focus: false, face: null };
 
 /** Fica dentro do Canvas, como o AnimateContext. */
 export const SceneContext = createContext<SceneMode>(STUDIO_MODE);

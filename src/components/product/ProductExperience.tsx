@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "r
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { DEFAULT_ART, artFamily, hasArtContent, neonTextBox, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, neonTextBox, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { keepArtFiles, uploadedFileOf } from "./art-source";
@@ -26,9 +26,10 @@ import { acabamentosDa, cotarAcabamentos, resumoAcabamentos, type Acabamento, ty
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
 import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
-import { formatSize, mockupSpec } from "@/lib/mockup";
+import { formatSize, mockupSpec, normalizeName } from "@/lib/mockup";
+import { rotulosDosLados, superficieDaPeca, superficiesDe, temVerso } from "@/lib/superficies";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
-import { describePanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
+import { describePanel, hasBackPanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, piecesOf, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
 import {
   areaQuote,
   areaRules,
@@ -165,7 +166,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const [neonWidth, setNeonWidth] = useState("60");
   const [neonBox, setNeonBox] = useState<{ aspect: number; lines: number } | null>(null);
   // Lado da arte em edição (camisa, almofada, cama pet): o mockup 3D vira para ele.
-  const [artSide, setArtSide] = useState<"front" | "back">("front");
+  // Superfície em edição: "front", "back" ou o id da extra (miolo, lâmina, aba…). O 3D vira ou abre nela.
+  const [artSide, setArtSide] = useState("front");
   const [counts, setCounts] = useState<SizeCounts>(() => initialCounts(product));
   const [speed, setSpeed] = useState<Speed>("economico");
   // Depois de uma tentativa de compra, medida e grade mostram todos os erros (inclusive campo vazio).
@@ -275,6 +277,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const fitArea = fitAreaFor(spec);
   const transparentBase = fitArea.transparentBase;
 
+  // Verso pela cor e pelo tipo de peça (4/1, 4/4, "frente e verso", camisa, almofada, wind banner…), com ou sem gabarito.
+  const versoPelaCor = !semArte && temVerso({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name), selection, anexos: custom.anexos });
   // Gabarito oficial da seleção: folhas (no tamanho de referência, nas camisas), painel da frente e do verso.
   const printTemplate = product.printTemplate ?? null;
   const refSize = apparel ? (sizes.find((s) => (counts[s] ?? 0) > 0) ?? sizes[Math.floor(sizes.length / 2)]) : null;
@@ -311,9 +315,27 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     const frontWindow = front && front.ref.panel.cut.w / 10 < area.widthCm * 0.6 ? 1 : undefined;
     // Gabarito da volta inteira (caneca, copo, garrafa): o logo entra na parte da frente, como sem gabarito.
     const fitWindow = frontWindow === 1 ? undefined : fitArea.frontWindow;
-    return { pages, printPages, front, back: printsBack(selection) ? side("back") : null, aspect, kind: spec.kind, transparent: artFamily(spec.kind) === "apparel", frontWindow, fitWindow };
+    // Verso: a peça de verso do gabarito; num gabarito de folha única "frente e verso" (cartaz, cartão de PVC), a mesma
+    // peça da frente. Superfícies extras: cada peça do gabarito que tem a sua (miolo, lâminas, abas, lados).
+    const withBack = versoPelaCor || (printsBack(selection) && hasBackPanel(pages));
+    const backSide = withBack ? (hasBackPanel(pages) ? side("back") : front) : null;
+    const faces: NonNullable<Gabarito["faces"]> = {};
+    for (const page of pages) {
+      for (const piece of piecesOf(page)) {
+        const id = superficieDaPeca(page, piece);
+        if (!id || id === "front" || id === "back" || faces[id]) continue;
+        faces[id] = { ref: { page: piece.view, panel: piece.panel, index: piece.panelIndex, piece }, frame: printTemplate.editor !== "fit" };
+      }
+    }
+    return { pages, printPages, front, back: backSide, faces, aspect, kind: spec.kind, transparent: artFamily(spec.kind) === "apparel", frontWindow, fitWindow };
   })();
   const frontFacts = gabarito?.front ? describePanel(gabarito.front.ref.panel) : null;
+  const verso = versoPelaCor || Boolean(gabarito?.back);
+  // Superfícies com arte própria: frente, verso (4/1, 4/4, peças de duas faces) e as extras do gabarito.
+  const surfaces = semArte ? [] : superficiesDe({ pages: gabarito?.pages ?? [], verso, ...rotulosDosLados(spec.kind, spec.variant) });
+  const surfaceLabels = Object.fromEntries(surfaces.map((s) => [s.id, s.label]));
+  // A superfície escolhida sumiu (outra variação): o 3D volta para a frente.
+  const shownSide = surfaces.some((s) => s.id === artSide) ? artSide : "front";
 
   // Imagem no encaixe automático encaixada noutra peça (troca de medida/tamanho/formato, ou um envio que
   // terminou depois da troca): refaz o encaixe na peça atual — no gabarito, se o lado tem um; senão, na área do
@@ -353,11 +375,12 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     };
   }, [product.neon, art.text, art.subtext, art.style, art.font]);
 
-  // As imagens da arte (frente e verso) ficam registradas enquanto estão em uso; a trocada é liberada.
+  // As imagens da arte (frente, verso e outras superfícies) ficam registradas enquanto estão em uso; a trocada é liberada.
   const owner = useId();
+  const faceSources = useMemo(() => Object.values(art.faces ?? {}).map((face) => face.src), [art.faces]);
   useEffect(() => {
-    retainSources(owner, [art.src, art.back?.src]);
-  }, [owner, art.src, art.back?.src]);
+    retainSources(owner, [art.src, art.back?.src, ...faceSources]);
+  }, [owner, art.src, art.back?.src, faceSources]);
   useEffect(() => () => retainSources(owner, []), [owner]);
   // Rastreamento: produto visto (funil e produtos vencedores).
   useEffect(() => {
@@ -419,7 +442,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
 
   // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
-  const hasArt = semArte || artLater || Boolean(artName) || typedArt || Object.keys(productionFiles).length > 0;
+  const hasArt = semArte || artLater || Boolean(artName) || typedArt || facesWithArt(art).length > 0 || Object.keys(productionFiles).length > 0;
 
   // Escolher um valor ajusta os passos seguintes para uma combinação que existe na API.
   const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
@@ -517,7 +540,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // Arquivo de impressão no gabarito (PDF no tamanho real): fica no navegador e segue com o pedido.
     let printFile: { id: string; name: string } | null = null;
     // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado.
-    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back);
+    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back) || facesWithArt(art).length > 0;
     if (gabarito && !artLater && ownArt && !singleFile) {
       try {
         const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
@@ -558,7 +581,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
-        ...(!semArte && !artLater ? artSummary(art, family) : {}),
+        ...(!semArte && !artLater ? artSummary(art, family, surfaceLabels) : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
@@ -614,7 +637,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               )}
             </div>
           ) : (
-            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
+            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={shownSide === "back" ? "back" : "front"} face={shownSide !== "front" && shownSide !== "back" ? shownSide : null} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
           )
         ) : (
           <div className="flex gap-3 lg:mx-auto lg:w-[min(100%,calc(var(--lado)+4.75rem))]">
@@ -737,6 +760,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               step={artStep}
               family={family}
               spec={spec}
+              surfaces={surfaces}
               onSide={setArtSide}
               extraTypes={producao}
               extraFiles={extraFiles}
@@ -832,7 +856,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
           fallbackImage={product.image}
           captureRef={captureRef}
           summary={[...keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string]), ...previewExtras]}
-          artDetails={semArte ? {} : artSummary(art, family)}
+          artDetails={semArte ? {} : artSummary(art, family, surfaceLabels)}
           total={formatBRL(total)}
         />
       )}

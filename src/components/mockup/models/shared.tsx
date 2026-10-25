@@ -392,6 +392,25 @@ export function backKindOf(spec: MockupSpec, art: ArtRender): ArtVariant {
 }
 
 /**
+ * Arte de uma superfície extra (ArtSettings.faces[id], ids de src/lib/superficies.ts: lâminas do photobook, miolo,
+ * abas, lados da caixa, mangas, partes do short…), com o contexto de render da frente; null quando o cliente não montou.
+ */
+export function faceArtOf(art: ArtRender, id: string): ArtRender | null {
+  const face = art.faces?.[id];
+  if (!hasArtContent(face)) return null;
+  return { ...face!, back: null, faces: null, kind: art.kind, ledColors: art.ledColors, surface: art.surface, opaque: art.opaque, sample: false };
+}
+
+/**
+ * Textura de uma superfície extra: a arte do cliente nela, ou `fallback` ("blank" = lisa na cor do fundo, "front" =
+ * repete a frente, "gray" = frente em cinza).
+ */
+export function useFaceTexture(aspect: number, art: ArtRender, id: string, label: string, fallback: ArtVariant = "blank", mask?: MaskPath) {
+  const own = useMemo(() => faceArtOf(art, id), [art, id]);
+  return useArtTexture(aspect, own ? "front" : fallback, own ?? art, label, mask);
+}
+
+/**
  * Textura da face de trás: a arte do verso do cliente, ou a regra da opção (backVariant). Peças que não imprimem atrás
  * passam `fallback: "blank"`.
  */

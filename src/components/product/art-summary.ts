@@ -1,10 +1,10 @@
 import { ART_BACKGROUNDS, ART_FONTS, TEXT_COLORS, flipflopRegion, hasArtContent, ledColorName, styleLabel, type ArtFamily, type ArtSettings } from "@/components/mockup/art";
-import { ART_BACK_KEY, ART_LED_KEY, ART_POSITION_KEY, ART_REGION_KEY } from "./art-editor/summary-keys";
+import { ART_BACK_KEY, ART_FACES_KEY, ART_LED_KEY, ART_POSITION_KEY, ART_REGION_KEY } from "./art-editor/summary-keys";
 
 // Resumo da arte para o carrinho, o modal de pré-visualização e o pedido (frente web-to-print).
 
 // Chaves do verso, do LED, da região e da posição nas opções do item (o carrinho lê o verso por elas).
-export { ART_BACK_KEY, ART_LED_KEY, ART_POSITION_KEY, ART_REGION_KEY } from "./art-editor/summary-keys";
+export { ART_BACK_KEY, ART_FACES_KEY, ART_LED_KEY, ART_POSITION_KEY, ART_REGION_KEY } from "./art-editor/summary-keys";
 
 /** Texto do verso, a imagem, ou os dois (null = sem arte no verso). */
 export function backSummary(back: ArtSettings | null | undefined): string | null {
@@ -26,7 +26,7 @@ export function ledSummary(colors: readonly string[] | null | undefined): string
  * Também entram o verso (camisas e almofadas), as cores de LED escolhidas (neon), a região do
  * chinelo e a posição livre do editor.
  */
-export function artSummary(art: ArtSettings, family?: ArtFamily): Record<string, string> {
+export function artSummary(art: ArtSettings, family?: ArtFamily, surfaceLabels?: Readonly<Record<string, string>>): Record<string, string> {
   // Só o subtexto escrito: o mockup mostra ele como texto principal, e o resumo também.
   const typed = art.text.trim();
   const typedSub = (art.subtext ?? "").trim();
@@ -37,6 +37,15 @@ export function artSummary(art: ArtSettings, family?: ArtFamily): Record<string,
   const leds = family === "neon" || family === undefined ? ledSummary(art.ledColors) : null;
   const region = art.region && art.region !== "inteira" ? flipflopRegion(art.region).label : null;
   const back = backSummary(art.back);
+  // Superfícies extras com arte, com o nome da página (sem a lista de nomes, o id).
+  const faces =
+    Object.entries(art.faces ?? {})
+      .map(([id, face]) => {
+        const what = backSummary(face);
+        return what ? `${surfaceLabels?.[id] ?? id}: ${what}` : null;
+      })
+      .filter(Boolean)
+      .join(" · ") || null;
   // A imagem no encaixe automático (tratador ou gabarito) não conta como posição ajustada pelo cliente.
   const fit = art.templateFit;
   const image = art.layout?.image;
@@ -52,5 +61,6 @@ export function artSummary(art: ArtSettings, family?: ArtFamily): Record<string,
     ...(region ? { [ART_REGION_KEY]: region } : {}),
     ...(free ? { [ART_POSITION_KEY]: "ajustada no editor" } : {}),
     ...(back ? { [ART_BACK_KEY]: back } : {}),
+    ...(faces ? { [ART_FACES_KEY]: faces } : {}),
   };
 }

@@ -34,6 +34,12 @@ export type ArtSettings = {
   layout?: ArtLayout | null;
   /** Arte do verso (camisas: logo nas costas; almofadas: verso). null/ausente = sem arte própria no verso. */
   back?: ArtSettings | null;
+  /**
+   * Artes das outras superfícies do produto (src/lib/superficies.ts), pelo id: as lâminas do photobook, o miolo da
+   * agenda, as abas do porta passaporte, os lados da caixa acrílica, as mangas da camisa, as partes do short… Sem a
+   * superfície aqui, a peça sai na cor do fundo (como antes).
+   */
+  faces?: Record<string, ArtSettings> | null;
   /** Cores de LED escolhidas pelo cliente no neon (sobrepõem a cor da opção do produto). */
   ledColors?: string[] | null;
   /** Chinelo: região personalizada ("inteira", "dedos", "meio", "calcanhar"). */
@@ -130,6 +136,30 @@ export function hasArtContent(art: ArtSettings | null | undefined): boolean {
 /** Verso novo: mesmo estilo, fonte e cores da frente, sem texto nem imagem. */
 export function blankBack(front: ArtSettings): ArtSettings {
   return { ...DEFAULT_ART, style: front.style, font: front.font, textColor: front.textColor, background: front.background };
+}
+
+/**
+ * Arte de uma superfície: "front" = a própria arte, "back" = o verso e as demais em `faces` (vazias saem como o verso
+ * novo, com o estilo da frente). Sem `faces`/`back` aninhados, para a superfície não carregar as outras.
+ */
+export function surfaceArt(art: ArtSettings, id: string): ArtSettings {
+  if (id === "front") return art;
+  const own = id === "back" ? art.back : art.faces?.[id];
+  return { ...(own ?? blankBack(art)), back: null, faces: null };
+}
+
+/** A arte com a superfície `id` trocada pelo resultado de `update`. */
+export function withSurfaceArt(art: ArtSettings, id: string, update: (current: ArtSettings) => ArtSettings): ArtSettings {
+  if (id === "front") return update(art);
+  const next = { ...update(surfaceArt(art, id)), back: null, faces: null };
+  return id === "back" ? { ...art, back: next } : { ...art, faces: { ...(art.faces ?? {}), [id]: next } };
+}
+
+/** Ids das superfícies extras com arte (texto ou imagem), na ordem em que foram montadas. */
+export function facesWithArt(art: ArtSettings): string[] {
+  return Object.entries(art.faces ?? {})
+    .filter(([, face]) => hasArtContent(face))
+    .map(([id]) => id);
 }
 
 // ---------------------------------------------------------------------------

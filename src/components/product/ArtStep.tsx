@@ -14,7 +14,6 @@ import {
   TEXT_COLORS,
   TEXT_LIMIT,
   THERMAL_WINDOW,
-  blankBack,
   contrastRatio,
   flipflopRegion,
   hasArtContent,
@@ -26,6 +25,8 @@ import {
   releaseSource,
   sourceOf,
   styleOf,
+  surfaceArt,
+  withSurfaceArt,
   type ArtFamily,
   type ArtRender,
   type ArtSettings,
@@ -49,6 +50,7 @@ import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { ART_ACCEPT } from "@/lib/image-prep";
 import { uploadProblem } from "@/lib/art-files";
 import { ARQUIVO_UNICO, camposVisiveis } from "@/lib/customizacao";
+import type { Superficie } from "@/lib/superficies";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
@@ -96,8 +98,13 @@ type Props = {
    * (faixa de 60%), cor da peça (fundo da estampa) e subtipo da camisa (manequim).
    */
   spec?: Pick<MockupSpec, "kind" | "widthCm" | "heightCm" | "thermal" | "variant" | "baseColor" | "back">;
-  /** Lado em edição (Frente | Verso): a página vira o mockup 3D para ele. */
-  onSide?: (side: Side) => void;
+  /**
+   * Superfícies com arte própria (src/lib/superficies.ts): frente, verso e as extras do gabarito (miolo, lâminas,
+   * abas, lados…). Sem a lista, vale a regra antiga: frente e verso nas peças de duas faces e no gabarito com verso.
+   */
+  surfaces?: readonly Superficie[];
+  /** Superfície em edição ("front", "back" ou o id da extra): a página vira o mockup 3D para ela. */
+  onSide?: (side: string) => void;
   /** Gabarito oficial da seleção (medidas, sangria, corte e segurança): o editor e o PDF seguem ele. */
   gabarito?: Gabarito | null;
   /** Slug do produto (nome do PDF de impressão). */
@@ -108,8 +115,9 @@ type Props = {
   heading?: ReactNode;
 };
 
-type Side = "front" | "back";
 type Mode = "texto" | "imagem";
+type SurfaceUpload = { name: string | null; error: string | null; busy: boolean };
+const NO_UPLOAD: SurfaceUpload = { name: null, error: null, busy: false };
 
 /** Peça e proporção usadas nas prévias quando a página não informa o tipo. */
 const FAMILY_SAMPLE: Record<ArtFamily, { kind: MockupKind; aspect: number }> = {
@@ -134,25 +142,34 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
-  // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
+  // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
-  const [side, setSide] = useState<Side>("front");
-  const back = twoSided && side === "back";
-  const [modes, setModes] = useState<Record<Side, Mode>>(() => ({ front: art.src ? "imagem" : "texto", back: art.back?.src ? "imagem" : "texto" }));
+  const list: readonly Superficie[] = surfaces?.length ? surfaces : twoSided ? [{ id: "front", label: "Frente" }, { id: "back", label: "Verso" }] : [{ id: "front", label: "Frente" }];
+  const [picked, setPicked] = useState("front");
+  // A superfície escolhida sumiu (outra variação): volta para a frente.
+  const side = list.some((s) => s.id === picked) ? picked : "front";
+  const isFront = side === "front";
+  const back = side === "back";
+  const sideInfo = list.find((s) => s.id === side) ?? list[0];
+  const [modes, setModes] = useState<Record<string, Mode>>(() => ({ front: art.src ? "imagem" : "texto", back: art.back?.src ? "imagem" : "texto" }));
   // Enquanto o cliente não escolhe a fonte, cada estilo traz a sua.
   const [fontTouched, setFontTouched] = useState(art.font !== DEFAULT_ART.font);
-  const [backUpload, setBackUpload] = useState<{ name: string | null; error: string | null; busy: boolean }>({ name: null, error: null, busy: false });
+  const [uploads, setUploads] = useState<Record<string, SurfaceUpload>>({});
+  const sideUpload = uploads[side] ?? NO_UPLOAD;
+  const setSideUpload = (id: string, update: (u: SurfaceUpload) => SurfaceUpload) => setUploads((all) => ({ ...all, [id]: update(all[id] ?? NO_UPLOAD) }));
 
-  // Verso ainda vazio: mesmo estilo, fonte e cores da frente (identidade estável para o editor).
-  const sideArt = useMemo(() => (back ? (art.back ?? blankBack(art)) : art), [back, art]);
-  const onSideArt = (update: (a: ArtSettings) => ArtSettings) => {
-    if (back) onArt((a) => ({ ...a, back: { ...update(a.back ?? blankBack(a)), back: null } }));
-    else onArt(update);
+  // Superfície ainda vazia: mesmo estilo, fonte e cores da frente (identidade estável para o editor).
+  const sideArt = useMemo(() => surfaceArt(art, side), [side, art]);
+  const onSideArt = (update: (a: ArtSettings) => ArtSettings) => onArt((a) => withSurfaceArt(a, side, update));
+  const mode: Mode = uploadOnly ? "imagem" : (modes[side] ?? (sideArt.src ? "imagem" : "texto"));
+  const setMode = (value: Mode) => setModes((m) => ({ ...m, [side]: value }));
+  const hasSurfaceArt = (id: string) => (id === "front" ? hasArtContent(art) : hasArtContent(id === "back" ? art.back : art.faces?.[id]));
+  const pickSide = (value: string) => {
+    setPicked(value);
+    onSide?.(value);
   };
-  const mode: Mode = uploadOnly ? "imagem" : modes[side === "back" && twoSided ? "back" : "front"];
-  const setMode = (value: Mode) => setModes((m) => ({ ...m, [back ? "back" : "front"]: value }));
 
   const neon = family === "neon";
   const apparel = family === "apparel";
@@ -177,12 +194,12 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   const effectiveLeds = art.ledColors?.length ? art.ledColors : ledColors;
   const showMannequin = pieceKind === "tshirt" && !NO_MANNEQUIN_VARIANTS.has(pieceVariant ?? "");
   // Gabarito do lado em edição: com proporção compatível, o editor trabalha no corte do painel (com sangria).
-  const sideGabarito = back ? (gabarito?.back ?? null) : (gabarito?.front ?? null);
+  const sideGabarito = isFront ? (gabarito?.front ?? null) : back ? (gabarito?.back ?? null) : (gabarito?.faces?.[side] ?? null);
   // Chinelo: só a palmilha inteira usa o molde; região (dedos, meio, calcanhar) usa a faixa dela.
   const templatePanel = sideGabarito?.frame && !neon && (!region || region.value === "inteira") ? sideGabarito.ref.panel : null;
   const stageAspect = templatePanel ? templatePanel.cut.w / templatePanel.cut.h : editorAspect;
   const stageCm = templatePanel ? { widthCm: templatePanel.cut.w / 10, heightCm: templatePanel.cut.h / 10 } : areaCm;
-  const previewExtra: Partial<ArtRender> = { frontWindow, surface, sample: !back };
+  const previewExtra: Partial<ArtRender> = { frontWindow, surface, sample: isFront };
 
   const pickStyle = (value: ArtStyle) => {
     const suggested = ART_STYLES.find((s) => s.value === value)?.font ?? DEFAULT_ART.font;
@@ -194,22 +211,23 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   const fitArea: FitArea | null = spec ? fitAreaFor(spec) : null;
   const sideFit = templatePanel ? null : fitArea;
 
-  // Imagem do verso: lida aqui (a da frente vai pelo onFile da página, que também anexa PDF ao pedido).
-  // Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
-  const backSeq = useRef(0);
+  // Imagem do verso e das outras superfícies: lida aqui (a da frente vai pelo onFile da página, que também anexa o
+  // PDF ao pedido). Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
+  const surfaceSeq = useRef(0);
   const onBackFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
     if (!file) return;
+    const target = side;
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-      setBackUpload((u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
+      setSideUpload(target, (u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
       return;
     }
-    const seq = ++backSeq.current;
+    const seq = ++surfaceSeq.current;
     const pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-    setBackUpload((u) => ({ ...u, error: null, busy: true }));
+    setSideUpload(target, (u) => ({ ...u, error: null, busy: true }));
     try {
-      // Verso no gabarito: arquivo feito nele entra como veio; os outros, encaixados nele. Sem gabarito, o
+      // Superfície no gabarito: arquivo feito nele entra como veio; os outros, encaixados nele. Sem gabarito, o
       // tratador encaixa na área do mockup.
-      const backSide = gabarito?.back ?? null;
+      const backSide = sideGabarito;
       const src = pdf
         ? (await (await import("./gabarito/pdf-artwork")).readPdfArtwork(file)).src
         : (
@@ -220,21 +238,23 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
               attachable: false,
             })
           ).src;
-      if (seq !== backSeq.current) {
+      if (seq !== surfaceSeq.current) {
         releaseSource(src);
         return;
       }
-      onSideArt((a) => {
-        const fresh: ArtSettings = { ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null };
-        if (backSide?.frame) return fitToTemplate(fresh, backSide, { transparentBase: fitArea?.transparentBase ?? apparel, frontWindow: gabarito?.fitWindow });
-        return fitArea ? autoFitArt(fresh, fitArea) : fresh;
-      });
-      setBackUpload({ name: file.name, error: null, busy: false });
+      onArt((all) =>
+        withSurfaceArt(all, target, (a) => {
+          const fresh: ArtSettings = { ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null };
+          if (backSide?.frame) return fitToTemplate(fresh, backSide, { transparentBase: fitArea?.transparentBase ?? apparel, frontWindow: gabarito?.fitWindow });
+          return fitArea ? autoFitArt(fresh, fitArea) : fresh;
+        }),
+      );
+      setSideUpload(target, () => ({ name: file.name, error: null, busy: false }));
     } catch (error) {
-      if (seq !== backSeq.current) return;
+      if (seq !== surfaceSeq.current) return;
       const message =
         error instanceof IntakeError ? error.message : pdf ? "Não conseguimos ler esse PDF. Tente exportar de novo ou envie PNG/JPG." : "Não conseguimos ler essa imagem. Tente PNG, JPG, WEBP ou SVG.";
-      setBackUpload((u) => ({ ...u, error: message, busy: false }));
+      setSideUpload(target, (u) => ({ ...u, error: message, busy: false }));
     }
   };
 
@@ -251,11 +271,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       ? () => onSideArt((a) => autoFitArt({ ...a, layout: null }, sideFit))
       : null;
 
-  const upload = back
+  const upload = !isFront
     ? {
-        name: sideArt.src ? (backUpload.name ?? "Imagem do verso") : null,
-        error: backUpload.error,
-        busy: backUpload.busy,
+        name: sideArt.src ? (sideUpload.name ?? `Imagem: ${sideInfo.label.toLowerCase()}`) : null,
+        error: sideUpload.error,
+        busy: sideUpload.busy,
         onFile: onBackFile,
         accept: ART_ACCEPT,
         hint: gabarito ? "PNG, JPG, WEBP, SVG ou PDF · encaixamos no gabarito · ou arraste aqui" : "PNG, JPG, WEBP, SVG ou PDF · ajustamos na peça · ou arraste aqui",
@@ -301,31 +321,25 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {twoSided && (
+        {list.length > 1 && list.length <= 3 && !list.some((s) => s.pagina) && (
           <SegmentedControl
-            label="Lado da arte"
+            label="Superfície da arte"
             value={side}
-            onChange={(value) => {
-              setSide(value);
-              onSide?.(value);
-            }}
-            options={[
-              { value: "front", label: "Frente" },
-              {
-                value: "back",
-                label: (
-                  <>
-                    Verso
-                    {hasArtContent(art.back) && (
-                      <>
-                        <IconCheck className="size-3.5" strokeWidth={2.6} />
-                        <span className="sr-only">(com arte)</span>
-                      </>
-                    )}
-                  </>
-                ),
-              },
-            ]}
+            onChange={pickSide}
+            options={list.map((s) => ({
+              value: s.id,
+              label: (
+                <>
+                  {s.label}
+                  {s.id !== "front" && hasSurfaceArt(s.id) && (
+                    <>
+                      <IconCheck className="size-3.5" strokeWidth={2.6} />
+                      <span className="sr-only">(com arte)</span>
+                    </>
+                  )}
+                </>
+              ),
+            }))}
           />
         )}
         {!uploadOnly && (
@@ -341,14 +355,31 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
         )}
       </div>
       {uploadOnly && <p className="mt-2 text-caption text-muted">O logotipo é um desenho seu: envie o arquivo (de preferência em vetor: PDF, AI, CDR ou SVG). A prévia em 3D é ilustrativa.</p>}
+      {(list.length > 3 || list.some((s) => s.pagina)) && (
+        <div className="mt-3">
+          <p className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 text-[15px] font-bold">
+            Onde vai a arte
+            <span className="text-caption font-normal text-muted">
+              {list.filter((s) => hasSurfaceArt(s.id)).length} de {list.length} com arte
+            </span>
+          </p>
+          <OptionGroup
+            label="Superfície da arte"
+            value={side}
+            onChange={pickSide}
+            options={list.map((s) => ({ value: s.id, label: hasSurfaceArt(s.id) ? `${s.label} ✓` : s.label }))}
+          />
+        </div>
+      )}
       {back && (
         <p className="mt-2 text-caption text-muted">
           {pieceKind === "tshirt" ? "Logo ou texto nas costas" : "Arte do verso"}: vazio, o verso sai sem impressão.
           {spec && spec.back !== "blank" ? " A opção escolhida inclui impressão no verso." : ""}
         </p>
       )}
+      {!isFront && !back && <p className="mt-2 text-caption text-muted">Arte de “{sideInfo.label}”: vazio, essa parte sai na cor do fundo.</p>}
 
-      <div className={cx("mt-4 grid gap-5 rounded-card p-4 ring-1 transition-colors", missing && !back ? "bg-coral-50 ring-coral-700" : "bg-white ring-line")}>
+      <div className={cx("mt-4 grid gap-5 rounded-card p-4 ring-1 transition-colors", missing && isFront ? "bg-coral-50 ring-coral-700" : "bg-white ring-line")}>
         {mode === "texto" ? (
           <div className="grid gap-5">
             <div>
@@ -370,11 +401,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             </div>
 
             <TextField
-              label={back ? "Texto do verso" : "Texto da arte"}
+              label={isFront ? "Texto da arte" : back ? "Texto do verso" : `Texto: ${sideInfo.label.toLowerCase()}`}
               value={sideArt.text}
               onChange={(text) => onSideArt((a) => ({ ...a, text }))}
               maxLength={TEXT_LIMIT[family]}
-              placeholder={back ? "Ex.: nome ou número" : SAMPLE_TEXT[family]}
+              placeholder={isFront ? SAMPLE_TEXT[family] : "Ex.: nome ou número"}
               hint={sideArt.src ? "Aparece por cima da imagem; arraste no editor abaixo para mudar o lugar." : "Aparece no mockup na hora. Arraste no editor abaixo para posicionar."}
               autoComplete="off"
             />
@@ -477,7 +508,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             accept={upload.accept}
             hint={upload.hint}
             canChooseBackground={!neon && !apparel}
-            removable={back}
+            removable={!isFront}
             styleName={styleInfo.label}
             report={fitReport(sideArt, sideFit)}
             fitControls={fitControls}
@@ -497,9 +528,9 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             surface={surface}
             ledColors={effectiveLeds}
             frontWindow={templatePanel ? gabarito?.frontWindow : frontWindow}
-            sample={!back}
+            sample={isFront}
             label={label}
-            sideLabel={twoSided ? (back ? "Verso" : "Frente") : undefined}
+            sideLabel={list.length > 1 ? sideInfo.label : undefined}
             template={templatePanel}
             onAutoFit={onAutoFit}
           />
@@ -507,14 +538,14 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
         {gabarito && !blank && (
           <div className="border-t border-line pt-5">
-            <GabaritoPanel gabarito={gabarito} art={art} side={back ? "back" : "front"} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
+            <GabaritoPanel gabarito={gabarito} art={art} side={side} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
           </div>
         )}
       </div>
 
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
 
-      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (backUpload.name ?? "imagem do verso") : null} />}
+      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
 
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>

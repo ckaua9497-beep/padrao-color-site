@@ -44,6 +44,8 @@ type ViewerProps = {
    * "Ver verso" do viewer continua valendo até a página mudar o valor de novo.
    */
   side?: ViewerSide;
+  /** Superfície extra em edição (passa para os modelos em useSceneMode().face). */
+  face?: string | null;
   /**
    * Foco na arte (a placa da fachada): > 0 leva a câmera de frente para a parte do modelo marcada com
    * `userData.focus`, escurece o estúdio como no fim de tarde e acende as luzes do modelo; um número novo refaz
@@ -1061,7 +1063,7 @@ function roomOf(choice: SceneChoice, rooms: RoomId[]): RoomId | null {
 /** Cotas no ambiente: só onde a peça tem frente plana para medir (parede, papel, chão, tampo). */
 const DIM_SPOTS = new Set(["wall", "paper", "window", "towel", "top", "floor", "stand"]);
 
-export default function MockupViewer({ spec, art, label, captureRef, fallbackImage, side, focus = 0, className = "" }: ViewerProps) {
+export default function MockupViewer({ spec, art, label, captureRef, fallbackImage, side, face = null, focus = 0, className = "" }: ViewerProps) {
   const surface = useRef<HTMLDivElement>(null);
   const shot = useRef<ShotFn | null>(null);
   const framingRef = useRef<Framing | null>(null);
@@ -1132,8 +1134,8 @@ export default function MockupViewer({ spec, art, label, captureRef, fallbackIma
   const glowA = leds[0] ?? DEFAULT_GLOW[0];
   const glowB = leds[1] ?? glowA;
   const sceneMode = useMemo<SceneMode>(
-    () => ({ room: env ? env.placement.surface : null, back: showBack, motion: !reducedMotion, focus: focusOn }),
-    [env, showBack, reducedMotion, focusOn],
+    () => ({ room: env ? env.placement.surface : null, back: showBack, motion: !reducedMotion, focus: focusOn, face: env ? null : face }),
+    [env, showBack, reducedMotion, focusOn, face],
   );
 
   const onInteractStart = useCallback(() => {
