@@ -332,6 +332,45 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
 - **QA:** `/design-system/gabaritos` lista todos os produtos com as medidas, o mapeamento e as pendências, e desenha as folhas
   de cada um. `/gabaritos` mostra a medida de cada gabarito ao lado do download.
 
+### Arte: superfícies, verso, processos e arquivos automáticos
+
+Base de arte da revisão da Padrão de 25/10/2026 ("Observações Site Novo"). Todos os módulos de regra são puros e testados.
+
+- **Superfícies** (`src/lib/superficies.ts`). A frente é `art`, o verso é `art.back` e as outras partes ficam em `art.faces[id]`.
+  Exemplos: lâminas do photobook, miolo da agenda, abas do porta passaporte, laterais da caixa acrílica, partes do short.
+  - **De onde vêm:** das peças `other` do gabarito com nome; as folhas de máscara de verniz (`folhaDeVerniz`, campo `part`) ficam
+    de fora.
+  - **Verso:** aparece pela cor (x/1, x/4) ou pelo anexo "Impressão Verso" (`temVerso`), com ou sem gabarito.
+  - **No ArtStep:** abas, ou a lista "Onde vai a arte" quando são muitas partes.
+  - **No PDF:** `printSheets` põe a arte de cada superfície na peça dela.
+- **Processos** (`src/lib/processo.ts`):
+  - **P&B (1/0 e 1/1):** tons de cinza.
+  - **Laser (copo térmico):** um tom só.
+  - **Talhamento (tábuas):** um tom só, e só arquivo vetorial.
+  - **DTF:** sem fundo.
+
+  O processo vale para a prévia, o 3D e o PDF (`ArtSettings.mono` no `paintArt`), filtra as paletas e mostra um aviso.
+- **Orientação** (`src/lib/orientacao.ts`): horizontal ou vertical no crachá, no canvas e nos banners de medida definida. A
+  escolha troca largura e altura da spec, e o gabarito acompanha. Ela não aparece no formato quadrado nem quando a opção do
+  produto já diz a orientação.
+- **Contorno automático** (`src/lib/contorno.ts`). É o mesmo traçado do acrílico do LED neon: campo de distância mais marching
+  squares sobre a arte sem fundo.
+  - **Lona com corte especial (41):** o 3D sai recortado a 1 cm do desenho, e o PDF vetorial "Faca de Corte" vai no pedido.
+  - **Quadro acrílico com LED (337):** o tubo contorna o desenho a 1,5 cm, sem sair do quadro, e o PDF "Posição do Led" vai no
+    pedido.
+  - **Arte com fundo:** a lona é cortada reta, e o LED fica na moldura.
+  - **Arquivos:** os PDFs saem em `product/contorno-arquivo.ts`, com a linha em magenta 100%.
+- **Verniz localizado** (`src/lib/verniz.ts`):
+  - **Escolha do cliente:** em cada lado, o que leva verniz (`ArtSettings.varnish`: imagem e texto, só a imagem ou só o texto).
+  - **Máscara:** `varnishMask` pinta essas camadas em preto sobre branco. Ela sai pelo mesmo `printSheets`/`buildPrintPdf` do
+    arquivo de impressão (mesma folha e posição) ou, sem gabarito, no tamanho da peça (`product/verniz-arquivo.ts`).
+  - **Anexo:** "Verniz Local Frente/Verso" separados quando a variação tem esses tipos, senão "Verniz Localizado".
+  - **No 3D:** a mesma máscara (em branco) é o `clearcoatMap` da frente impressa (`useArtTexture`, `PrintMaterial`).
+- **Arquivo do cliente primeiro.** A faca, a posição do LED e a máscara de verniz só são geradas quando o cliente não mandou a
+  dele nem o arquivo único. Em "Arquivos para a produção", esses anexos aparecem como "feito automaticamente a partir da sua
+  arte". Variação que não lista o tipo recebe o arquivo como "Arquivo Único" (`attachmentType`).
+- **Conferência:** `npm run shots -- --p=41,337 --modo=mark` fotografa com a arte da marca sem fundo.
+
 ### Preço por m², prazo e grade de tamanhos
 
 - **Medida livre (m²).** Produtos com `customSize` (36 na API: banners, lonas, adesivos, rótulos, papéis, tecidos, placas e o

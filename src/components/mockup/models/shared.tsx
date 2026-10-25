@@ -72,7 +72,7 @@ const COARSE = typeof window !== "undefined" && typeof window.matchMedia === "fu
 
 
 export function repaintArt(
-  target: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture },
+  target: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; shine?: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } | null },
   variant: ArtVariant,
   art: ArtRender,
   image: HTMLImageElement | null,
@@ -82,7 +82,15 @@ export function repaintArt(
   paintArt(target.canvas, variant, art, image, label);
   if (mask) shapeMask(target.canvas, mask);
   target.texture.needsUpdate = true;
+  if (target.shine) {
+    // Verniz localizado: a máscara do brilho na mesma posição da arte (branco onde vai o verniz).
+    paintArt(target.shine.canvas, variant, { ...art, varnishMask: "white" }, image, label);
+    target.shine.texture.needsUpdate = true;
+  }
 }
+
+/** Textura da máscara do verniz localizado ligada à da arte (PrintMaterial lê em map.userData.varnishMap). */
+const VARNISH_MAP = "varnishMap";
 
 
 /**
@@ -100,7 +108,16 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
   const hires = Boolean(art.src) && variant !== "blank" && variant !== "gray" && !dragging;
   const longSide = hires ? textureLongSide(aspect, { maxTexture: gl.capabilities.maxTextureSize, mobile: COARSE }) : 1024;
   const anisotropy = gl.capabilities.getMaxAnisotropy();
-  const target = useMemo(() => createArtTexture(aspect, longSide, anisotropy), [aspect, longSide, anisotropy]);
+  // Verniz localizado: a frente impressa ganha a máscara do brilho (512 px bastam para o clearcoat).
+  const varnish = Boolean(art.spotVarnish) && variant !== "blank" && variant !== "neon";
+  const target = useMemo(() => {
+    const created = createArtTexture(aspect, longSide, anisotropy);
+    if (!varnish) return { ...created, shine: null };
+    const shine = createArtTexture(aspect, 512, anisotropy);
+    shine.texture.colorSpace = THREE.NoColorSpace;
+    created.texture.userData[VARNISH_MAP] = shine.texture;
+    return { ...created, shine };
+  }, [aspect, longSide, anisotropy, varnish]);
   // Repinta quando a fonte escolhida termina de carregar (o canvas não espera por ela sozinho).
   const [fontsLoaded, setFontsLoaded] = useState("");
   // Estilo e subtexto também trocam de fonte: repinta quando ela termina de carregar.
@@ -127,6 +144,7 @@ export function useArtTexture(aspect: number, variant: ArtVariant, art: ArtRende
     () => () => {
       waitingTextures.delete(target);
       target.texture.dispose();
+      target.shine?.texture.dispose();
     },
     [target],
   );
@@ -141,17 +159,22 @@ export function roughnessOf(spec: MockupSpec) {
 }
 
 
-/** Material da área impressa. Sem verniz usa o material padrão, mais leve de compilar que o físico. */
-export function PrintMaterial({ map, spec, transparent = false }: { map: THREE.Texture; spec: MockupSpec; transparent?: boolean }) {
-  const alphaTest = transparent ? 0.5 : 0;
+/**
+ * Material da área impressa. Sem verniz usa o material padrão, mais leve de compilar que o físico. `alphaMap`
+ * recorta a peça (lona com corte especial); quem troca entre com e sem recorte remonta o material (key).
+ */
+export function PrintMaterial({ map, spec, transparent = false, alphaMap = null }: { map: THREE.Texture; spec: MockupSpec; transparent?: boolean; alphaMap?: THREE.Texture | null }) {
+  const alphaTest = transparent || alphaMap ? 0.5 : 0;
   if (spec.spotVarnish) {
-    // Verniz localizado: a própria arte serve de máscara (canal vermelho) — brilha onde é clara.
-    return <meshPhysicalMaterial map={map} roughness={0.75} clearcoat={1} clearcoatMap={map} clearcoatRoughness={0.04} transparent={transparent} alphaTest={alphaTest} />;
+    // Verniz localizado: a máscara das camadas escolhidas (ArtSettings.varnish, pintada com a arte em useArtTexture);
+    // sem ela, a própria arte (canal vermelho) — brilha onde é clara.
+    const shine = (map.userData[VARNISH_MAP] as THREE.Texture | undefined) ?? map;
+    return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={0.75} clearcoat={1} clearcoatMap={shine} clearcoatRoughness={0.04} transparent={transparent} alphaTest={alphaTest} />;
   }
   if (spec.clearcoat > 0) {
-    return <meshPhysicalMaterial map={map} roughness={roughnessOf(spec)} clearcoat={spec.clearcoat} clearcoatRoughness={0.08} transparent={transparent} alphaTest={alphaTest} />;
+    return <meshPhysicalMaterial map={map} alphaMap={alphaMap} roughness={roughnessOf(spec)} clearcoat={spec.clearcoat} clearcoatRoughness={0.08} transparent={transparent} alphaTest={alphaTest} />;
   }
-  return <meshStandardMaterial map={map} roughness={roughnessOf(spec)} transparent={transparent} alphaTest={alphaTest} />;
+  return <meshStandardMaterial map={map} alphaMap={alphaMap} roughness={roughnessOf(spec)} transparent={transparent} alphaTest={alphaTest} />;
 }
 
 type BandOptions = {
@@ -389,6 +412,25 @@ export function backArtOf(art: ArtRender): ArtRender | null {
 /** Como a face de trás sai: "front" com a arte do verso do cliente; sem ela, a regra da opção (backVariant). */
 export function backKindOf(spec: MockupSpec, art: ArtRender): ArtVariant {
   return hasArtContent(art.back) ? "front" : backVariant(spec);
+}
+
+/**
+ * Arte de uma superfície extra (ArtSettings.faces[id], ids de src/lib/superficies.ts: lâminas do photobook, miolo,
+ * abas, lados da caixa, mangas, partes do short…), com o contexto de render da frente; null quando o cliente não montou.
+ */
+export function faceArtOf(art: ArtRender, id: string): ArtRender | null {
+  const face = art.faces?.[id];
+  if (!hasArtContent(face)) return null;
+  return { ...face!, back: null, faces: null, kind: art.kind, ledColors: art.ledColors, surface: art.surface, opaque: art.opaque, sample: false };
+}
+
+/**
+ * Textura de uma superfície extra: a arte do cliente nela, ou `fallback` ("blank" = lisa na cor do fundo, "front" =
+ * repete a frente, "gray" = frente em cinza).
+ */
+export function useFaceTexture(aspect: number, art: ArtRender, id: string, label: string, fallback: ArtVariant = "blank", mask?: MaskPath) {
+  const own = useMemo(() => faceArtOf(art, id), [art, id]);
+  return useArtTexture(aspect, own ? "front" : fallback, own ?? art, label, mask);
 }
 
 /**

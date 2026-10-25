@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "r
 import Mockup3D from "@/components/mockup/Mockup3D";
 import { MockupSkeleton } from "@/components/mockup/MockupSkeleton";
 import type { CaptureFn } from "@/components/mockup/MockupViewer";
-import { DEFAULT_ART, artFamily, hasArtContent, neonTextBox, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
+import { DEFAULT_ART, artFamily, facesWithArt, hasArtContent, neonTextBox, withMono, releaseSource, retainSources, styleLabel, thumbnailOf, type ArtSettings } from "@/components/mockup/art";
 import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { autoFitArt, fitAreaFor, needsAreaRefit, restoreBackground } from "./auto-fit";
 import { keepArtFiles, uploadedFileOf } from "./art-source";
@@ -26,9 +26,14 @@ import { acabamentosDa, cotarAcabamentos, resumoAcabamentos, type Acabamento, ty
 import { useCustomerVariations } from "@/lib/customer";
 import { formatBRL, leadLabel, quantityLabel } from "@/lib/format";
 import { nomeFrete, prazoFrete, type OpcaoFrete } from "@/lib/frete";
-import { formatSize, mockupSpec } from "@/lib/mockup";
+import { formatSize, mockupSpec, normalizeName } from "@/lib/mockup";
+import { rotulosDosLados, superficieDaPeca, superficiesDe, temVerso } from "@/lib/superficies";
+import { PROCESSO_INFO, arquivoServe, monoDo, processoDa } from "@/lib/processo";
+import { contornoDo } from "@/lib/contorno";
+import { destinoDoVerniz, tiposDoVerniz, vernizResumo } from "@/lib/verniz";
+import { orientacaoDe, orientacaoLivre, orientar, type Orientacao } from "@/lib/orientacao";
 import { artArea, artAspect } from "@/lib/mockup-kinds";
-import { describePanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
+import { describePanel, hasBackPanel, orientPages, pagesFor, panelFor, parametricPage, pieceKey, piecesOf, printsBack, ruleOf, type ProductTemplate, type TemplatePage } from "@/lib/templates";
 import {
   areaQuote,
   areaRules,
@@ -165,7 +170,10 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const [neonWidth, setNeonWidth] = useState("60");
   const [neonBox, setNeonBox] = useState<{ aspect: number; lines: number } | null>(null);
   // Lado da arte em edição (camisa, almofada, cama pet): o mockup 3D vira para ele.
-  const [artSide, setArtSide] = useState<"front" | "back">("front");
+  // Superfície em edição: "front", "back" ou o id da extra (miolo, lâmina, aba…). O 3D vira ou abre nela.
+  const [artSide, setArtSide] = useState("front");
+  // Orientação escolhida (crachá, canvas e banners de medida definida); null = a da opção.
+  const [orientation, setOrientation] = useState<Orientacao | null>(null);
   const [counts, setCounts] = useState<SizeCounts>(() => initialCounts(product));
   const [speed, setSpeed] = useState<Speed>("economico");
   // Depois de uma tentativa de compra, medida e grade mostram todos os erros (inclusive campo vazio).
@@ -246,12 +254,20 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       setSize({ width: String(w), height: String(h) });
     }
   }
-  const spec = useMemo(() => {
-    if (!measured || !modelWidth || !modelHeight) return baseSpec;
+  // Horizontal ou vertical (revisão da Padrão de 25/10/2026): a peça gira no 3D e o gabarito acompanha a proporção.
+  // Formato quadrado (canvas 25x25) não tem o que girar.
+  const canOrient =
+    baseSpec.widthCm !== baseSpec.heightCm &&
+    orientacaoLivre({ kind: baseSpec.kind, variant: baseSpec.variant, name: normalizeName(product.name), medidaLivre: measured, options: product.options });
+  const naturalOrientation = orientacaoDe(baseSpec.widthCm, baseSpec.heightCm);
+  // Sem useMemo: o React Compiler memoriza.
+  const spec = (() => {
+    const oriented = canOrient ? orientar(baseSpec, orientation) : baseSpec;
+    if (!measured || !modelWidth || !modelHeight) return oriented === baseSpec ? baseSpec : { ...oriented, label: formatSize(oriented.widthCm, oriented.heightCm) };
     const w = Math.min(modelWidth, MAX_MODEL_CM);
     const h = Math.min(modelHeight, MAX_MODEL_CM);
     return { ...baseSpec, widthCm: w, heightCm: h, label: formatSize(w, h) };
-  }, [baseSpec, measured, modelWidth, modelHeight]);
+  })();
   const family = artFamily(spec.kind);
 
   // Customização da variação escolhida: sem personalização e neon de modelo pronto não recebem arte (a do editor é
@@ -275,6 +291,21 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const fitArea = fitAreaFor(spec);
   const transparentBase = fitArea.transparentBase;
 
+  // Processo que limita a arte (P&B, laser, talhamento, DTF): a prévia, o 3D e o PDF saem como a produção faz.
+  const processo = semArte ? null : processoDa({ kind: spec.kind, name: normalizeName(product.name), selection });
+  // Contorno automático (lona com corte especial, quadro com LED): a faca ou o caminho do LED saem do desenho.
+  const contorno = semArte ? null : contornoDo({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name) });
+  // Verniz localizado: a máscara sai da arte (ArtSettings.varnish) para os tipos de anexo de verniz da variação.
+  const vernizTipos = spec.spotVarnish && !semArte ? tiposDoVerniz(destinoDoVerniz(producao)) : [];
+  const automaticFiles = [...(contorno ? [contorno.anexo] : []), ...vernizTipos];
+  const semFundo = contorno !== null;
+  const renderArt = useMemo(() => {
+    const painted = withMono(art, monoDo(processo));
+    // DTF e contorno automático: a imagem vai sem o retângulo de fundo (aplicação localizada, corte no desenho).
+    return processo === "dtf" || semFundo ? { ...painted, background: "rgba(0,0,0,0)" } : painted;
+  }, [art, processo, semFundo]);
+  // Verso pela cor e pelo tipo de peça (4/1, 4/4, "frente e verso", camisa, almofada, wind banner…), com ou sem gabarito.
+  const versoPelaCor = !semArte && temVerso({ kind: spec.kind, variant: spec.variant, name: normalizeName(product.name), selection, anexos: custom.anexos });
   // Gabarito oficial da seleção: folhas (no tamanho de referência, nas camisas), painel da frente e do verso.
   const printTemplate = product.printTemplate ?? null;
   const refSize = apparel ? (sizes.find((s) => (counts[s] ?? 0) > 0) ?? sizes[Math.floor(sizes.length / 2)]) : null;
@@ -311,9 +342,27 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     const frontWindow = front && front.ref.panel.cut.w / 10 < area.widthCm * 0.6 ? 1 : undefined;
     // Gabarito da volta inteira (caneca, copo, garrafa): o logo entra na parte da frente, como sem gabarito.
     const fitWindow = frontWindow === 1 ? undefined : fitArea.frontWindow;
-    return { pages, printPages, front, back: printsBack(selection) ? side("back") : null, aspect, kind: spec.kind, transparent: artFamily(spec.kind) === "apparel", frontWindow, fitWindow };
+    // Verso: a peça de verso do gabarito; num gabarito de folha única "frente e verso" (cartaz, cartão de PVC), a mesma
+    // peça da frente. Superfícies extras: cada peça do gabarito que tem a sua (miolo, lâminas, abas, lados).
+    const withBack = versoPelaCor || (printsBack(selection) && hasBackPanel(pages));
+    const backSide = withBack ? (hasBackPanel(pages) ? side("back") : front) : null;
+    const faces: NonNullable<Gabarito["faces"]> = {};
+    for (const page of pages) {
+      for (const piece of piecesOf(page)) {
+        const id = superficieDaPeca(page, piece);
+        if (!id || id === "front" || id === "back" || faces[id]) continue;
+        faces[id] = { ref: { page: piece.view, panel: piece.panel, index: piece.panelIndex, piece }, frame: printTemplate.editor !== "fit" };
+      }
+    }
+    return { pages, printPages, front, back: backSide, faces, aspect, kind: spec.kind, transparent: artFamily(spec.kind) === "apparel", frontWindow, fitWindow };
   })();
   const frontFacts = gabarito?.front ? describePanel(gabarito.front.ref.panel) : null;
+  const verso = versoPelaCor || Boolean(gabarito?.back);
+  // Superfícies com arte própria: frente, verso (4/1, 4/4, peças de duas faces) e as extras do gabarito.
+  const surfaces = semArte ? [] : superficiesDe({ pages: gabarito?.pages ?? [], verso, ...rotulosDosLados(spec.kind, spec.variant) });
+  const surfaceLabels = Object.fromEntries(surfaces.map((s) => [s.id, s.label]));
+  // A superfície escolhida sumiu (outra variação): o 3D volta para a frente.
+  const shownSide = surfaces.some((s) => s.id === artSide) ? artSide : "front";
 
   // Imagem no encaixe automático encaixada noutra peça (troca de medida/tamanho/formato, ou um envio que
   // terminou depois da troca): refaz o encaixe na peça atual — no gabarito, se o lado tem um; senão, na área do
@@ -353,11 +402,12 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     };
   }, [product.neon, art.text, art.subtext, art.style, art.font]);
 
-  // As imagens da arte (frente e verso) ficam registradas enquanto estão em uso; a trocada é liberada.
+  // As imagens da arte (frente, verso e outras superfícies) ficam registradas enquanto estão em uso; a trocada é liberada.
   const owner = useId();
+  const faceSources = useMemo(() => Object.values(art.faces ?? {}).map((face) => face.src), [art.faces]);
   useEffect(() => {
-    retainSources(owner, [art.src, art.back?.src]);
-  }, [owner, art.src, art.back?.src]);
+    retainSources(owner, [art.src, art.back?.src, ...faceSources]);
+  }, [owner, art.src, art.back?.src, faceSources]);
   useEffect(() => () => retainSources(owner, []), [owner]);
   // Rastreamento: produto visto (funil e produtos vencedores).
   useEffect(() => {
@@ -408,6 +458,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     ...(area ? [["Medida", `${fmtCm(widthCm)} × ${fmtCm(heightCm)} cm`] as [string, string]] : []),
     ...(apparel ? [["Tamanhos", sizeSummary(sizes, counts) || "nenhum"] as [string, string]] : []),
     ...(finishQuote.itens.length ? [["Acabamentos", resumoAcabamentos(finishQuote.itens)] as [string, string]] : []),
+    ...(processo ? [["Processo", PROCESSO_INFO[processo].titulo] as [string, string]] : []),
+    ...(canOrient ? [["Orientação", (orientation ?? naturalOrientation) === "vertical" ? "Vertical" : "Horizontal"] as [string, string]] : []),
     ...(expressAvailable ? [["Prazo", `${expressChosen ? "Expresso" : "Econômico"}${leadDays ? ` · ${daysText(leadDays)}` : ""}`] as [string, string]] : []),
   ];
   const avisos = avisosDoProduto(product.groupId);
@@ -419,7 +471,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
 
   // Produto vendido sem impressão: a arte é só simulação e não trava o pedido.
   const typedArt = art.text.trim().length > 0 || art.subtext.trim().length > 0;
-  const hasArt = semArte || artLater || Boolean(artName) || typedArt || Object.keys(productionFiles).length > 0;
+  const hasArt = semArte || artLater || Boolean(artName) || typedArt || facesWithArt(art).length > 0 || Object.keys(productionFiles).length > 0;
 
   // Escolher um valor ajusta os passos seguintes para uma combinação que existe na API.
   const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
@@ -442,6 +494,10 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // Grande demais: avisa sem cancelar um envio que ainda está em andamento.
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
       setUploadError(`O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.`);
+      return;
+    }
+    if (!arquivoServe(processo, file.name)) {
+      setUploadError("Para o talhamento na madeira, envie arte vetorial (SVG, PDF, AI, CDR ou EPS) ou escreva o texto.");
       return;
     }
     const seq = ++uploadSeq.current;
@@ -517,11 +573,11 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // Arquivo de impressão no gabarito (PDF no tamanho real): fica no navegador e segue com o pedido.
     let printFile: { id: string; name: string } | null = null;
     // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado.
-    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back);
+    const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back) || facesWithArt(art).length > 0;
     if (gabarito && !artLater && ownArt && !singleFile) {
       try {
         const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
-        const sheets = printSheets(gabarito, art);
+        const sheets = printSheets(gabarito, renderArt);
         const blob = await buildPrintPdf(sheets, { title: `${product.name} — arte no gabarito`, variant: family === "neon" ? "neon" : "front", label: product.name, transparent: gabarito.transparent });
         const id = crypto.randomUUID();
         const name = printFileName(product.slug);
@@ -535,6 +591,26 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     // (no lugar da arte montada); senão, a frente e o verso do editor (ou os arquivos próprios deles) e os separados.
     const manualFront = productionFiles["Impressão Frente"];
     const manualBack = productionFiles["Impressão Verso"];
+    // Faca de corte ou posição do LED feita do contorno da arte, quando o cliente não mandou a dele nem o arquivo único.
+    let autoContorno: File | null = null;
+    if (contorno && !semArte && !artLater && !singleFile && !productionFiles[contorno.anexo] && ownArt) {
+      try {
+        const { arquivoDeContorno } = await import("./contorno-arquivo");
+        autoContorno = await arquivoDeContorno(renderArt, spec, contorno, product.name, product.slug);
+      } catch {
+        autoContorno = null;
+      }
+    }
+    // Máscaras de verniz localizado feitas da arte, nos tipos que o cliente não mandou.
+    let autoVerniz: { file: File; tipo: string }[] = [];
+    if (vernizTipos.length && !artLater && !singleFile && ownArt) {
+      try {
+        const { arquivosDeVerniz } = await import("./verniz-arquivo");
+        autoVerniz = await arquivosDeVerniz({ art: renderArt, spec, gabarito, anexos: producao, enviados: productionFiles, label: product.name, slug: product.slug });
+      } catch {
+        autoVerniz = [];
+      }
+    }
     const artFiles =
       semArte || artLater
         ? []
@@ -545,6 +621,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
                   manualFront ? { file: manualFront, kind: "extra" as const, tipo: "Impressão Frente" } : { file: art.src ? uploadedFileOf(art.src) : artName ? attachedFile : null, kind: "arquivo" as const },
                   manualBack ? { file: manualBack, kind: "extra" as const, tipo: "Impressão Verso" } : { file: uploadedFileOf(art.back?.src), kind: "verso" as const },
                   ...producao.filter((tipo) => tipo !== ARQUIVO_UNICO && tipo !== "Impressão Frente" && tipo !== "Impressão Verso").map((tipo) => ({ file: productionFiles[tipo], kind: "extra" as const, tipo })),
+                  // A variação que não lista o tipo recebe o arquivo como "Arquivo Único" (attachmentType).
+                  ...(autoContorno && contorno ? [{ file: autoContorno, kind: "extra" as const, tipo: contorno.anexo }] : []),
+                  ...autoVerniz.map(({ file, tipo }) => ({ file, kind: "extra" as const, tipo })),
                 ],
             product.name,
           );
@@ -558,7 +637,9 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
         ...Object.fromEntries(extras),
-        ...(!semArte && !artLater ? artSummary(art, family) : {}),
+        ...(!semArte && !artLater ? artSummary(art, family, surfaceLabels) : {}),
+        ...(autoContorno && contorno ? { [contorno.anexo]: `automática · ${String(contorno.margemCm).replace(".", ",")} cm do desenho` } : {}),
+        ...(vernizTipos.length && !semArte && !artLater ? { "Verniz localizado": autoVerniz.length ? `${vernizResumo(art.varnish)} · máscara automática` : vernizResumo(art.varnish) } : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
       },
@@ -614,7 +695,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               )}
             </div>
           ) : (
-            <Mockup3D spec={spec} art={art} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={artSide} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
+            <Mockup3D spec={spec} art={renderArt} label={product.name} captureRef={captureRef} fallbackImage={product.image} side={shownSide === "back" ? "back" : "front"} face={shownSide !== "front" && shownSide !== "back" ? shownSide : null} className="aspect-square w-full lg:mx-auto lg:w-(--lado)" />
           )
         ) : (
           <div className="flex gap-3 lg:mx-auto lg:w-[min(100%,calc(var(--lado)+4.75rem))]">
@@ -731,12 +812,33 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
             <AcabamentosStep step={finishStep} total={totalSteps} disponiveis={finishes} escolhidos={chosenFinishes} onChange={setFinishing} unidades={pieces} />
           )}
 
+          {canOrient && !semArte && (
+            <li>
+              <p className="mb-2.5 text-[15px] font-bold">
+                Orientação da arte <span className="text-caption font-normal text-muted">· na horizontal ou na vertical, como preferir</span>
+              </p>
+              <OptionGroup
+                label="Orientação da arte"
+                value={orientation ?? naturalOrientation}
+                onChange={(value) => setOrientation(value === "vertical" ? "vertical" : "horizontal")}
+                options={[
+                  { value: "horizontal", label: "Horizontal" },
+                  { value: "vertical", label: "Vertical" },
+                ]}
+              />
+            </li>
+          )}
+
           {/* Variação sem personalização (produto liso, neon pronto): sem configuração de arte. */}
           {!semArte && (
             <ArtStep
               step={artStep}
               family={family}
               spec={spec}
+              surfaces={surfaces}
+              processo={processo}
+              contorno={contorno}
+              automaticFiles={automaticFiles}
               onSide={setArtSide}
               extraTypes={producao}
               extraFiles={extraFiles}
@@ -827,12 +929,12 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
           onAdd={addToCart}
           adding={adding}
           spec={spec}
-          art={art}
+          art={renderArt}
           name={product.name}
           fallbackImage={product.image}
           captureRef={captureRef}
           summary={[...keys.map((k) => [cleanOptionLabel(k), selection[k]] as [string, string]), ...previewExtras]}
-          artDetails={semArte ? {} : artSummary(art, family)}
+          artDetails={semArte ? {} : artSummary(art, family, surfaceLabels)}
           total={formatBRL(total)}
         />
       )}

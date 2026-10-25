@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { hasArtContent, sourceSizeOf, type ArtSettings, type ArtVariant } from "@/components/mockup/art";
+import { facesWithArt, hasArtContent, sourceSizeOf, type ArtSettings, type ArtVariant } from "@/components/mockup/art";
 import { Notice } from "@/components/facade/parts";
 import { IconDownload } from "@/components/facade/icons";
 import { Button } from "@/components/ui/Button";
@@ -12,7 +12,8 @@ import { TemplateLegend, TemplateSheet } from "./TemplateSheet";
 type Props = {
   gabarito: Gabarito;
   art: ArtSettings;
-  side: "front" | "back";
+  /** Superfície em edição: "front", "back" ou o id da extra (miolo, lâmina, aba…). */
+  side: string;
   variant: ArtVariant;
   label: string;
   slug: string;
@@ -30,17 +31,23 @@ const PREVIEW_PX = 520;
  * prévia das folhas com a arte (quando o gabarito tem várias peças ou tamanhos) e o PDF de impressão.
  */
 export function GabaritoPanel({ gabarito, art, side, variant, label, slug, attachedOnly = false }: Props) {
-  const current = side === "back" ? gabarito.back : gabarito.front;
-  const sideArt = side === "back" ? (art.back ?? null) : art;
+  const current = side === "front" ? gabarito.front : side === "back" ? gabarito.back : (gabarito.faces?.[side] ?? null);
+  const sideArt = side === "front" ? art : side === "back" ? (art.back ?? null) : (art.faces?.[side] ?? null);
   const panel = current?.ref.panel ?? null;
   const facts = panel ? describePanel(panel) : null;
-  const sheets = useMemo(() => printSheets(gabarito, art), [gabarito, art]);
+  // A folha da superfície em edição vem primeiro na prévia (a lâmina do photobook não fica escondida depois da capa).
+  const currentPage = current?.ref.piece.page.id ?? null;
+  const sheets = useMemo(() => {
+    const all = printSheets(gabarito, art);
+    const at = all.findIndex((sheet) => sheet.page.id === currentPage);
+    return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
+  }, [gabarito, art, currentPage]);
   // Prévia da folha quando há mais de uma peça: tamanhos, frente e verso, faces de um tecido só.
   const multi = gabarito.printPages.length > 1 || gabarito.pages.some((p) => piecesOf(p).length > 1 || p.panels.length > 1);
   const showSheets = multi || !current?.frame;
   const previewSheets = sheets.slice(0, MAX_PREVIEW_SHEETS);
   const hidden = sheets.length - previewSheets.length;
-  const hasArt = !attachedOnly && (hasArtContent(art) || hasArtContent(art.back));
+  const hasArt = !attachedOnly && (hasArtContent(art) || hasArtContent(art.back) || facesWithArt(art).length > 0);
 
   // Prévia: pinta cada painel com a cópia reduzida da arte (rápido) e mostra na folha do gabarito.
   const [previews, setPreviews] = useState<{ key: string; images: (string | null)[][] } | null>(null);
