@@ -611,8 +611,9 @@ export function SockModel({ spec, art, label }: ModelProps) {
   // num cano de ≈ 21 cm de volta só meia arte aparece, e ela precisa ser a metade do meio.
   const parts = useMemo(() => buildSock(printW, printH, -SOCK_TURN, ownBack), [printW, printH, ownBack]);
   useGeometriesCleanup(parts.list);
-  const base = spec.baseColor;
-  const accent = spec.accentColor ?? mix(base, "#6f6f6f", 0.35);
+  // Meia sublimada inteira (foto do produto): o tecido na cor de fundo da arte, calcanhar e biqueira pretos.
+  const base = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  const accent = spec.accentColor ?? "#18181b";
   return (
     <group>
       {SOCK_PAIR.map(([x, z]) => (
@@ -936,7 +937,7 @@ export function ShortsModel({ spec, art, label }: ModelProps) {
 /** Unidades de cena por centímetro: maiô infantil (≈ 6 anos) com ≈ 52 cm do ombro ao gancho. */
 const SWIM_UNIT = 2.5 / 52;
 
-const SW = { top: 27, bottom: -25, neckFront: 12.5, neckBack: 20.5 };
+const SW = { top: 27, bottom: -25, neckFront: 12.5, backLow: 8.5 };
 
 const swimWidth = smoothCurve([[-25, 9], [-12, 13.4], [-4, 12.6], [3, 11.9], [10, 12.6], [16, 13.2], [27, 13.4]]);
 const swimDepthMid = smoothCurve([[-25, 2.2], [-21, 4.8], [-16, 6.4], [-9, 7.1], [-1, 6.4], [6, 6.6], [13, 7.0], [19, 6.2], [24, 4.6], [27, 3.6]]);
@@ -947,31 +948,60 @@ function swimDepth(x: number, y: number) {
   return swimDepthMid(y) * ends * profile(Math.abs(x) / swimWidth(y));
 }
 
-function swimPolygon(neck: number) {
-  const r: THREE.Vector2[] = [];
+/** Lateral do maiô, do gancho (cava alta da perna) até a altura `top` da cava do braço. */
+function swimSide(r: THREE.Vector2[], top: number) {
   pushPoint(r, 0, SW.bottom);
   pushPoint(r, 1.7, SW.bottom);
   pushPoint(r, 3.4, SW.bottom);
-  // Cava da perna (recorte alto).
   pushQuad(r, [3.4, SW.bottom], [5.4, -13.4], [swimWidth(-10), -10], 24);
   for (let k = 1; k <= 36; k += 1) {
-    const y = -10 + (23 * k) / 36;
+    const y = -10 + ((top + 10) * k) / 36;
     pushPoint(r, swimWidth(y), y);
   }
-  // Cava do braço até a alça.
-  pushQuad(r, [swimWidth(13), 13], [8.7, 14.4], [7.7, 22.5], 20);
-  for (let k = 1; k <= 6; k += 1) pushPoint(r, lerp(7.7, 7.5, k / 6), lerp(22.5, SW.top, k / 6));
-  pushPoint(r, 6.3, SW.top);
-  pushPoint(r, 5.1, SW.top);
-  for (let k = 1; k <= 6; k += 1) pushPoint(r, lerp(5.1, 5.3, k / 6), lerp(SW.top, 22, k / 6));
-  // Decote: cavado na frente, mais alto nas costas.
-  pushQuad(r, [5.3, 22], [neck < 16 ? 4.8 : 3.8, neck + 0.9], [0, neck], 20);
+}
+
+/** Frente: cava do braço subindo para a alça fina (≈ 1,2 cm, como a do produto) e decote cavado. */
+function swimFrontPolygon() {
+  const r: THREE.Vector2[] = [];
+  swimSide(r, 13);
+  pushQuad(r, [swimWidth(13), 13], [8.6, 14.6], [7.4, 22.5], 20);
+  for (let k = 1; k <= 6; k += 1) pushPoint(r, lerp(7.4, 7.2, k / 6), lerp(22.5, SW.top, k / 6));
+  pushPoint(r, 6.6, SW.top);
+  pushPoint(r, 6.0, SW.top);
+  for (let k = 1; k <= 6; k += 1) pushPoint(r, lerp(6.0, 6.1, k / 6), lerp(SW.top, 22, k / 6));
+  pushQuad(r, [6.1, 22], [5.2, SW.neckFront + 0.9], [0, SW.neckFront], 20);
   return mirrorHalf(r);
 }
 
+/** Costas baixas: a borda de cima desce em U até o meio; as alças finas cruzam por cima (tubos à parte). */
+function swimBackPolygon() {
+  const r: THREE.Vector2[] = [];
+  swimSide(r, 12);
+  pushQuad(r, [swimWidth(12), 12], [swimWidth(12) * 0.55, 13.8], [0, SW.backLow], 20);
+  return mirrorHalf(r);
+}
+
+/** Alças finas que passam por cima do ombro e cruzam em X nas costas, até o canto de cima do lado oposto. */
+function swimStraps() {
+  return [1, -1].map((sx) => {
+    const x0 = sx * 6.6;
+    const x1 = -sx * swimWidth(12) * 0.82;
+    const back = (x: number, y: number) => -swimDepth(x, y) - 0.28;
+    const pts = [
+      new THREE.Vector3(x0, SW.top - 0.4, swimDepth(x0, SW.top - 0.4) * 0.4),
+      new THREE.Vector3(x0, SW.top + 0.6, 0),
+      new THREE.Vector3(x0 * 0.9, SW.top - 1.2, back(x0 * 0.9, SW.top - 1.2) - 0.4),
+      new THREE.Vector3(x0 * 0.35, 20, back(x0 * 0.35, 20) - 0.5),
+      new THREE.Vector3(-x0 * 0.35, 16.4, back(-x0 * 0.35, 16.4) - 0.35),
+      new THREE.Vector3(x1, 12.6, back(x1, 12.6)),
+    ];
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, "centripetal"), 80, 0.32, 8, false);
+  });
+}
+
 function buildSwimsuit(aspect: number) {
-  const frontPolygon = swimPolygon(SW.neckFront);
-  const backPolygon = swimPolygon(SW.neckBack);
+  const frontPolygon = swimFrontPolygon();
+  const backPolygon = swimBackPolygon();
   // Sublimação total: a arte cobre a frente inteira, sem distorcer (recorta o que sobra).
   const width = swimWidth(SW.top) * 2;
   const height = SW.top - SW.bottom;
@@ -981,7 +1011,8 @@ function buildSwimsuit(aspect: number) {
   const front = bodyPanel(frontPolygon, 1, 120, swimDepth, (x, y) => [x / artW + 0.5, (y - centerY) / artH + 0.5]);
   const back = bodyPanel(backPolygon, -1, 120, swimDepth);
   const bindings = [...edgeTubes(frontPolygon, swimDepth, 1, 0.32), ...edgeTubes(backPolygon, swimDepth, -1, 0.32)];
-  return { front, back, bindings, list: [front, back, ...bindings] };
+  const straps = swimStraps();
+  return { front, back, bindings, straps, list: [front, back, ...bindings, ...straps] };
 }
 
 /** Lycra cirrê (tecido do catálogo): brilho molhado, mas sem espelhar a ponto de apagar a arte. */
@@ -1001,10 +1032,11 @@ function Lycra({ map, color }: { map?: THREE.Texture; color?: string }) {
 }
 
 /**
- * Maiô infantil em manequim invisível. Frente e costas são painéis "vestidos" (grade do inflate.ts com
- * altura de um tronco elíptico que fecha no gancho e passa por cima do ombro nas alças), com decote
- * cavado na frente e mais alto atrás, forro escuro visto pelas aberturas e viés elástico em tubos finos.
- * A arte sublima a frente inteira pelo UV, em "cover" na proporção da área de arte; lycra brilhante.
+ * Maiô infantil em manequim invisível (revisão da Padrão de 25/10/2026, foto do produto). Frente e costas são painéis
+ * "vestidos" (grade do inflate.ts com altura de um tronco elíptico que fecha no gancho), com decote cavado na frente,
+ * costas baixas em U, alças finas que cruzam em X nas costas, forro branco visto pelas aberturas e viés elástico em
+ * tubos finos. A arte sublima a frente inteira pelo UV, em "cover" na proporção da área de arte; as costas saem na cor
+ * de fundo da arte; lycra brilhante.
  */
 export function SwimsuitModel({ spec, art, label }: ModelProps) {
   const printW = measure(spec.widthCm, 25);
@@ -1013,9 +1045,11 @@ export function SwimsuitModel({ spec, art, label }: ModelProps) {
   const texture = useArtTexture(aspect, "front", art, label);
   const parts = useMemo(() => buildSwimsuit(aspect), [aspect]);
   useGeometriesCleanup(parts.list);
-  const base = spec.baseColor;
+  const base = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
   const binding = spec.accentColor ?? shade(base, 0.86);
-  const lining = shade(base, 0.45);
+  // Forro branco (como o do produto) e alças brancas.
+  const lining = "#efede7";
+  const strap = spec.accentColor ?? "#f4f3ef";
   return (
     <group rotation-y={0.2} scale={SWIM_UNIT}>
       <mesh geometry={parts.front}>
@@ -1033,6 +1067,11 @@ export function SwimsuitModel({ spec, art, label }: ModelProps) {
       {parts.bindings.map((g, i) => (
         <mesh key={i} geometry={g}>
           <Lycra color={binding} />
+        </mesh>
+      ))}
+      {parts.straps.map((g, i) => (
+        <mesh key={`alca-${i}`} geometry={g}>
+          <Lycra color={strap} />
         </mesh>
       ))}
     </group>

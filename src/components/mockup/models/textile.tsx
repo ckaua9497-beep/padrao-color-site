@@ -1060,8 +1060,12 @@ function NeckLabel({ position, size = "M" }: { position: Vec3; size?: string }) 
   );
 }
 
-/** Calça do pijama dobrada (empilhada à frente da blusa): volume inflado, cós com cordão e debrum. */
-export function FoldedPants({ color, accent, position }: { color: string; accent: string; position: Vec3 }) {
+/**
+ * Calça (ou short, `shorts`) do pijama dobrada e empilhada à frente da blusa: volume inflado, cós com cordão e debrum.
+ */
+export function FoldedPants({ color, accent, position, shorts = false }: { color: string; accent: string; position: Vec3; shorts?: boolean }) {
+  const bodyW = shorts ? 30 : 34;
+  const bodyH = shorts ? 18 : 26;
   const parts = useMemo(() => {
     const shape = (w: number, h: number, r: number) => {
       const s = new THREE.Shape();
@@ -1076,8 +1080,8 @@ export function FoldedPants({ color, accent, position }: { color: string; accent
       s.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
       return s.getSpacedPoints(120).slice(0, -1);
     };
-    const body = shape(34, 26, 3.5);
-    const band = shape(34.4, 5.2, 1.6);
+    const body = shape(bodyW, bodyH, 3.5);
+    const band = shape(bodyW + 0.4, 5.2, 1.6);
     const top = inflatedSurface(body, { height: 2.7, falloff: 2.2, folds: 0.25, resolution: 60, side: 1 });
     const bottom = inflatedSurface(body, { height: 2.7, falloff: 2.2, resolution: 40, side: -1 });
     const bandTop = inflatedSurface(band, { height: 0.9, falloff: 0.8, resolution: 70, side: 1 });
@@ -1095,14 +1099,14 @@ export function FoldedPants({ color, accent, position }: { color: string; accent
       ),
     );
     const piping = openTubeGeometry(
-      Array.from({ length: 24 }, (_, k) => new THREE.Vector3(lerp(-17, 17, k / 23), -2.75, 0.55)),
+      Array.from({ length: 24 }, (_, k) => new THREE.Vector3(lerp(-bodyW / 2, bodyW / 2, k / 23), -2.75, 0.55)),
       0.24,
       6,
     );
     const stitch = mergeSimple(
       [1.6, -1.6].map((y) =>
         stitchGeometry(
-          Array.from({ length: 30 }, (_, k) => new THREE.Vector3(lerp(-16.5, 16.5, k / 29), y, 0.92)),
+          Array.from({ length: 30 }, (_, k) => new THREE.Vector3(lerp(-bodyW / 2 + 0.5, bodyW / 2 - 0.5, k / 29), y, 0.92)),
           0.38,
           0.24,
           0.04,
@@ -1110,7 +1114,7 @@ export function FoldedPants({ color, accent, position }: { color: string; accent
       ),
     );
     return { top, bottom, bandTop, bandBottom, cords, piping, stitch, list: [top, bottom, bandTop, bandBottom, ...cords, piping, stitch] };
-  }, []);
+  }, [bodyW, bodyH]);
   useGeometriesCleanup(parts.list);
   const thread = threadOf(color);
   return (
@@ -1121,7 +1125,7 @@ export function FoldedPants({ color, accent, position }: { color: string; accent
       <mesh geometry={parts.bottom}>
         <ClothMaterial cloth="dryfit" color={shade(color, 0.9)} />
       </mesh>
-      <group position={[0, -10.4, 2.75]}>
+      <group position={[0, -(bodyH / 2 - 2.6), 2.75]}>
         <mesh geometry={parts.bandTop}>
           <ClothMaterial cloth="cotton" color={shade(color, 0.97)} />
         </mesh>
@@ -1287,17 +1291,28 @@ function buildFigure(cut: ShirtCut, parts: ShirtParts, figure: Figure, lift: num
  */
 export function TshirtModel(props: ModelProps) {
   if (props.spec.variant === "body") return <PanelTshirtModel {...props} />;
-  if (props.spec.variant === "pajama") {
-    const accent = props.spec.accentColor ?? contrast(props.spec.baseColor);
-    return (
-      <TeeModel
-        {...props}
-        pajama
-        extra={({ yHem, front }) => <FoldedPants color={props.spec.baseColor} accent={accent} position={[0, yHem - 1.6, front + 15]} />}
-      />
-    );
-  }
+  if (props.spec.variant === "pajama") return <PajamaSet {...props} />;
   return <TeeModel {...props} />;
+}
+
+/**
+ * Pijama sublimado inteiro (revisão da Padrão de 25/10/2026): a blusa (manga curta no masculino, sem manga no feminino)
+ * e o short dobrado na frente, no tecido da cor de fundo da arte, com o acabamento num tom de contraste.
+ */
+function PajamaSet(props: ModelProps) {
+  const { spec, art } = props;
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  // Área impressa 3× maior na mesma proporção: o printRects a limita à frente da peça (sublimação quase de ponta a ponta).
+  const printed = useMemo(() => ({ ...spec, baseColor: fill, widthCm: (spec.widthCm || 21) * 3, heightCm: (spec.heightCm || 28) * 3 }), [spec, fill]);
+  const accent = spec.accentColor ?? contrast(fill);
+  return (
+    <TeeModel
+      {...props}
+      spec={printed}
+      pajama
+      extra={({ yHem, front }) => <FoldedPants color={fill} accent={accent} shorts position={[0, yHem - 1.6, front + 13]} />}
+    />
+  );
 }
 
 function PanelTshirtModel({ spec, art, label }: ModelProps) {

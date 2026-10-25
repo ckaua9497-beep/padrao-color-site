@@ -58,7 +58,10 @@ function teeStyle(spec: ModelProps["spec"], label: string): TeeStyle {
   if (spec.collar === "polo") return { sleeve: "short", neck: "polo", knit: "pique", edge: "rib", ...plain };
   switch (spec.variant) {
     case "pajama":
-      return { sleeve: "long", neck: "crew", knit: "jersey", edge: "rib", accentTrim: true, accentSleeves: false };
+      // Revisão da Padrão de 25/10/2026: o feminino é blusa sem manga com viés; o masculino, camiseta de manga curta.
+      return /\bfeminino\b/.test(spec.details ?? "")
+        ? { sleeve: "none", neck: "scoop", knit: "jersey", edge: "binding", accentTrim: true, accentSleeves: false }
+        : { sleeve: "short", neck: "crew", knit: "jersey", edge: "rib", accentTrim: true, accentSleeves: false };
     case "jersey":
       return { sleeve: "short", neck: "v", knit: "dryfit", edge: "rib", accentTrim: true, accentSleeves: true };
     case "vest":
