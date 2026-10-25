@@ -175,6 +175,15 @@ function usesFaces(panel: TemplatePanel): boolean {
   return Boolean(panel.faces?.some((f) => f.side && !f.ignore));
 }
 
+/**
+ * Folha da máscara de verniz localizado (cartão, postal, marcador com verniz local): o campo `part` do gabarito diz
+ * "verniz", "verniz local" ou "máscara verniz". Não é superfície de arte nem entra no arquivo de impressão; a máscara
+ * sai da arte do cliente (product/verniz-arquivo.ts). O nome da folha não serve: "Máscara de Dormir" é produto.
+ */
+export function folhaDeVerniz(page: Pick<TemplatePage, "part">): boolean {
+  return /\bverniz\b/i.test(page.part ?? "");
+}
+
 /** Peças de uma folha: os painéis inteiros e, nas peças contínuas com dobras, cada face. */
 export function piecesOf(page: TemplatePage): Piece[] {
   if (page.span && page.panels.length > 1) return [spanPiece(page)];

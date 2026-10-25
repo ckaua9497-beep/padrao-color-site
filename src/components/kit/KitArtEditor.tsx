@@ -152,7 +152,7 @@ export function KitArtEditor({ title, product, view, logoName, onSave, onClose }
           <ArtStep
             family={family}
             spec={spec}
-            onSide={setSide}
+            onSide={(value) => setSide(value === "back" ? "back" : "front")}
             blank={spec.blank}
             art={art}
             onArt={updateArt}

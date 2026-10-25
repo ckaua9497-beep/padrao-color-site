@@ -1,7 +1,8 @@
 import { hasArtContent, sourceOf, sourceSizeOf, withPlacement, type ArtRender, type ArtSettings } from "@/components/mockup/art";
 import type { MockupKind } from "@/lib/mockup-kinds";
 import { DPI_MARGIN, coverLoss, dpiTargets, hexOf, type FitMode } from "@/lib/image-prep";
-import { autoPlacementFor, containBox, coverBox, pieceFrame, pieceKey, piecesOf, placementFromBox, placementFromVisual, safeBoxOf, type Box, type PanelRef, type Piece, type TemplatePage } from "@/lib/templates";
+import { autoPlacementFor, containBox, coverBox, folhaDeVerniz, pieceFrame, pieceKey, piecesOf, placementFromBox, placementFromVisual, safeBoxOf, type Box, type PanelRef, type Piece, type TemplatePage } from "@/lib/templates";
+import { superficieDaPeca } from "@/lib/superficies";
 import { backgroundTouched, restoreBackground } from "../auto-fit";
 import type { PanelJob, PieceJob, SheetJob } from "./print-file";
 
@@ -20,6 +21,8 @@ export type Gabarito = {
   printPages: TemplatePage[];
   front: GabaritoSide | null;
   back: GabaritoSide | null;
+  /** Peça de cada superfície extra (ids de src/lib/superficies.ts: miolo, lâminas, abas, lados…). */
+  faces?: Record<string, GabaritoSide>;
   /** Proporção da área do mockup (modo "fit"). */
   aspect: number;
   kind: MockupKind;
@@ -162,21 +165,30 @@ export function printSheets(g: Gabarito, art: ArtSettings, pages: TemplatePage[]
   const front: ArtRender = { ...clear(art), back: null, kind: g.kind, sample: false, ledColors: art.ledColors ?? undefined, frontWindow: g.frontWindow };
   // Verso só quando a seleção imprime o verso (cartão 4/0 não leva o verso antigo).
   const back: ArtRender | null = g.back && art.back && hasArtContent(art.back) ? { ...clear(art.back), back: null, kind: g.kind, sample: false, ledColors: art.back.ledColors ?? undefined, frontWindow: g.frontWindow } : null;
+  // Superfícies extras (miolo, lâminas, abas, lados): a arte do cliente nela; sem arte, a peça fica na cor do fundo.
+  const faceArt = (id: string): ArtRender | null => {
+    const face = art.faces?.[id];
+    return face && hasArtContent(face) ? { ...clear(face), back: null, faces: null, kind: g.kind, sample: false, ledColors: face.ledColors ?? undefined, frontWindow: g.frontWindow } : null;
+  };
   const fill = g.transparent ? "rgba(0,0,0,0)" : art.background || "#ffffff";
   // Folha inteira do gabarito na frente: todas as peças recebem o pedaço delas (menos o verso com arte própria).
   const wholeSheet = art.templateFit?.match === "sheet" && art.src === art.templateFit.src;
   const mainPiece = g.front?.ref.piece ?? null;
   const sheets: SheetJob[] = [];
   for (const page of pages) {
-    // Máscara de verniz localizado: o cliente manda à parte; não entra a arte principal.
-    if (/m[aá]scara/i.test(`${page.part ?? ""} ${page.label}`)) continue;
+    // Máscara de verniz localizado: sai à parte (verniz-arquivo.ts); não entra a arte principal.
+    if (folhaDeVerniz(page)) continue;
     const pieces = piecesOf(page);
     // Verso sem arte (cartão só frente): a folha do verso fica fora do arquivo.
     if (pieces.length && pieces.every((p) => p.side === "back") && !back && !wholeSheet) continue;
     // Um job por peça (o mosaico tem uma peça para todas as placas: é pintada uma vez e recortada por placa).
     const jobs = pieces.map((piece) => {
-      const frame = piece.side === "back" ? (g.back?.frame ?? g.front?.frame) : g.front?.frame;
-      let pieceArt: ArtRender | null = piece.side === "front" ? front : piece.side === "back" ? back : null;
+      const surface = superficieDaPeca(page, piece);
+      const extra = surface !== null && surface !== "front" && surface !== "back";
+      const frame = surface === "back" ? (g.back?.frame ?? g.front?.frame) : extra ? (g.faces?.[surface]?.frame ?? g.front?.frame) : g.front?.frame;
+      // Peça repetida da frente/do verso (o lado esquerdo do short) sem arte própria: repete a da frente/do verso.
+      const sideArt = piece.side === "front" ? front : piece.side === "back" ? back : null;
+      let pieceArt: ArtRender | null = surface === "front" ? front : surface === "back" ? back : extra ? (faceArt(surface) ?? sideArt) : null;
       if (wholeSheet && !(piece.side === "back" && back) && !(mainPiece && samePiece(piece, mainPiece))) pieceArt = sheetArtFor(piece, front);
       const job: PieceJob = { panel: piece.panel, at: piece.at, rotate: piece.rotate, art: pieceArt, frame: frame ? "cut" : "fit", aspect: g.aspect, mode: "cover" };
       return { piece, job };
@@ -187,6 +199,15 @@ export function printSheets(g: Gabarito, art: ArtSettings, pages: TemplatePage[]
       pieces: jobs.filter(({ piece }) => piece.panelIndex === i || piece.panelIndex === -1).map(({ job }) => job),
     }));
     sheets.push({ page, panels });
+  }
+  // Gabarito de folha única "frente e verso" (cartaz, cartão de PVC): sem peça de verso, o verso do cliente sai numa
+  // cópia da folha da frente.
+  const backSheet = back && !pages.some((page) => piecesOf(page).some((piece) => piece.side === "back")) ? sheets.find((sheet) => sheet.panels.some((panel) => panel.pieces.length)) : null;
+  if (backSheet && back) {
+    sheets.push({
+      page: { ...backSheet.page, id: `${backSheet.page.id}#verso`, label: `${backSheet.page.label} · verso` },
+      panels: backSheet.panels.map((panel) => ({ ...panel, pieces: panel.pieces.map((job) => ({ ...job, art: job.art ? back : null })) })),
+    });
   }
   return sheets;
 }

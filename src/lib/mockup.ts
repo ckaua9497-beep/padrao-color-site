@@ -1,6 +1,7 @@
 import type { Selection } from "./pricing";
 import { KIND_INFO, type MockupKind } from "./mockup-kinds.ts";
 import { MOCKUP_OVERRIDES } from "./mockup-overrides.ts";
+import { contornoDo, type Contorno } from "./contorno.ts";
 
 export type { MockupKind } from "./mockup-kinds.ts";
 
@@ -58,6 +59,11 @@ export type MockupSpec = {
   pouch: boolean;
   /** Verniz localizado: brilho só onde a arte é clara. */
   spotVarnish: boolean;
+  /**
+   * Contorno automático da arte (src/lib/contorno.ts): "faca" recorta a lona no formato do desenho (Corte Especial),
+   * "led" passa o tubo do quadro em volta do desenho. null/ausente: a peça na forma dela.
+   */
+  contour?: Contorno["tipo"] | null;
   label: string;
   /**
    * Valores das opções escolhidas, sem acento e em minúsculas, separados por " | " ("p - 10x15,4x6 cm | alca vazada").
@@ -614,12 +620,13 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
 
   const override = product.slug ? MOCKUP_OVERRIDES[product.slug] : undefined;
   const blank = override?.blank ?? (BLANK_KINDS.includes(kind) || BLANK_NAME.test(name) || BLANK_VALUE.test(allValues));
+  const variant = override?.variant ?? variantOf(kind, name);
 
   return {
     kind,
     source,
     blank,
-    variant: override?.variant ?? variantOf(kind, name),
+    variant,
     widthCm,
     heightCm,
     depthCm,
@@ -648,6 +655,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     binding: /\bagenda\b|\bcaderno\b|\bplanner\b/.test(name) ? "spiral" : "spine",
     pouch: kind === "bag" && /\bnecessaire\b|\bestojo\b/.test(name),
     spotVarnish: /verniz local|uv local/.test(allValues) || /\bverniz local/.test(name),
+    contour: contornoDo({ kind, variant, name })?.tipo ?? null,
     label: formatSize(widthCm, heightCm),
     details: allValues,
   };

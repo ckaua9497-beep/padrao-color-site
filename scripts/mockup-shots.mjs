@@ -6,6 +6,7 @@
 //   npm run shots -- --p=55                          produto pelo ID do catálogo (ou pelo slug)
 //   npm run shots -- --p=55,45 --giros=0,35,-35,90,180
 //   npm run shots -- --p=245 --op="Cor:4/4 (colorido frente e verso)"
+//   npm run shots -- --p=41 --modo=mark                arte sem fundo (marca numa cor só)
 //   npm run shots -- --p=55 --saida=C:/caminho/das/fotos --tam=700 --base=http://localhost:3100
 //
 // Grava <saida>/<slug>/<giro>.webp e <saida>/<slug>/folha.webp (padrão de <saida>: <tmp>/padrao-shots).
@@ -24,6 +25,8 @@ const SAIDA = resolve(flag("saida") ?? join(tmpdir(), "padrao-shots"));
 const GIROS = (flag("giros") ?? "0,35,-35,90,180").split(",").map(Number).filter(Number.isFinite);
 const OP = flag("op");
 const COR = flag("cor") ?? "coral";
+// "mark": a marca numa cor só, sem fundo (testa recorte e contorno: lona com corte especial, LED do quadro).
+const MODO = flag("modo") === "mark" ? "mark" : "pattern";
 
 const read = (path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
 // Os produtos novos (API própria) entram também: as páginas de QA seguem mostrando os modelos deles.
@@ -81,7 +84,7 @@ let failed = 0;
 for (const product of targets) {
   const shots = [];
   for (const giro of GIROS) {
-    const query = new URLSearchParams({ p: product.slug, cor: COR, modo: "pattern", seed: "7", giro: String(giro), tam: String(TAM), ...(OP ? { op: OP } : {}) });
+    const query = new URLSearchParams({ p: product.slug, cor: COR, modo: MODO, seed: "7", giro: String(giro), tam: String(TAM), ...(OP ? { op: OP } : {}) });
     const photo = await catalogPhoto(browser, `${BASE}/design-system/fotos?${query}`);
     if (!photo.ok) {
       failed += 1;

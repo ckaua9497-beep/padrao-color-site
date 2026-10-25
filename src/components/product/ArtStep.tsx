@@ -14,7 +14,6 @@ import {
   TEXT_COLORS,
   TEXT_LIMIT,
   THERMAL_WINDOW,
-  blankBack,
   contrastRatio,
   flipflopRegion,
   hasArtContent,
@@ -26,12 +25,16 @@ import {
   releaseSource,
   sourceOf,
   styleOf,
+  surfaceArt,
+  withMono,
+  withSurfaceArt,
   type ArtFamily,
   type ArtRender,
   type ArtSettings,
   type ArtStyle,
   type ArtVariant,
   type FlipflopRegion,
+  type Varnish,
 } from "@/components/mockup/art";
 import { NEON_FONT_KEYS, TEXT_FONT_KEYS, type ArtFont } from "@/components/mockup/fonts";
 import { Button } from "@/components/ui/Button";
@@ -49,6 +52,9 @@ import { IntakeError, intakeImage } from "@/components/mockup/image-intake";
 import { ART_ACCEPT } from "@/lib/image-prep";
 import { uploadProblem } from "@/lib/art-files";
 import { ARQUIVO_UNICO, camposVisiveis } from "@/lib/customizacao";
+import type { Superficie } from "@/lib/superficies";
+import { PROCESSO_INFO, acceptDo, corServe, monoDo, type Processo } from "@/lib/processo";
+import type { Contorno } from "@/lib/contorno";
 import { autoFitArt, fitAreaFor, fitModeOf, fitReport, restoreBackground, type FitArea } from "./auto-fit";
 import { LedColorPicker } from "./art-editor/LedColorPicker";
 import { MannequinPanel } from "./art-editor/MannequinPanel";
@@ -95,9 +101,26 @@ type Props = {
    * Spec do mockup (opcional): medida da área em cm (régua e resolução no editor), garrafa térmica
    * (faixa de 60%), cor da peça (fundo da estampa) e subtipo da camisa (manequim).
    */
-  spec?: Pick<MockupSpec, "kind" | "widthCm" | "heightCm" | "thermal" | "variant" | "baseColor" | "back">;
-  /** Lado em edição (Frente | Verso): a página vira o mockup 3D para ele. */
-  onSide?: (side: Side) => void;
+  spec?: Pick<MockupSpec, "kind" | "widthCm" | "heightCm" | "thermal" | "variant" | "baseColor" | "back" | "spotVarnish">;
+  /**
+   * Superfícies com arte própria (src/lib/superficies.ts): frente, verso e as extras do gabarito (miolo, lâminas,
+   * abas, lados…). Sem a lista, vale a regra antiga: frente e verso nas peças de duas faces e no gabarito com verso.
+   */
+  surfaces?: readonly Superficie[];
+  /**
+   * Processo que limita a arte (src/lib/processo.ts): P&B só em cinza, laser e talhamento num tom só (e talhamento só
+   * vetor), DTF sem fundo. Mostra o aviso e filtra as cores, o fundo e os arquivos aceitos.
+   */
+  processo?: Processo | null;
+  /**
+   * Contorno automático (src/lib/contorno.ts): faca da lona com corte especial ou caminho do LED do quadro. Mostra o
+   * aviso, tira o fundo da arte e marca o anexo dele como automático nos arquivos para a produção.
+   */
+  contorno?: Contorno | null;
+  /** Anexos que o site faz sozinho quando o cliente não manda (faca, posição do LED, máscara de verniz). */
+  automaticFiles?: readonly string[];
+  /** Superfície em edição ("front", "back" ou o id da extra): a página vira o mockup 3D para ela. */
+  onSide?: (side: string) => void;
   /** Gabarito oficial da seleção (medidas, sangria, corte e segurança): o editor e o PDF seguem ele. */
   gabarito?: Gabarito | null;
   /** Slug do produto (nome do PDF de impressão). */
@@ -108,8 +131,9 @@ type Props = {
   heading?: ReactNode;
 };
 
-type Side = "front" | "back";
 type Mode = "texto" | "imagem";
+type SurfaceUpload = { name: string | null; error: string | null; busy: boolean };
+const NO_UPLOAD: SurfaceUpload = { name: null, error: null, busy: false };
 
 /** Peça e proporção usadas nas prévias quando a página não informa o tipo. */
 const FAMILY_SAMPLE: Record<ArtFamily, { kind: MockupKind; aspect: number }> = {
@@ -134,25 +158,41 @@ const MAX_UPLOAD_MB = 25;
  * almofadas, manequim proporcional na camisa, região do chinelo, faixa de 60% da garrafa térmica e as
  * cores e letras do neon.
  */
-export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
+export function ArtStep({ step, family, blank = false, extraTypes = [], extraFiles = {}, onExtraFile, art, onArt, artName, onFile, uploadError, uploading, uploadOnly = false, artLater = false, onArtLater, missing, kind, aspect, ledColors, label = "", sizes, sizeChart, spec, surfaces, processo = null, contorno = null, automaticFiles = [], onSide, gabarito = null, slug = "", onStylePick, heading }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
-  // Frente e verso: as peças de duas faces e os produtos cujo gabarito tem verso/costas.
+  // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
   const twoSided = TWO_SIDED.includes(pieceKind) || Boolean(gabarito?.back);
-  const [side, setSide] = useState<Side>("front");
-  const back = twoSided && side === "back";
-  const [modes, setModes] = useState<Record<Side, Mode>>(() => ({ front: art.src ? "imagem" : "texto", back: art.back?.src ? "imagem" : "texto" }));
+  const list: readonly Superficie[] = surfaces?.length ? surfaces : twoSided ? [{ id: "front", label: "Frente" }, { id: "back", label: "Verso" }] : [{ id: "front", label: "Frente" }];
+  const [picked, setPicked] = useState("front");
+  // A superfície escolhida sumiu (outra variação): volta para a frente.
+  const side = list.some((s) => s.id === picked) ? picked : "front";
+  const isFront = side === "front";
+  const back = side === "back";
+  const sideInfo = list.find((s) => s.id === side) ?? list[0];
+  const [modes, setModes] = useState<Record<string, Mode>>(() => ({ front: art.src ? "imagem" : "texto", back: art.back?.src ? "imagem" : "texto" }));
   // Enquanto o cliente não escolhe a fonte, cada estilo traz a sua.
   const [fontTouched, setFontTouched] = useState(art.font !== DEFAULT_ART.font);
-  const [backUpload, setBackUpload] = useState<{ name: string | null; error: string | null; busy: boolean }>({ name: null, error: null, busy: false });
+  const [uploads, setUploads] = useState<Record<string, SurfaceUpload>>({});
+  const sideUpload = uploads[side] ?? NO_UPLOAD;
+  const setSideUpload = (id: string, update: (u: SurfaceUpload) => SurfaceUpload) => setUploads((all) => ({ ...all, [id]: update(all[id] ?? NO_UPLOAD) }));
 
-  // Verso ainda vazio: mesmo estilo, fonte e cores da frente (identidade estável para o editor).
-  const sideArt = useMemo(() => (back ? (art.back ?? blankBack(art)) : art), [back, art]);
-  const onSideArt = (update: (a: ArtSettings) => ArtSettings) => {
-    if (back) onArt((a) => ({ ...a, back: { ...update(a.back ?? blankBack(a)), back: null } }));
-    else onArt(update);
+  // Superfície ainda vazia: mesmo estilo, fonte e cores da frente (identidade estável para o editor).
+  const sideArt = useMemo(() => surfaceArt(art, side), [side, art]);
+  // Processo: a prévia (estilos, editor, gabarito) já sai em cinza ou num tom só; a arte guardada fica sem ele.
+  const mono = monoDo(processo);
+  const shownArt = useMemo(() => (mono ? { ...sideArt, mono } : sideArt), [sideArt, mono]);
+  const shownAll = useMemo(() => withMono(art, mono), [art, mono]);
+  // Laser, talhamento e DTF não imprimem fundo.
+  // O contorno automático sai do desenho sem fundo.
+  const noBackground = processo === "laser" || processo === "talhamento" || processo === "dtf" || contorno !== null;
+  const onSideArt = (update: (a: ArtSettings) => ArtSettings) => onArt((a) => withSurfaceArt(a, side, update));
+  const mode: Mode = uploadOnly ? "imagem" : (modes[side] ?? (sideArt.src ? "imagem" : "texto"));
+  const setMode = (value: Mode) => setModes((m) => ({ ...m, [side]: value }));
+  const hasSurfaceArt = (id: string) => (id === "front" ? hasArtContent(art) : hasArtContent(id === "back" ? art.back : art.faces?.[id]));
+  const pickSide = (value: string) => {
+    setPicked(value);
+    onSide?.(value);
   };
-  const mode: Mode = uploadOnly ? "imagem" : modes[side === "back" && twoSided ? "back" : "front"];
-  const setMode = (value: Mode) => setModes((m) => ({ ...m, [back ? "back" : "front"]: value }));
 
   const neon = family === "neon";
   const apparel = family === "apparel";
@@ -177,12 +217,12 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   const effectiveLeds = art.ledColors?.length ? art.ledColors : ledColors;
   const showMannequin = pieceKind === "tshirt" && !NO_MANNEQUIN_VARIANTS.has(pieceVariant ?? "");
   // Gabarito do lado em edição: com proporção compatível, o editor trabalha no corte do painel (com sangria).
-  const sideGabarito = back ? (gabarito?.back ?? null) : (gabarito?.front ?? null);
+  const sideGabarito = isFront ? (gabarito?.front ?? null) : back ? (gabarito?.back ?? null) : (gabarito?.faces?.[side] ?? null);
   // Chinelo: só a palmilha inteira usa o molde; região (dedos, meio, calcanhar) usa a faixa dela.
   const templatePanel = sideGabarito?.frame && !neon && (!region || region.value === "inteira") ? sideGabarito.ref.panel : null;
   const stageAspect = templatePanel ? templatePanel.cut.w / templatePanel.cut.h : editorAspect;
   const stageCm = templatePanel ? { widthCm: templatePanel.cut.w / 10, heightCm: templatePanel.cut.h / 10 } : areaCm;
-  const previewExtra: Partial<ArtRender> = { frontWindow, surface, sample: !back };
+  const previewExtra: Partial<ArtRender> = { frontWindow, surface, sample: isFront };
 
   const pickStyle = (value: ArtStyle) => {
     const suggested = ART_STYLES.find((s) => s.value === value)?.font ?? DEFAULT_ART.font;
@@ -194,22 +234,23 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
   const fitArea: FitArea | null = spec ? fitAreaFor(spec) : null;
   const sideFit = templatePanel ? null : fitArea;
 
-  // Imagem do verso: lida aqui (a da frente vai pelo onFile da página, que também anexa PDF ao pedido).
-  // Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
-  const backSeq = useRef(0);
+  // Imagem do verso e das outras superfícies: lida aqui (a da frente vai pelo onFile da página, que também anexa o
+  // PDF ao pedido). Cada envio ganha um número: um envio anterior que termina depois não sobrescreve o último.
+  const surfaceSeq = useRef(0);
   const onBackFile = async (file: File | undefined, { raw = false }: { raw?: boolean } = {}) => {
     if (!file) return;
+    const target = side;
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-      setBackUpload((u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
+      setSideUpload(target, (u) => ({ ...u, error: `O arquivo tem mais de ${MAX_UPLOAD_MB} MB. Envie uma versão menor.` }));
       return;
     }
-    const seq = ++backSeq.current;
+    const seq = ++surfaceSeq.current;
     const pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-    setBackUpload((u) => ({ ...u, error: null, busy: true }));
+    setSideUpload(target, (u) => ({ ...u, error: null, busy: true }));
     try {
-      // Verso no gabarito: arquivo feito nele entra como veio; os outros, encaixados nele. Sem gabarito, o
+      // Superfície no gabarito: arquivo feito nele entra como veio; os outros, encaixados nele. Sem gabarito, o
       // tratador encaixa na área do mockup.
-      const backSide = gabarito?.back ?? null;
+      const backSide = sideGabarito;
       const src = pdf
         ? (await (await import("./gabarito/pdf-artwork")).readPdfArtwork(file)).src
         : (
@@ -220,21 +261,23 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
               attachable: false,
             })
           ).src;
-      if (seq !== backSeq.current) {
+      if (seq !== surfaceSeq.current) {
         releaseSource(src);
         return;
       }
-      onSideArt((a) => {
-        const fresh: ArtSettings = { ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null };
-        if (backSide?.frame) return fitToTemplate(fresh, backSide, { transparentBase: fitArea?.transparentBase ?? apparel, frontWindow: gabarito?.fitWindow });
-        return fitArea ? autoFitArt(fresh, fitArea) : fresh;
-      });
-      setBackUpload({ name: file.name, error: null, busy: false });
+      onArt((all) =>
+        withSurfaceArt(all, target, (a) => {
+          const fresh: ArtSettings = { ...restoreBackground(a), src, zoom: 1, offsetX: 0, offsetY: 0, layout: a.layout?.text ? { text: a.layout.text } : null, templateFit: null };
+          if (backSide?.frame) return fitToTemplate(fresh, backSide, { transparentBase: fitArea?.transparentBase ?? apparel, frontWindow: gabarito?.fitWindow });
+          return fitArea ? autoFitArt(fresh, fitArea) : fresh;
+        }),
+      );
+      setSideUpload(target, () => ({ name: file.name, error: null, busy: false }));
     } catch (error) {
-      if (seq !== backSeq.current) return;
+      if (seq !== surfaceSeq.current) return;
       const message =
         error instanceof IntakeError ? error.message : pdf ? "Não conseguimos ler esse PDF. Tente exportar de novo ou envie PNG/JPG." : "Não conseguimos ler essa imagem. Tente PNG, JPG, WEBP ou SVG.";
-      setBackUpload((u) => ({ ...u, error: message, busy: false }));
+      setSideUpload(target, (u) => ({ ...u, error: message, busy: false }));
     }
   };
 
@@ -251,11 +294,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       ? () => onSideArt((a) => autoFitArt({ ...a, layout: null }, sideFit))
       : null;
 
-  const upload = back
+  const upload = !isFront
     ? {
-        name: sideArt.src ? (backUpload.name ?? "Imagem do verso") : null,
-        error: backUpload.error,
-        busy: backUpload.busy,
+        name: sideArt.src ? (sideUpload.name ?? `Imagem: ${sideInfo.label.toLowerCase()}`) : null,
+        error: sideUpload.error,
+        busy: sideUpload.busy,
         onFile: onBackFile,
         accept: ART_ACCEPT,
         hint: gabarito ? "PNG, JPG, WEBP, SVG ou PDF · encaixamos no gabarito · ou arraste aqui" : "PNG, JPG, WEBP, SVG ou PDF · ajustamos na peça · ou arraste aqui",
@@ -276,6 +319,18 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
           {step !== undefined && <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>}
           {blank ? "Simule a sua arte" : "Sua arte"}
           <span className="text-caption font-normal text-muted">{blank ? "· o produto é vendido sem impressão" : "· aparece no mockup 3D"}</span>
+        </p>
+      )}
+
+      {processo && (
+        <p role="note" className="mb-3 rounded-control bg-mist px-3 py-2 text-caption text-ink">
+          <strong>{PROCESSO_INFO[processo].titulo}.</strong> {PROCESSO_INFO[processo].texto}
+        </p>
+      )}
+
+      {contorno && (
+        <p role="note" className="mb-3 rounded-control bg-mist px-3 py-2 text-caption text-ink">
+          <strong>{contorno.titulo}.</strong> {contorno.texto}
         </p>
       )}
 
@@ -301,31 +356,25 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {twoSided && (
+        {list.length > 1 && list.length <= 3 && !list.some((s) => s.pagina) && (
           <SegmentedControl
-            label="Lado da arte"
+            label="Superfície da arte"
             value={side}
-            onChange={(value) => {
-              setSide(value);
-              onSide?.(value);
-            }}
-            options={[
-              { value: "front", label: "Frente" },
-              {
-                value: "back",
-                label: (
-                  <>
-                    Verso
-                    {hasArtContent(art.back) && (
-                      <>
-                        <IconCheck className="size-3.5" strokeWidth={2.6} />
-                        <span className="sr-only">(com arte)</span>
-                      </>
-                    )}
-                  </>
-                ),
-              },
-            ]}
+            onChange={pickSide}
+            options={list.map((s) => ({
+              value: s.id,
+              label: (
+                <>
+                  {s.label}
+                  {s.id !== "front" && hasSurfaceArt(s.id) && (
+                    <>
+                      <IconCheck className="size-3.5" strokeWidth={2.6} />
+                      <span className="sr-only">(com arte)</span>
+                    </>
+                  )}
+                </>
+              ),
+            }))}
           />
         )}
         {!uploadOnly && (
@@ -341,14 +390,31 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
         )}
       </div>
       {uploadOnly && <p className="mt-2 text-caption text-muted">O logotipo é um desenho seu: envie o arquivo (de preferência em vetor: PDF, AI, CDR ou SVG). A prévia em 3D é ilustrativa.</p>}
+      {(list.length > 3 || list.some((s) => s.pagina)) && (
+        <div className="mt-3">
+          <p className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 text-[15px] font-bold">
+            Onde vai a arte
+            <span className="text-caption font-normal text-muted">
+              {list.filter((s) => hasSurfaceArt(s.id)).length} de {list.length} com arte
+            </span>
+          </p>
+          <OptionGroup
+            label="Superfície da arte"
+            value={side}
+            onChange={pickSide}
+            options={list.map((s) => ({ value: s.id, label: hasSurfaceArt(s.id) ? `${s.label} ✓` : s.label }))}
+          />
+        </div>
+      )}
       {back && (
         <p className="mt-2 text-caption text-muted">
           {pieceKind === "tshirt" ? "Logo ou texto nas costas" : "Arte do verso"}: vazio, o verso sai sem impressão.
           {spec && spec.back !== "blank" ? " A opção escolhida inclui impressão no verso." : ""}
         </p>
       )}
+      {!isFront && !back && <p className="mt-2 text-caption text-muted">Arte de “{sideInfo.label}”: vazio, essa parte sai na cor do fundo.</p>}
 
-      <div className={cx("mt-4 grid gap-5 rounded-card p-4 ring-1 transition-colors", missing && !back ? "bg-coral-50 ring-coral-700" : "bg-white ring-line")}>
+      <div className={cx("mt-4 grid gap-5 rounded-card p-4 ring-1 transition-colors", missing && isFront ? "bg-coral-50 ring-coral-700" : "bg-white ring-line")}>
         {mode === "texto" ? (
           <div className="grid gap-5">
             <div>
@@ -357,7 +423,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
                 <span className="text-caption font-normal text-muted">{styleInfo.hint}</span>
               </p>
               <StylePicker
-                art={sideArt}
+                art={shownArt}
                 family={family}
                 kind={pieceKind}
                 aspect={editorAspect}
@@ -370,11 +436,11 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             </div>
 
             <TextField
-              label={back ? "Texto do verso" : "Texto da arte"}
+              label={isFront ? "Texto da arte" : back ? "Texto do verso" : `Texto: ${sideInfo.label.toLowerCase()}`}
               value={sideArt.text}
               onChange={(text) => onSideArt((a) => ({ ...a, text }))}
               maxLength={TEXT_LIMIT[family]}
-              placeholder={back ? "Ex.: nome ou número" : SAMPLE_TEXT[family]}
+              placeholder={isFront ? SAMPLE_TEXT[family] : "Ex.: nome ou número"}
               hint={sideArt.src ? "Aparece por cima da imagem; arraste no editor abaixo para mudar o lugar." : "Aparece no mockup na hora. Arraste no editor abaixo para posicionar."}
               autoComplete="off"
             />
@@ -419,7 +485,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
               />
             </div>
 
-            {!neon && !apparel && (
+            {!neon && !apparel && !noBackground && (
               <div>
                 <p className="mb-2 text-[15px] font-bold">
                   Fundo <span className="font-normal text-muted">· {ART_BACKGROUNDS.find((b) => b.value === sideArt.background)?.label ?? "Personalizado"}</span>
@@ -436,7 +502,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
                       return { ...a, background, textColor };
                     })
                   }
-                  options={ART_BACKGROUNDS.map((b) => ({ value: b.value, label: b.label, color: b.value }))}
+                  options={ART_BACKGROUNDS.filter((b) => corServe(processo, b.value)).map((b) => ({ value: b.value, label: b.label, color: b.value }))}
                 />
               </div>
             )}
@@ -451,7 +517,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
                   variant="swatch"
                   value={sideArt.textColor}
                   onChange={(textColor) => onSideArt((a) => ({ ...a, textColor }))}
-                  options={TEXT_COLORS.map((c) => ({ value: c.value, label: c.label, color: c.value }))}
+                  options={TEXT_COLORS.filter((c) => corServe(processo, c.value)).map((c) => ({ value: c.value, label: c.label, color: c.value }))}
                 />
                 {apparel && <p className="mt-2 text-caption text-muted">A estampa sai sem fundo: escolha uma cor que contraste com o tecido.</p>}
                 {lowContrast && (
@@ -468,16 +534,16 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
           </div>
         ) : (
           <ImagePanel
-            art={sideArt}
+            art={shownArt}
             onArt={onSideArt}
             name={upload.name}
             error={upload.error}
             busy={upload.busy}
             onFile={upload.onFile}
-            accept={upload.accept}
-            hint={upload.hint}
-            canChooseBackground={!neon && !apparel}
-            removable={back}
+            accept={acceptDo(processo) ?? upload.accept}
+            hint={processo === "talhamento" ? "SVG, PDF, AI, CDR ou EPS (vetor) · ou arraste aqui" : upload.hint}
+            canChooseBackground={!neon && !apparel && !noBackground}
+            removable={!isFront}
             styleName={styleInfo.label}
             report={fitReport(sideArt, sideFit)}
             fitControls={fitControls}
@@ -487,7 +553,7 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
         <div className="border-t border-line pt-5">
           <ArtEditor2D
-            art={sideArt}
+            art={shownArt}
             onArt={onSideArt}
             kind={pieceKind}
             family={family}
@@ -497,9 +563,9 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
             surface={surface}
             ledColors={effectiveLeds}
             frontWindow={templatePanel ? gabarito?.frontWindow : frontWindow}
-            sample={!back}
+            sample={isFront}
             label={label}
-            sideLabel={twoSided ? (back ? "Verso" : "Frente") : undefined}
+            sideLabel={list.length > 1 ? sideInfo.label : undefined}
             template={templatePanel}
             onAutoFit={onAutoFit}
           />
@@ -507,14 +573,16 @@ export function ArtStep({ step, family, blank = false, extraTypes = [], extraFil
 
         {gabarito && !blank && (
           <div className="border-t border-line pt-5">
-            <GabaritoPanel gabarito={gabarito} art={art} side={back ? "back" : "front"} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
+            <GabaritoPanel gabarito={gabarito} art={shownAll} side={side} variant={neon ? "neon" : "front"} label={label} slug={slug} attachedOnly={Boolean(artName && !art.src)} />
           </div>
         )}
       </div>
 
+      {spec?.spotVarnish && !blank && !neon && <VarnishPicker art={sideArt} onArt={onSideArt} sideLabel={list.length > 1 ? sideInfo.label : null} />}
+
       {showMannequin && <MannequinPanel art={art} onArt={onArt} sizes={sizes} sizeChart={sizeChart} />}
 
-      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (backUpload.name ?? "imagem do verso") : null} />}
+      {!blank && !artLater && extraTypes.length > 0 && onExtraFile && <ProductionFiles types={extraTypes} files={extraFiles} onFile={onExtraFile} automatic={automaticFiles} editorFront={art.src ? artName : null} editorBack={art.back?.src ? (uploads.back?.name ?? "imagem do verso") : null} />}
 
       {blank ? (
         <p className="mt-3 text-caption text-muted">A arte não vai impressa: ela mostra como o produto fica depois que você personalizar.</p>
@@ -544,7 +612,50 @@ const PRODUCTION_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.svg,.tif,.tiff,.psd,.ai,.
  * aceita na API. Enviar o arquivo único esconde os separados e enviar um separado esconde o único (camposVisiveis). Sem
  * arquivo próprio na frente ou no verso, vale a imagem enviada no editor acima.
  */
-function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { types: readonly string[]; files: Record<string, File>; onFile: (tipo: string, file: File | null) => void; editorFront: string | null; editorBack: string | null }) {
+const VARNISH_OPTIONS: { value: Varnish; label: string }[] = [
+  { value: "tudo", label: "Imagem e texto" },
+  { value: "imagem", label: "Só a imagem" },
+  { value: "texto", label: "Só o texto" },
+];
+
+/**
+ * Verniz localizado: o que leva verniz na arte do lado em edição. A máscara para a produção sai daqui (o cliente ainda
+ * pode mandar a dele em "Arquivos para a produção") e o brilho aparece no 3D.
+ */
+function VarnishPicker({ art, onArt, sideLabel }: { art: ArtSettings; onArt: (update: (art: ArtSettings) => ArtSettings) => void; sideLabel: string | null }) {
+  const image = Boolean(art.src);
+  const text = Boolean(art.text.trim() || (art.subtext ?? "").trim());
+  return (
+    <div className="mt-4 rounded-card bg-white p-4 ring-1 ring-line">
+      <p className="text-[15px] font-bold">
+        Verniz localizado {sideLabel && <span className="font-normal text-muted">· {sideLabel.toLowerCase()}</span>}
+      </p>
+      <p className="mt-1 text-caption text-muted">O verniz dá brilho só onde você escolher; o resto fica fosco. A máscara de verniz é feita a partir da sua arte.</p>
+      {image && text ? (
+        <OptionGroup className="mt-3" label="Onde vai o verniz" value={art.varnish ?? "tudo"} onChange={(value) => onArt((a) => ({ ...a, varnish: value as Varnish }))} options={VARNISH_OPTIONS} />
+      ) : (
+        <p className="mt-2 text-sm">{image ? "O verniz vai na imagem (o fundo fica sem)." : "O verniz vai no texto e nos enfeites da arte (o fundo fica sem)."}</p>
+      )}
+    </div>
+  );
+}
+
+function ProductionFiles({
+  types,
+  files,
+  onFile,
+  automatic,
+  editorFront,
+  editorBack,
+}: {
+  types: readonly string[];
+  files: Record<string, File>;
+  onFile: (tipo: string, file: File | null) => void;
+  /** Anexos que o site faz sozinho a partir da arte (faca de corte, posição do LED, máscara de verniz) quando o cliente não envia. */
+  automatic: readonly string[];
+  editorFront: string | null;
+  editorBack: string | null;
+}) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const pick = (tipo: string, file: File | undefined) => {
     if (!file) return;
@@ -559,6 +670,7 @@ function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { ty
   const row = (tipo: string) => {
     const file = files[tipo];
     const editor = !file ? fromEditor(tipo) : null;
+    const auto = !file && automatic.includes(tipo);
     return (
       <li key={tipo} className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="min-w-36 text-sm font-semibold">{tipo === ARQUIVO_UNICO ? "Arquivo único" : tipo}</span>
@@ -572,8 +684,9 @@ function ProductionFiles({ types, files, onFile, editorFront, editorBack }: { ty
         ) : (
           <>
             {editor && <span className="min-w-0 flex-1 truncate text-sm text-muted">a imagem enviada acima ({editor})</span>}
+            {auto && <span className="min-w-0 flex-1 truncate text-sm text-muted">feito automaticamente a partir da sua arte</span>}
             <label className="cursor-pointer text-sm font-bold text-coral-700 underline-offset-2 hover:underline">
-              {editor ? "Trocar" : "Enviar arquivo"}
+              {editor ? "Trocar" : auto ? "Enviar a sua" : "Enviar arquivo"}
               <input type="file" accept={PRODUCTION_ACCEPT} className="sr-only" onChange={(event) => pick(tipo, event.target.files?.[0])} />
             </label>
           </>
