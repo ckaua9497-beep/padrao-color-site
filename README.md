@@ -91,8 +91,7 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   em `Variation.cz`): modo da arte (arquivo, sem personalização, neon frase/modelo/logo), anexos aceitos, preço da criação de
   arte e web2print, com as regras do site por cima da API (sem personalização e neon pronto não pedem arte nem levam anexo;
   personalizado sem `tipos_anexo` aceita "Arquivo Único"; nome ou opção "Sem Impressão"/"Produto sem Personalização" = sem
-  personalização; web2print só com template; acessório não muda a arte: as variações que só diferem no controle remoto do
-  LED neon aceitam os mesmos arquivos, a união dos tipos de anexo). Na página do produto, os anexos além da arte (faca de corte, máscara de
+  personalização; web2print só com template). Na página do produto, os anexos além da arte (faca de corte, máscara de
   branco, verniz, capa, miolo, posição do LED) viram "Arquivos complementares" opcionais, enviados como `kind: "extra"` com
   o `tipo` e mandados no pedido com esse `tipoArquivo`. A variação sem personalização (produto liso, neon pronto) mostra só
   as fotos, sem o 3D nem o "Pré-visualizar" (revisão da Padrão de 25/10/2026): a peça é vendida como na foto.

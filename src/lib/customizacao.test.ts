@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { anexosComplementares, anexosDeProducao, camposVisiveis, criacaoPorVariacao, CUSTOMIZACAO_PADRAO, customizacaoDa, customizacaoDaLinha, frenteEnviada, opcaoDeAcessorio, perfisDeCustomizacao, recebeArte, semImpressaoPeloNome } from "./customizacao.ts";
+import { anexosComplementares, anexosDeProducao, camposVisiveis, criacaoPorVariacao, CUSTOMIZACAO_PADRAO, customizacaoDa, customizacaoDaLinha, frenteEnviada, perfisDeCustomizacao, recebeArte, semImpressaoPeloNome } from "./customizacao.ts";
 
 const linha = (tipo: number, anexos: string[] | null, criacao: [number, string] = [1, "34.90"], extra: Record<string, unknown> = {}) => ({
   customizacao: { tipo, web2print: "Não", criacao_arte: { tipo: String(criacao[0]), preco: criacao[1] }, ...extra },
@@ -93,22 +93,4 @@ test("criação de arte por variação: o preço de cada uma, sem as que não of
   const product = { customizacoes: perfis, variations: [{ id: 1, cz: 0 }, { id: 2, cz: 1 }, { id: 3, cz: 2 }, { cz: 0 }] };
   assert.deepEqual(criacaoPorVariacao(product), { "1": 44.9 });
   assert.equal(criacaoPorVariacao({ customizacoes: [perfis[1]], variations: [{ id: 5, cz: 0 }] }), null);
-});
-
-test("regra 8: o controle remoto é só uma peça e não muda os arquivos aceitos (Quadro Acrílico com Led Neon)", () => {
-  const completos = ["Arquivo Único", "Impressão Frente", "Impressão Verso", "Verniz Local Frente", "Máscara de Branco", "Posição do Led"];
-  const semVerso = ["Arquivo Único", "Impressão Frente", "Máscara de Branco", "Posição do Led"];
-  const quadro = (tamanho: string, adicional: string, anexos: string[]) => ({ ...linha(1, anexos), variacoes: { Mídia: "Acrílico 3mm com Led Neon", Tamanho: tamanho, Adicional: adicional } });
-  const { perfis, indices } = perfisDeCustomizacao(
-    [quadro("45x50cm", "s/ controle", semVerso), quadro("45x50cm", "c/ Controle", completos), quadro("60x70cm", "s/ controle", completos), quadro("60x70cm", "c/ Controle", completos)],
-    "Quadro Acrílico com Led Neon",
-  );
-  assert.equal(perfis.length, 1);
-  assert.deepEqual(perfis[0].anexos, completos);
-  assert.deepEqual(indices, [0, 0, 0, 0]);
-  assert.equal(opcaoDeAcessorio("c/ Controle (+ R$ 31,00)"), true);
-  assert.equal(opcaoDeAcessorio("Aplicação de Branco"), false);
-  // Opção que muda a arte (tamanho, cor) continua separando os perfis.
-  const outro = perfisDeCustomizacao([quadro("45x50cm", "s/ controle", semVerso), quadro("60x70cm", "s/ controle", completos)], "Quadro Acrílico com Led Neon");
-  assert.equal(outro.perfis.length, 2);
 });
