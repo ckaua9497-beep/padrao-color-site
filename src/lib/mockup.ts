@@ -129,7 +129,8 @@ const RULES: Rule[] = [
   { kind: "wristband", test: /\bpulseira\b/ },
   { kind: "drawstring", test: /\bsacola mochila\b/ },
   { kind: "backpack", test: /\bmochila\b/ },
-  { kind: "cooler", test: /\bcooler\b|\blancheira\b/ },
+  // Bolsa multiuso: caixa em pé com zíper em volta e alça no topo, como a lancheira (gabarito: frente, costas e foles).
+  { kind: "cooler", test: /\bcooler\b|\blancheira\b|\bbolsa multiuso\b/ },
   { kind: "duffel", test: /\bbolsa (cilindro|esportiva)\b/ },
   { kind: "bag", test: /\bbolsa\b|\bsacola\b|\becobag\b|\bnecessaire\b|\bestojo\b/ },
   { kind: "box", test: /\bcaixa\b|\bsolapa\b|\bkit (cinema|executivo)\b/ },
@@ -211,7 +212,10 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\babada\b/, "abada"],
   ],
   neckpillow: [[/\bkit soneca\b/, "kit"]],
-  cooler: [[/\blancheira\b/, "lunch"]],
+  cooler: [
+    [/\blancheira\b/, "lunch"],
+    [/\bmultiuso\b/, "multiuso"],
+  ],
   duffel: [
     [/\bcilindro\b/, "cylinder"],
     [/\besportiva\b/, "sport"],
@@ -625,7 +629,7 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
     finish,
     clearcoat,
     back,
-    baseColor,
+    baseColor: override?.baseColor ?? baseColor,
     innerColor,
     accentColor: override?.accentColor ?? accentColor,
     metal,

@@ -9,7 +9,7 @@ import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
 import { closedTube, useApparelArt, useGeometriesCleanup } from "./fabric";
 import { inflatedSurface, shapePolygon } from "./inflate";
-import { backArtOf, bandGeometry, makeShape, useArtTexture, useBackTexture, type ModelProps } from "./shared";
+import { backArtOf, bandGeometry, faceArtOf, makeShape, useArtTexture, useBackTexture, useFaceTexture, type ModelProps } from "./shared";
 import { lathe, radiusOnProfile, smoothProfile, type Pt } from "./vessel";
 
 /*
@@ -963,86 +963,99 @@ export function DrawstringModel({ spec, art, label }: ModelProps) {
 
 // ---------------------------------------------------------------------------- cooler e lancheira
 
-function buildBoxCooler(W: number, H: number, D: number, lunch: boolean) {
-  const r = lunch ? 2.0 : 2.8;
-  const topZone = r + 1.0;
-  const margin = r + 0.8;
-  const bottomPad = r + 0.8;
-  const pw = W - margin * 2;
-  const ph = H - topZone - bottomPad;
+/** Cor de fundo da arte (sublimação de ponta a ponta: o tecido que a arte não cobre sai nessa cor, como no PDF). */
+function printFill(art: ModelProps["art"], fallback: string) {
+  return /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : fallback;
+}
+
+/** Alça de mão acolchoada no topo, presa em duas abas costuradas (a, b: pontos de fixação já na superfície). */
+function topHandle(a: THREE.Vector3, b: THREE.Vector3, rise: number, width: number) {
+  const main = strap([a.clone().add(vec(0, -0.5, 0)), a.clone().add(vec(-0.2, rise * 0.46, 0)), vec(0, Math.max(a.y, b.y) + rise, 0), b.clone().add(vec(0.2, rise * 0.46, 0)), b.clone().add(vec(0, -0.5, 0))], vec(0, 0, 1), {
+    width,
+    thick: 1.3,
+    roundness: 2.6,
+    stitch: 0.4,
+  });
+  const tabs = [a, b].map((p) => p.clone().add(vec(0, 0.12, 0)));
+  const stitches = repeatBox(tabs.flatMap((p) => boxStitch(new THREE.Matrix4().makeRotationX(-Math.PI / 2).setPosition(p), width + 0.4, 3.0, 0.3)));
+  return { main, tabs, stitches, width };
+}
+
+function buildBoxCooler(W: number, H: number, D: number, upright: boolean) {
+  const r = upright ? 2.0 : 2.8;
+  // Painéis impressos de quina a quina (sublimação inteira): só a curva da quina e o debrum ficam de fora.
+  const edge = r * 0.6;
+  const topZone = r + 0.9;
+  const pw = W - edge * 2;
+  const ph = H - topZone - edge;
   const hw = W / 2;
   const hh = H / 2;
   const hd = D / 2;
-  const printCy = -hh + bottomPad + ph / 2;
-  const o: SoftBody = { w: W, h: H, d: D, r, front: lunch ? 0.6 : 0.9, back: 0.7, side: lunch ? 0.4 : 0.6, top: lunch ? 0.5 : 0.8, taperX: 0.03 };
+  const printCy = -hh + edge + ph / 2;
+  const o: SoftBody = { w: W, h: H, d: D, r, front: upright ? 0.6 : 0.9, back: 0.7, side: upright ? 0.4 : 0.6, top: upright ? 0.5 : 0.8, taperX: upright ? 0.05 : 0.03 };
   const deform = deformer(o);
   const inner = innerOf(o);
   const body = softBodyGeometry(o).geometry;
   const frontZ = deform(vec(0, printCy, hd)).z;
   const backZ = deform(vec(0, printCy, -hd)).z;
+  const sideX = deform(vec(hw, printCy, 0)).x;
+  const topY = deform(vec(0, hh, 0)).y;
 
   // Debrum na borda da tampa e na do fundo.
   const pipings = [surfaceLoop(o, "y", 1, Math.PI / 4), surfaceLoop(o, "y", -1, Math.PI / 4)].map((loop) => pipingGeometry(onSurface(o, loop).points, 0.3));
 
   // Zíper da tampa: logo abaixo do debrum, contorna frente e laterais; a traseira é a dobradiça.
   const zipPath = onSurface(o, surfaceLoop(o, "y", 1, 1.3), (p) => p.z > -inner.z * 0.7);
-  const zipper = zipperGeometries(zipPath, lunch ? 1.2 : 1.5);
+  const zipper = zipperGeometries(zipPath, upright ? 1.2 : 1.5);
   const pullers = [pullerAt(zipPath, 0.25), pullerAt(zipPath, 0.3)].filter((p): p is PullerPose => p !== null);
 
-  const geometries: THREE.BufferGeometry[] = [body, ...pipings, zipper.tape, zipper.teeth];
-  let shoulder: { main: Strap; pad: Strap; buckle: Frame; ringX: number; ringY: number } | null = null;
-  let handle: { main: Strap; tabs: THREE.Vector3[]; stitches: THREE.BufferGeometry } | null = null;
-  if (lunch) {
-    const a = deform(vec(-4.5, hh, 0));
-    const b = deform(vec(4.5, hh, 0));
-    const main = strap([a.clone().add(vec(0, -0.5, 0)), a.clone().add(vec(-0.2, 2.6, 0)), vec(0, Math.max(a.y, b.y) + 5.6, 0), b.clone().add(vec(0.2, 2.6, 0)), b.clone().add(vec(0, -0.5, 0))], vec(0, 0, 1), {
-      width: 2.8,
-      thick: 1.3,
-      roundness: 2.6,
-      stitch: 0.4,
-    });
-    const tabs = [a, b].map((p) => p.clone().add(vec(0, 0.12, 0)));
-    const stitches = repeatBox(tabs.flatMap((p) => boxStitch(new THREE.Matrix4().makeRotationX(-Math.PI / 2).setPosition(p), 3.2, 3.0, 0.3)));
-    geometries.push(main.body, stitches);
-    if (main.stitches) geometries.push(main.stitches);
-    handle = { main, tabs, stitches };
-  } else {
-    const ringY = hh - r - 4.5;
-    const ringX = deform(vec(hw, ringY, 0)).x;
-    const main = strap(shoulderArc(ringX + 0.45, ringY + 2.6, hh + 17, -3.2), vec(0, 0, 1), { width: 3.8, thick: 0.22 });
-    const pad = strap(curveSlice(main.curve, 0.38, 0.62), vec(0, 0, 1), { width: 6.2, thick: 1.1, roundness: 2.6, stitch: 0.45 });
-    geometries.push(main.body, pad.body);
-    if (pad.stitches) geometries.push(pad.stitches);
-    shoulder = { main, pad, buckle: main.frameAt(0.2), ringX, ringY };
-  }
-  return { body, frontZ, backZ, printCy, pw, ph, decalDepth: D * 0.6, pipings, zipper, pullers, shoulder, handle, all: geometries };
+  // Alça de mão no topo (fotos do cooler, da lancheira e da bolsa multiuso: nenhuma tem alça de ombro).
+  const ax = clamp(W * 0.25, 4.5, 8);
+  const handle = topHandle(deform(vec(-ax, hh, 0)), deform(vec(ax, hh, 0)), upright ? 5.6 : 6.4, upright ? 2.8 : 3.4);
+  const geometries: THREE.BufferGeometry[] = [body, ...pipings, zipper.tape, zipper.teeth, handle.main.body, handle.stitches];
+  if (handle.main.stitches) geometries.push(handle.main.stitches);
+  return { body, frontZ, backZ, sideX, topY, printCy, pw, ph, side: D - edge * 2, top: [W - edge * 2, D - edge * 2] as [number, number], decalDepth: D * 0.6, pipings, zipper, pullers, handle, all: geometries };
 }
 
+/**
+ * Cooler cubo, lancheira e bolsa multiuso: caixa estofada sublimada inteira (revisão da Padrão de 25/10/2026). Frente e
+ * verso com a arte de cada lado; tampa e laterais com a arte da superfície quando o cliente monta (cooler); o resto do
+ * tecido na cor de fundo da arte. Alça de mão no topo: impressa no cooler, branca na lancheira, preta na multiuso.
+ */
 function BoxCooler({ spec, art, label }: ModelProps) {
-  const lunch = spec.variant === "lunch";
-  const W = lunch ? clamp(spec.widthCm, 12, 40) : clamp(spec.widthCm, 15, 60);
-  const H = lunch ? clamp(spec.heightCm, 12, 45) : W * 0.89;
-  const D = lunch ? clamp(W * 0.42, 6, 14) : clamp(spec.heightCm < spec.widthCm ? spec.heightCm : W * 0.6, 10, 40);
+  const variant = spec.variant;
+  const multiuso = variant === "multiuso";
+  const upright = variant === "lunch" || multiuso;
+  const W = upright ? clamp(spec.widthCm, 12, 40) : clamp(spec.widthCm, 15, 60);
+  const H = upright ? clamp(spec.heightCm, 12, 45) : W * 0.89;
+  // Multiuso: fole de 12 cm (gabarito); lancheira 7,5 cm; cooler pela medida.
+  const D = multiuso ? clamp(W * 0.66, 6, 14) : upright ? clamp(W * 0.42, 6, 14) : clamp(spec.heightCm < spec.widthCm ? spec.heightCm : W * 0.6, 10, 40);
   const hw = useHardware();
-  const p = useMemo(() => buildBoxCooler(W, H, D, lunch), [W, H, D, lunch]);
+  const p = useMemo(() => buildBoxCooler(W, H, D, upright), [W, H, D, upright]);
   useGeometriesCleanup(p.all);
-  // A área impressa é o painel frontal inteiro: a arte usa a proporção dele (sem distorcer).
-  const texture = useArtTexture(p.pw / p.ph, "front", art, label);
-  // Painel de trás (dobradiça da tampa, sem zíper): só recebe estampa com a arte do passo "Verso".
+  const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
+  const texture = useArtTexture(p.pw / p.ph, "front", panelArt, label);
   const ownBack = backArtOf(art) !== null;
-  const backTexture = useBackTexture(p.pw / p.ph, spec, art, label, undefined, "blank");
-  const shoulder = p.shoulder;
-  const base = spec.baseColor;
-  const trim = trimOf(spec);
-  const stitch = isDark(trim) ? "#6b6c70" : shade(trim, 0.6);
+  const backTexture = useBackTexture(p.pw / p.ph, spec, panelArt, label, undefined, "blank");
+  const lidTexture = useFaceTexture(p.top[0] / p.top[1], panelArt, "tampa", label);
+  const leftTexture = useFaceTexture(p.side / p.ph, panelArt, "lateral-esquerda", label);
+  const rightTexture = useFaceTexture(p.side / p.ph, panelArt, "lateral-direita", label);
+  const own = { lid: faceArtOf(art, "tampa") !== null, left: faceArtOf(art, "lateral-esquerda") !== null, right: faceArtOf(art, "lateral-direita") !== null };
+  const fill = printFill(art, spec.baseColor);
+  const trim = spec.accentColor ?? (multiuso ? "#1e1f23" : shade(fill, 0.8));
+  const handleColor = spec.accentColor ?? (multiuso ? "#1e1f23" : fill);
+  const stitch = isDark(handleColor) ? "#6b6c70" : shade(handleColor, 0.7);
   return (
-    <group rotation-y={lunch ? 0.42 : -0.45}>
+    <group rotation-y={upright ? 0.42 : -0.45}>
       <group scale={UNIT}>
         <mesh geometry={p.body}>
-          {/* Lancheira em lona: trama fosca, quase sem brilho; cooler em microfibra acetinada. */}
-          <Cloth color={base} sheen={lunch ? 0.35 : 0.7} roughness={lunch ? 0.94 : 0.88} />
+          {/* Lancheira em lona: trama fosca, quase sem brilho; cooler e multiuso em microfibra acetinada. */}
+          <Cloth color={fill} sheen={variant === "lunch" ? 0.35 : 0.7} roughness={variant === "lunch" ? 0.94 : 0.88} />
           <PanelPrint key={p.body.uuid} map={texture} position={[0, p.printCy, p.frontZ]} size={[p.pw, p.ph]} depth={p.decalDepth} />
           {ownBack && <PanelPrint key={`${p.body.uuid}:verso`} map={backTexture} position={[0, p.printCy, p.backZ]} rotation={[0, Math.PI, 0]} size={[p.pw, p.ph]} depth={p.decalDepth} />}
+          {own.lid && <PanelPrint key={`${p.body.uuid}:tampa`} map={lidTexture} position={[0, p.topY, 0]} rotation={[-Math.PI / 2, 0, 0]} size={p.top} depth={p.decalDepth} />}
+          {own.right && <PanelPrint key={`${p.body.uuid}:direita`} map={rightTexture} position={[p.sideX, p.printCy, 0]} rotation={[0, Math.PI / 2, 0]} size={[p.side, p.ph]} depth={W * 0.6} />}
+          {own.left && <PanelPrint key={`${p.body.uuid}:esquerda`} map={leftTexture} position={[-p.sideX, p.printCy, 0]} rotation={[0, -Math.PI / 2, 0]} size={[p.side, p.ph]} depth={W * 0.6} />}
         </mesh>
         {p.pipings.map((g, i) => (
           <mesh key={i} geometry={g}>
@@ -1053,29 +1066,15 @@ function BoxCooler({ spec, art, label }: ModelProps) {
         {p.pullers.map((pose, i) => (
           <Puller key={i} pose={pose} hw={hw} color={trim} />
         ))}
-        {shoulder && (
-          <>
-            {[-1, 1].map((s) => (
-              <SideRing key={s} x={s * shoulder.ringX} y={shoulder.ringY} side={s} hw={hw} color={trim} />
-            ))}
-            <StrapMesh part={shoulder.main} color={trim} stitch={stitch} />
-            <StrapMesh part={shoulder.pad} color={trim} stitch={stitch} padded />
-            <Buckle frame={shoulder.buckle} hw={hw} />
-          </>
-        )}
-        {p.handle && (
-          <>
-            <StrapMesh part={p.handle.main} color={trim} stitch={stitch} padded />
-            {p.handle.tabs.map((t, i) => (
-              <mesh key={i} geometry={hw.patch} position={t} scale={[3.2, 0.3, 3.0]}>
-                <Cloth color={trim} sheen={0.4} roughness={0.75} />
-              </mesh>
-            ))}
-            <mesh geometry={p.handle.stitches}>
-              <meshStandardMaterial color={stitch} roughness={0.8} />
-            </mesh>
-          </>
-        )}
+        <StrapMesh part={p.handle.main} color={handleColor} stitch={stitch} padded />
+        {p.handle.tabs.map((t, i) => (
+          <mesh key={i} geometry={hw.patch} position={t} scale={[p.handle.width + 0.4, 0.3, 3.0]}>
+            <Cloth color={handleColor} sheen={0.4} roughness={0.75} />
+          </mesh>
+        ))}
+        <mesh geometry={p.handle.stitches}>
+          <meshStandardMaterial color={stitch} roughness={0.8} />
+        </mesh>
       </group>
     </group>
   );
@@ -1097,14 +1096,18 @@ function buildCanCooler(R: number, H: number) {
     90,
   );
   const body = lathe(profile, 96);
-  const bandBottom = 2.4;
-  const bandH = H - 6.6;
+  // Corpo abaixo do zíper (gabarito: 82,2 × 30 cm, a volta inteira): a arte dá a volta no cilindro, emenda atrás.
+  const zipY = H - H * 0.24;
+  const bandBottom = 1.6;
+  const bandH = zipY - 1.2 - bandBottom;
   const bandCy = bandBottom + bandH / 2;
-  // Frente do cilindro (≈ 150°), livre das argolas laterais.
-  const bandW = Math.PI * R * 0.85;
-  const band = bandGeometry({ radiusTop: R, radiusBottom: R, height: bandH, width: bandW, segments: 96, rows: 18, radiusAt: (y) => radiusOnProfile(profile, bandCy + y) + 0.06 });
+  const bandW = Math.PI * 2 * R * 0.995;
+  const band = bandGeometry({ radiusTop: R, radiusBottom: R, height: bandH, width: bandW, segments: 160, rows: 18, radiusAt: (y) => radiusOnProfile(profile, bandCy + y) + 0.06 });
+  // Tampa (círculo do gabarito): estampa plana sobre o topo.
+  const lidR = R * 0.78;
+  const lid = new THREE.CircleGeometry(lidR, 64);
+  lid.rotateX(-Math.PI / 2);
 
-  const zipY = H - 2.6;
   const zipR = radiusOnProfile(profile, zipY) + 0.02;
   const pre: THREE.Vector3[] = [];
   const normals: THREE.Vector3[] = [];
@@ -1119,41 +1122,40 @@ function buildCanCooler(R: number, H: number) {
   const zipper = zipperGeometries(zipPath, 1.5);
   const pullers = [pullerAt(zipPath, 0.66), pullerAt(zipPath, 0.7)].filter((p): p is PullerPose => p !== null);
 
-  const ringY = H - 5.2;
-  const ringX = radiusOnProfile(profile, ringY);
-  const main = strap(shoulderArc(ringX + 0.45, ringY + 2.6, H + 15, -3.2), vec(0, 0, 1), { width: 3.8, thick: 0.22 });
-  const pad = strap(curveSlice(main.curve, 0.38, 0.62), vec(0, 0, 1), { width: 6.2, thick: 1.1, roundness: 2.6, stitch: 0.45 });
+  const ax = R * 0.42;
+  const handle = topHandle(vec(-ax, H + 0.45, 0), vec(ax, H + 0.45, 0), 6.4, 3.4);
   const rings = [0.9, H - 1.0].map((y) => ({ y, r: radiusOnProfile(profile, y) - 0.02 }));
-  const all = [body, band, zipper.tape, zipper.teeth, main.body, pad.body];
-  if (pad.stitches) all.push(pad.stitches);
-  return { body, band, bandCy, aspect: bandW / bandH, zipper, pullers, main, pad, buckle: main.frameAt(0.2), ringX, ringY, rings, all };
+  const all = [body, band, lid, zipper.tape, zipper.teeth, handle.main.body, handle.stitches];
+  if (handle.main.stitches) all.push(handle.main.stitches);
+  return { body, band, bandCy, aspect: bandW / bandH, lid, lidR, zipper, pullers, handle, rings, all };
 }
 
-/** Cooler redondo (opção "Cilindro", medida em pé): corpo torneado, faixa sublimada na frente. */
+/** Cooler redondo (opção "Cilindro"): sublimado inteiro, a arte dando a volta no corpo, tampa com a arte dela e alça no topo. */
 function CanCooler({ spec, art, label }: ModelProps) {
   const R = clamp(spec.widthCm / 2, 6, 25);
-  const H = clamp(spec.heightCm * 0.8, 12, 60);
+  const H = clamp(spec.heightCm * 0.95, 12, 60);
   const hw = useHardware();
   const p = useMemo(() => buildCanCooler(R, H), [R, H]);
   useGeometriesCleanup(p.all);
-  const texture = useArtTexture(p.aspect, "front", art, label);
-  // Verso: a mesma faixa girada para trás (entre as argolas), só com a arte do passo "Verso".
-  const ownBack = backArtOf(art) !== null;
-  const backTexture = useBackTexture(p.aspect, spec, art, label, undefined, "blank");
-  const trim = trimOf(spec);
-  const stitch = isDark(trim) ? "#6b6c70" : shade(trim, 0.6);
+  const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
+  const texture = useArtTexture(p.aspect, "front", panelArt, label);
+  const lidTexture = useFaceTexture(1, panelArt, "tampa", label);
+  const ownLid = faceArtOf(art, "tampa") !== null;
+  const fill = printFill(art, spec.baseColor);
+  const trim = spec.accentColor ?? shade(fill, 0.8);
+  const stitch = isDark(fill) ? "#6b6c70" : shade(fill, 0.7);
   return (
     <group rotation-y={-0.35}>
       <group scale={UNIT}>
         <mesh geometry={p.body}>
-          <Cloth color={spec.baseColor} sheen={0.7} roughness={0.88} />
+          <Cloth color={fill} sheen={0.7} roughness={0.88} />
         </mesh>
         <mesh geometry={p.band} position-y={p.bandCy}>
           <PrintedSurface map={texture} />
         </mesh>
-        {ownBack && (
-          <mesh geometry={p.band} position-y={p.bandCy} rotation-y={Math.PI}>
-            <PrintedSurface map={backTexture} />
+        {ownLid && (
+          <mesh geometry={p.lid} position-y={H + 0.53}>
+            <PrintedSurface map={lidTexture} />
           </mesh>
         )}
         {p.rings.map((ring) => (
@@ -1166,26 +1168,28 @@ function CanCooler({ spec, art, label }: ModelProps) {
         {p.pullers.map((pose, i) => (
           <Puller key={i} pose={pose} hw={hw} color={trim} />
         ))}
-        {[-1, 1].map((s) => (
-          <SideRing key={s} x={s * p.ringX} y={p.ringY} side={s} hw={hw} color={trim} />
+        <StrapMesh part={p.handle.main} color={fill} stitch={stitch} padded />
+        {p.handle.tabs.map((t, i) => (
+          <mesh key={i} geometry={hw.patch} position={t} scale={[p.handle.width + 0.4, 0.3, 3.0]}>
+            <Cloth color={fill} sheen={0.4} roughness={0.75} />
+          </mesh>
         ))}
-        <StrapMesh part={p.main} color={trim} stitch={stitch} />
-        <StrapMesh part={p.pad} color={trim} stitch={stitch} padded />
-        <Buckle frame={p.buckle} hw={hw} />
+        <mesh geometry={p.handle.stitches}>
+          <meshStandardMaterial color={stitch} roughness={0.8} />
+        </mesh>
       </group>
     </group>
   );
 }
 
 /**
- * Cooler térmico macio: caixa estofada com faces estufadas e debrum nas quinas, zíper da tampa
- * contornando frente e laterais com dois cursores, painel frontal impresso (Decal) e alça de ombro
- * com argolas D, regulador e ombreira. Variante "lunch" (lancheira): mais alta e estreita, com alça
- * de mão acolchoada no topo. A opção "Cilindro" (medida mais alta que larga) vira um cooler redondo.
+ * Cooler térmico macio sublimado inteiro (cubo ou cilindro), com zíper na tampa e alça de mão no topo. Variante "lunch"
+ * (lancheira) e "multiuso" (bolsa multiuso): caixas em pé, mais estreitas. A opção "Cilindro" (medida mais alta que
+ * larga) vira o cooler redondo.
  */
 export function CoolerModel(props: ModelProps) {
   const { spec } = props;
-  if (spec.variant !== "lunch" && spec.heightCm > spec.widthCm * 1.15) return <CanCooler {...props} />;
+  if (spec.variant !== "lunch" && spec.variant !== "multiuso" && spec.heightCm > spec.widthCm * 1.15) return <CanCooler {...props} />;
   return <BoxCooler {...props} />;
 }
 
@@ -1364,18 +1368,21 @@ function SportDuffel({ spec, art, label }: ModelProps) {
   );
 }
 
-/** Faixa de arte sobre o cilindro deitado (eixo x), centrada na frente: largura ao longo do eixo, altura em arco. */
-function barrelBand(profile: Pt[], artW: number, artH: number, nu = 96, nv = 24) {
+/**
+ * Faixa de arte sobre o cilindro deitado (eixo x): largura ao longo do eixo e o arco de `from` a `to` (radianos; 0 = de
+ * frente, π/2 = topo), com v = 0 em `from`. `mirror`: u cresce para -x (painel de trás, lido de quem olha por trás).
+ */
+function barrelArc(profile: Pt[], artW: number, from: number, to: number, mirror = false, nu = 96, nv = 32) {
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
   for (let j = 0; j <= nv; j += 1) {
     const v = j / nv;
+    const phi = from + (to - from) * v;
     for (let i = 0; i <= nu; i += 1) {
       const u = i / nu;
-      const x = -artW / 2 + artW * u;
+      const x = mirror ? artW / 2 - artW * u : -artW / 2 + artW * u;
       const r = radiusOnProfile(profile, x) + 0.06;
-      const phi = ((v - 0.5) * artH) / r;
       positions.push(x, r * Math.sin(phi), r * Math.cos(phi));
       uvs.push(u, v);
     }
@@ -1386,7 +1393,9 @@ function barrelBand(profile: Pt[], artW: number, artH: number, nu = 96, nv = 24)
       const b = a + 1;
       const c = a + nu + 1;
       const d = c + 1;
-      indices.push(a, b, c, b, d, c);
+      // A ordem dos vértices segue o sentido do arco: a face fica para fora nos dois sentidos.
+      if ((to > from) !== mirror) indices.push(a, b, c, b, d, c);
+      else indices.push(a, c, b, b, c, d);
     }
   }
   const geometry = new THREE.BufferGeometry();
@@ -1397,7 +1406,49 @@ function barrelBand(profile: Pt[], artW: number, artH: number, nu = 96, nv = 24)
   return geometry;
 }
 
-function buildBarrel(L: number, R: number, aspect: number) {
+/**
+ * Estampa da tampa lateral sobre o domo (no espaço do torneado, antes de deitar o cilindro): anéis do perfil a partir
+ * da emenda, UV plano pela vista de fora (arte de pé para quem olha a tampa). `sign` = 1 tampa direita (+x), -1 esquerda.
+ */
+function barrelCap(profile: Pt[], capAt: number, sign: 1 | -1, segments = 72) {
+  const ring = profile.filter(([, y]) => sign * y >= capAt).sort((p, q) => Math.abs(p[1]) - Math.abs(q[1]));
+  const rc = Math.max(...ring.map(([r]) => r), 0.1);
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (const [r, y] of ring) {
+    for (let k = 0; k <= segments; k += 1) {
+      const a = (k / segments) * Math.PI * 2;
+      const X = r * Math.cos(a);
+      const Z = r * Math.sin(a);
+      // Deitado: x do mundo = y daqui, y do mundo = -X, z do mundo = Z. Quem olha a tampa direita tem -z à direita.
+      positions.push(X * 1.002, y + sign * 0.05, Z * 1.002);
+      uvs.push(0.5 - (sign * Z) / (2 * rc), 0.5 - X / (2 * rc));
+    }
+  }
+  const row = segments + 1;
+  for (let j = 0; j < ring.length - 1; j += 1) {
+    for (let k = 0; k < segments; k += 1) {
+      const a = j * row + k;
+      const b = a + 1;
+      const c = a + row;
+      const d = c + 1;
+      if (sign > 0) indices.push(a, c, b, b, c, d);
+      else indices.push(a, b, c, b, d, c);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Arco de cada painel do corpo (gabarito: Lado 1, Fundo e Lado 2, um terço da volta cada; o zíper no topo). */
+const BARREL_SPLIT = { top: Math.PI / 2, frontLow: -Math.PI / 6, backLow: (-5 * Math.PI) / 6 };
+
+function buildBarrel(L: number, R: number) {
   const profile = smoothProfile(
     [
       [0, -L / 2 - 0.8],
@@ -1415,29 +1466,19 @@ function buildBarrel(L: number, R: number, aspect: number) {
     120,
   );
   const body = lathe(profile, 96);
-  // Tampas laterais na cor de acabamento (grupo 1), com debrum na emenda.
   const capAt = L / 2 - 1.0;
-  const index = body.getIndex();
-  const pos = body.getAttribute("position");
-  if (index) {
-    const side: number[] = [];
-    const caps: number[] = [];
-    for (let i = 0; i < index.count; i += 3) {
-      const a = index.getX(i);
-      const b = index.getX(i + 1);
-      const c = index.getX(i + 2);
-      const y = (pos.getY(a) + pos.getY(b) + pos.getY(c)) / 3;
-      (Math.abs(y) > capAt ? caps : side).push(a, b, c);
-    }
-    body.setIndex([...side, ...caps]);
-    body.clearGroups();
-    body.addGroup(0, side.length, 0);
-    body.addGroup(side.length, caps.length, 1);
-  }
   const rings = [-capAt, capAt].map((x) => ({ x, r: radiusOnProfile(profile, x) }));
 
-  const [artW, artH] = fitContain(aspect, L - 9, R * 1.25);
-  const band = barrelBand(profile, artW, artH);
+  // Corpo 100% impresso (gabarito: corpo de 42 × 80,7 cm em três painéis): as faixas vão de emenda a emenda e param na
+  // fita do zíper.
+  const artW = 2 * capAt - 0.4;
+  const zipHalf = 1.1 / (R + 0.3);
+  const { top, frontLow, backLow } = BARREL_SPLIT;
+  const front = barrelArc(profile, artW, frontLow, top - zipHalf);
+  const bottom = barrelArc(profile, artW, backLow, frontLow);
+  const back = barrelArc(profile, artW, backLow, -Math.PI - Math.PI / 2 + zipHalf, true);
+  const caps = { right: barrelCap(profile, capAt, 1), left: barrelCap(profile, capAt, -1) };
+  const arc = (R + 0.3) * (top - frontLow);
 
   const zipPts = linePoints(vec(-(L / 2 - 6), 0, 0), vec(L / 2 - 6, 0, 0), 0.36).map((p) => vec(p.x, radiusOnProfile(profile, p.x) + 0.02, 0));
   const zipPath = { points: zipPts, normals: zipPts.map(() => vec(0, 1, 0)) };
@@ -1474,26 +1515,42 @@ function buildBarrel(L: number, R: number, aspect: number) {
   });
   const grip = strap([vec(-6, R + 9.5, 0), vec(0, R + 9.9, 0), vec(6, R + 9.5, 0)], vec(0, 0, 1), { width: 4.8, thick: 2.8, roundness: 2.4, stitch: 0.5 });
   const tabStitches = repeatBox(tabMatrices.flatMap((m) => boxStitch(m, 3.6, 5.2, 0.17)));
-  const all = [body, band, zipper.tape, zipper.teeth, ...handles.map((h) => h.body), grip.body, tabStitches];
+  const all = [body, front, bottom, back, caps.right, caps.left, zipper.tape, zipper.teeth, ...handles.map((h) => h.body), grip.body, tabStitches];
   if (grip.stitches) all.push(grip.stitches);
-  return { body, rings, band, zipper, pullers, handles, grip, tabMatrices, tabStitches, all };
+  return { body, rings, front, bottom, back, caps, artW, arc, zipper, pullers, handles, grip, tabMatrices, tabStitches, all };
 }
 
+/** Painel impresso: a textura quando a superfície tem arte; senão o tecido na cor de fundo da arte (como sai no PDF). */
+function BarrelPanel({ geometry, map, own, fill }: { geometry: THREE.BufferGeometry; map: THREE.Texture; own: boolean; fill: string }) {
+  return <mesh geometry={geometry}>{own ? <PrintedSurface map={map} /> : <Cloth color={fill} sheen={0.6} roughness={0.82} />}</mesh>;
+}
+
+/**
+ * Bolsa cilindro sublimada 100%, menos as alças (revisão da Padrão de 25/10/2026). Proporção do gabarito (corpo de 42 cm
+ * por 80,7 cm de volta: o "80" do formato é a volta). Frente (Lado 1), Fundo, verso (Lado 2) e as duas tampas com a arte
+ * de cada superfície; sem arte própria, o painel sai na cor de fundo da frente.
+ */
 function BarrelDuffel({ spec, art, label }: ModelProps) {
   const D = clamp(spec.heightCm, 16, 45);
   const R = D / 2;
-  const L = clamp(spec.widthCm, D * 1.6, D * 2.2);
-  const aspect = safeAspect(spec);
-  // A faixa impressa da bolsa cilindro é opaca (o painel inteiro recebe a arte).
+  const L = D * (42 / 25.7);
+  const p = useMemo(() => buildBarrel(L, R), [L, R]);
+  useGeometriesCleanup(p.all);
+  const aspect = p.artW / p.arc;
   const panelArt = useMemo(() => ({ ...art, opaque: true }), [art]);
   const texture = useArtTexture(aspect, "front", panelArt, label);
-  // Verso: a mesma faixa girada para o lado de trás, só com a arte do passo "Verso".
-  const ownBack = backArtOf(art) !== null;
   const backTexture = useBackTexture(aspect, spec, panelArt, label, undefined, "blank");
+  const bottomTexture = useFaceTexture(aspect, panelArt, "fundo", label);
+  const rightTexture = useFaceTexture(1, panelArt, "tampa-direita", label);
+  const leftTexture = useFaceTexture(1, panelArt, "tampa-esquerda", label);
+  const own = {
+    back: backArtOf(art) !== null,
+    bottom: faceArtOf(art, "fundo") !== null,
+    right: faceArtOf(art, "tampa-direita") !== null,
+    left: faceArtOf(art, "tampa-esquerda") !== null,
+  };
   const hw = useHardware();
-  const p = useMemo(() => buildBarrel(L, R, aspect), [L, R, aspect]);
-  useGeometriesCleanup(p.all);
-  const base = spec.baseColor;
+  const fill = /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
   const trim = trimOf(spec);
   const stitch = isDark(trim) ? "#6b6c70" : shade(trim, 0.6);
   return (
@@ -1501,18 +1558,16 @@ function BarrelDuffel({ spec, art, label }: ModelProps) {
       <group scale={UNIT}>
         <group rotation-z={-Math.PI / 2}>
           <mesh geometry={p.body}>
-            <Cloth attach="material-0" color={base} sheen={0.7} roughness={0.85} />
-            <Cloth attach="material-1" color={trim} sheen={0.5} roughness={0.8} />
+            <Cloth color={fill} sheen={0.6} roughness={0.82} />
           </mesh>
+          <BarrelPanel geometry={p.caps.right} map={rightTexture} own={own.right} fill={fill} />
+          <BarrelPanel geometry={p.caps.left} map={leftTexture} own={own.left} fill={fill} />
         </group>
-        <mesh geometry={p.band}>
+        <mesh geometry={p.front}>
           <PrintedSurface map={texture} />
         </mesh>
-        {ownBack && (
-          <mesh geometry={p.band} rotation-y={Math.PI}>
-            <PrintedSurface map={backTexture} />
-          </mesh>
-        )}
+        <BarrelPanel geometry={p.bottom} map={bottomTexture} own={own.bottom} fill={fill} />
+        <BarrelPanel geometry={p.back} map={backTexture} own={own.back} fill={fill} />
         {p.rings.map((ring) => (
           <mesh key={ring.x} position-x={ring.x} rotation-y={Math.PI / 2}>
             <torusGeometry args={[ring.r, 0.34, 8, 96]} />
@@ -1539,9 +1594,8 @@ function BarrelDuffel({ spec, art, label }: ModelProps) {
 }
 
 /**
- * Bolsas esportivas. Variante "cylinder": bolsa cilindro deitada — corpo torneado com tampas
- * laterais em cor de acabamento e debrum, faixa sublimada abraçando a lateral voltada para a câmera,
- * zíper no topo e duas alças com empunhadura. Variante "sport" (e padrão): duffel de academia em caixa
+ * Bolsas esportivas. Variante "cylinder": bolsa cilindro deitada, sublimada inteira (corpo em três painéis e as
+ * tampas), com debrum, zíper no topo e duas alças com empunhadura. Variante "sport" (e padrão): duffel de academia em caixa
  * estofada afunilada no topo, arte DTF em tamanho real na lateral, zíper em U, alças de mão com
  * etiquetas costuradas em X, alça de ombro com argolas e bolso com zíper na cabeceira.
  */

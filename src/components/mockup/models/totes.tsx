@@ -827,16 +827,22 @@ function sideTag(p: Profile) {
   return { position: vec(at.x - 0.75, at.y, at.z), geometry: plateGeometry(1.5, 2.2, 0.08, 0.15) };
 }
 
+/**
+ * Sacolas de tecido sublimadas: a arte vai de borda a borda na frente, até logo abaixo da bainha (fotos das ecobags e
+ * bolsas de alça). {beach} bolsa de praia impermeável (gabarito 45 × 32 cm): sacola estruturada com fole de 22 cm,
+ * sublimada inteira — frente, verso, laterais, fundo, alças e o fecho com botão de pressão (revisão da Padrão de
+ * 25/10/2026: o 3D antigo era de lona com corda e ilhoses).
+ */
 function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
   const W = beach ? cm(spec.widthCm, 45, 24, 80) : cm(spec.widthCm, 35, 12, 70);
   const H = beach ? cm(spec.heightCm, 32, 18, 60) : cm(spec.heightCm, 40, 12, 70);
-  const D = beach ? clamp(W * 0.3, 9, 18) : clamp(cm(spec.depthCm, 10, 2, 20) * 0.7, 3, W * 0.3);
+  const D = beach ? clamp(W * 0.49, 10, 26) : clamp(cm(spec.depthCm, 10, 2, 20) * 0.7, 3, W * 0.3);
   const fillet = Math.min(1.4, D * 0.3);
-  // Sacola sublimada: a arte vai de borda a borda na frente, até logo abaixo da bainha (fotos das ecobags e bolsas de alça).
-  const y0 = beach ? fillet + H * 0.07 : fillet * 0.5 + 0.3;
-  const y1 = Math.max(y0 + 2, beach ? H - 7.2 : H - 2.5);
-  const pw = (beach ? 0.76 : 0.97) * W;
-  const drop = beach ? clamp(H * 0.45, 10, 22) : clamp(H * 0.62, 14, 32);
+  const y0 = fillet * 0.5 + 0.3;
+  const y1 = Math.max(y0 + 2, H - 2.5);
+  // Praia: a boca é mais larga que o fundo; a estampa cabe na largura do fundo (o resto do corpo sai na cor da arte).
+  const pw = (beach ? 0.86 : 0.97) * W;
+  const drop = beach ? clamp(H * 0.62, 14, 26) : clamp(H * 0.62, 14, 32);
   const profile = useMemo(() => toteProfile(W, H, D, beach), [W, H, D, beach]);
   const ph = useMemo(() => centerArc(profile, y0, y1), [profile, y0, y1]);
 
@@ -854,36 +860,10 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
     const hemPaths: StitchPath[] = [{ points: loopPoints(p, tAtY(p, H - 2.1), 220, 0.06), closed: true }];
     const handles: THREE.BufferGeometry[] = [];
     const handleStitches: StitchPath[] = [];
-    const grommets: { position: THREE.Vector3; quaternion: THREE.Quaternion }[] = [];
-
-    if (beach) {
-      // Corda passando por ilhoses: sai pela frente, faz o arco e volta pelo outro ilhós.
-      const gx = W * 0.2;
-      const gy = H - 3.6;
-      const left = frontFrame(p, -gx, gy);
-      const right = frontFrame(p, gx, gy);
-      const zf = left.pos.z;
-      const rope = (side: 1 | -1) => {
-        const pts = [
-          along(left, -1.2),
-          along(left, 0.8),
-          along(left, 1.6).add(vec(-0.6, 3.5, 0)),
-          vec(-gx * 0.95, H + drop * 0.72, zf + 1.8),
-          vec(0, H + drop * (side === 1 ? 1 : 0.95), zf + 1.2),
-          vec(gx * 0.95, H + drop * 0.72, zf + 1.8),
-          along(right, 1.6).add(vec(0.6, 3.5, 0)),
-          along(right, 0.8),
-          along(right, -1.2),
-        ];
-        return pts.map((q) => vec(q.x, q.y, q.z * side));
-      };
-      handles.push(ropeGeometry(rope(1), 0.55, 1.6), ropeGeometry(rope(-1), 0.55, 1.6));
-      for (const f of [left, right, mirrorFrame(left), mirrorFrame(right)]) {
-        grommets.push({ position: along(f, 0.12), quaternion: new THREE.Quaternion().setFromUnitVectors(AXIS_Z, f.normal) });
-      }
-    } else {
-      // Alças de fita costuradas por dentro da boca: a frente fica livre para a arte.
-      const x0 = clamp(W * 0.2, 4.5, 12);
+    {
+      // Alças de fita costuradas por dentro da boca: a frente fica livre para a arte. Na de praia, mais largas (a alça
+      // do gabarito tem 15 cm aberta: ~3,8 cm costurada).
+      const x0 = beach ? clamp(W * 0.2, 6, 12) : clamp(W * 0.2, 4.5, 12);
       const yIn = H - 5;
       for (const side of [1, -1] as const) {
         const zIn = (p.halfD(tAtY(p, yIn)) - 0.8) * side;
@@ -901,14 +881,19 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
           vec(x0, H - 0.3, zTop),
           vec(x0, yIn, zIn),
         ];
-        const strap = strapGeometry(pts, { width: 2.6, thick: 0.24, facing: AXIS_Z, samples: 120, stitchInset: 0.32 });
+        const strap = strapGeometry(pts, { width: beach ? 3.8 : 2.6, thick: beach ? 0.3 : 0.24, facing: AXIS_Z, samples: 120, stitchInset: 0.32 });
         handles.push(strap.geometry);
         handleStitches.push(...strap.stitches);
       }
     }
+    // Fecho da bolsa de praia: aba que sai de trás, passa por cima da boca e desce na frente, com botão de pressão.
+    const tab = beach ? frontFrame(p, 0, H - 3.4) : null;
+    const tabGeometry = beach ? plateGeometry(5.2, 7, 0.32, 1.2) : null;
+    const snap = beach ? new THREE.CylinderGeometry(0.75, 0.82, 0.32, 24) : null;
     const stitch = stitchGeometry([...hemPaths, ...handleStitches]);
-    const torus = new THREE.TorusGeometry(1.0, 0.26, 12, 32);
-    const hole = new THREE.CircleGeometry(0.78, 24);
+    const extras: THREE.BufferGeometry[] = [];
+    if (tabGeometry) extras.push(tabGeometry);
+    if (snap) extras.push(snap);
     return {
       body,
       print,
@@ -916,20 +901,21 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
       tag,
       handles,
       stitch,
-      grommets,
-      torus,
-      hole,
-      all: [body, print, rim, tag.geometry, stitch, torus, hole, ...handles],
+      tab,
+      tabGeometry,
+      snap,
+      all: [body, print, rim, tag.geometry, stitch, ...extras, ...handles],
     };
   }, [profile, W, H, beach, pw, y0, y1, drop]);
   useGeometriesCleanup(parts.all);
 
-  const fabric = clothColor(spec.baseColor);
-  const inner = shade(fabric, 0.74);
+  // Praia sublimada inteira: o corpo, as alças e o fecho saem na cor de fundo da arte (como o resto do gabarito).
+  const fill = beach && /^#[0-9a-f]{3,8}$/i.test(art.background) ? art.background : spec.baseColor;
+  const fabric = clothColor(fill);
+  const inner = shade(clothColor(spec.baseColor), 0.74);
   const thread = threadColor(fabric);
-  const handleColor = spec.accentColor ?? fabric;
-  const ropeColor = spec.accentColor ?? "#d8c49c";
-  const metal = metalColor(spec.metal);
+  const handleColor = beach ? fabric : (spec.accentColor ?? fabric);
+  const metal = metalColor(spec.metal === "none" ? "silver" : spec.metal);
   const roughness = beach ? 0.62 : 0.92;
   const scale = TARGET / Math.max(W, H + drop);
 
@@ -952,24 +938,29 @@ function ToteBag({ spec, art, label, beach }: ModelProps & { beach: boolean }) {
         <mesh geometry={parts.stitch}>
           <Thread color={thread} />
         </mesh>
-        <mesh geometry={parts.tag.geometry} position={parts.tag.position}>
-          <Cloth color={trimColor(spec)} sheen={0.4} />
-        </mesh>
+        {!beach && (
+          <mesh geometry={parts.tag.geometry} position={parts.tag.position}>
+            <Cloth color={trimColor(spec)} sheen={0.4} />
+          </mesh>
+        )}
         {parts.handles.map((g, i) => (
           <mesh key={i} geometry={g}>
-            {beach ? <meshStandardMaterial color={ropeColor} roughness={0.88} /> : <Cloth color={handleColor} map={grain} />}
+            <Cloth color={handleColor} map={grain} roughness={roughness} sheen={beach ? 0.5 : 1} />
           </mesh>
         ))}
-        {parts.grommets.map((g, i) => (
-          <group key={i} position={g.position} quaternion={g.quaternion}>
-            <mesh geometry={parts.torus}>
-              <Metal color={metal} />
+        {parts.tab && parts.tabGeometry && (
+          <group position={along(parts.tab, 0.22)} quaternion={new THREE.Quaternion().setFromUnitVectors(AXIS_Z, parts.tab.normal)}>
+            <mesh geometry={parts.tabGeometry} position-y={0.4}>
+              <Cloth color={fabric} roughness={roughness} sheen={0.5} />
             </mesh>
-            <mesh geometry={parts.hole} position-z={0.02}>
-              <meshStandardMaterial color="#141414" roughness={1} />
-            </mesh>
+            {parts.snap && (
+              <mesh geometry={parts.snap} position={[0, -1.6, 0.3]} rotation-x={Math.PI / 2}>
+                <Metal color={metal} />
+              </mesh>
+            )}
           </group>
-        ))}
+        )}
+
       </group>
     </group>
   );
