@@ -9,7 +9,7 @@ import type { MockupSpec } from "@/lib/mockup";
 import { THERMAL_SHARE, artArea, artAspect } from "@/lib/mockup-kinds";
 import { THERMAL_WINDOW } from "../art";
 import { bandGeometry, makeShape, metalColor, useArtTexture, type MaskPath, type ModelProps } from "./shared";
-import { lathe, radiusOnProfile, smoothProfile, useStudioReflection, type Pt } from "./vessel";
+import { ENGRAVE_MASK_GLSL, lathe, radiusOnProfile, smoothProfile, useStudioReflection, type Pt } from "./vessel";
 
 /*
  * Escala: 1 cm = 0,12 unidade (uma garrafa de 25 cm fica com 3 unidades). Cada peça é um perfil 2D
@@ -591,45 +591,30 @@ function thermalCupWall(y: number) {
 }
 
 /*
- * Gravação a laser na pintura do copo: o laser queima a tinta e revela o inox por baixo (a cor da arte não importa,
- * é uma cor só). Como a produção prepara o arquivo: na arte montada no editor grava o que se destaca do fundo
- * (texto, ícones, logo); na imagem enviada grava o que é escuro (o fundo claro ou transparente não grava). O resto
- * da faixa é descartado (alphaTest) e a pintura do corpo aparece.
+ * Gravação a laser na pintura do copo: o laser queima a tinta e revela o inox por baixo, numa cor só (a cor da arte
+ * não importa). A máscara (ENGRAVE_MASK_GLSL) grava o que se destaca do fundo da arte; o resto da faixa é
+ * descartado (alphaTest) e a pintura do corpo aparece.
  */
-function engraveChunk(background: THREE.Color | null) {
-  const burn = background
-    ? `smoothstep( 0.1, 0.22, distance( sampledDiffuseColor.rgb, vec3( ${background.r.toFixed(4)}, ${background.g.toFixed(4)}, ${background.b.toFixed(4)} ) ) )`
-    : "1.0 - smoothstep( 0.42, 0.62, dot( sampledDiffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) ) )";
-  return /* glsl */ `
+function engrave(shader: { fragmentShader: string }) {
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <map_pars_fragment>", `#include <map_pars_fragment>\n${ENGRAVE_MASK_GLSL}`)
+    .replace(
+      "#include <map_fragment>",
+      /* glsl */ `
 #ifdef USE_MAP
-  vec4 sampledDiffuseColor = texture2D( map, vMapUv );
-  diffuseColor.a *= ( ${burn} ) * sampledDiffuseColor.a;
+  diffuseColor.a *= engraveMask( texture2D( map, vMapUv ), engraveBackground() );
 #endif
-`;
+`,
+    );
 }
 
-/** Cor (hex) do fundo da arte montada no editor, ou null para imagem enviada ou fundo que não é cor sólida. */
-function engraveBackground(art: Art): string | null {
-  if (art.src || !/^#[0-9a-f]{3,8}$/i.test(art.background)) return null;
-  return art.background.slice(0, 7);
-}
+const engraveKey = () => "bottles-engrave";
 
 /** Inox revelado pelo laser: acetinado (a queima deixa o metal fosco), refletindo o estúdio. */
-function EngravedSteel({ geometry, map, y, env, background }: { geometry: THREE.BufferGeometry; map: THREE.Texture; y: number; env: THREE.Texture; background: string | null }) {
-  const program = useMemo(() => {
-    // A textura da arte é sRGB e o shader lê a cor já linear: compara com o fundo também linear.
-    const color = background ? new THREE.Color(background) : null;
-    return {
-      onBeforeCompile: (shader: { fragmentShader: string }) => {
-        shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", engraveChunk(color));
-      },
-      key: () => `bottles-engrave-${color ? color.getHexString() : "tom"}`,
-    };
-  }, [background]);
+function EngravedSteel({ geometry, map, y, env }: { geometry: THREE.BufferGeometry; map: THREE.Texture; y: number; env: THREE.Texture }) {
   return (
     <mesh geometry={geometry} position-y={y}>
       <meshPhysicalMaterial
-        key={background ?? "tom"}
         color="#d3d6da"
         metalness={1}
         roughness={0.34}
@@ -639,8 +624,8 @@ function EngravedSteel({ geometry, map, y, env, background }: { geometry: THREE.
         polygonOffset
         polygonOffsetFactor={-2}
         polygonOffsetUnits={-2}
-        onBeforeCompile={program.onBeforeCompile}
-        customProgramCacheKey={program.key}
+        onBeforeCompile={engrave}
+        customProgramCacheKey={engraveKey}
       />
     </mesh>
   );
@@ -746,7 +731,7 @@ function ThermalCup({ spec, art, label }: ModelProps) {
       <mesh geometry={geo.rim}>
         <SteelMaterial env={studio} roughness={0.12} />
       </mesh>
-      {laser ? <EngravedSteel geometry={band} map={map} y={center} env={studio} background={engraveBackground(art)} /> : <ArtBand geometry={band} map={map} y={center} look={printLook(spec, finish)} />}
+      {laser ? <EngravedSteel geometry={band} map={map} y={center} env={studio} /> : <ArtBand geometry={band} map={map} y={center} look={printLook(spec, finish)} />}
       <mesh geometry={geo.lid}>
         <FinishMaterial finish={lidFinish} />
       </mesh>
@@ -1211,7 +1196,7 @@ const SENSOR_CM = { r: 3.4, body: 19, neckR: 2.75, neckIn: 2.38, neckTop: 20.4, 
 const SEGMENTS: Record<string, string> = { "2": "abged", "8": "abcdefg", C: "afed" };
 
 /** Visor da tampa: "28°C" em LED de sete segmentos sobre fundo transparente (a temperatura das fotos do produto). */
-function displayTexture() {
+export function sensorDisplayTexture() {
   const w = 512;
   const h = 256;
   const canvas = document.createElement("canvas");
@@ -1317,7 +1302,7 @@ function SensorBottle({ spec, art, label }: ModelProps) {
     };
   }, []);
   useDispose(geo);
-  const display = useMemo(() => displayTexture(), []);
+  const display = useMemo(() => sensorDisplayTexture(), []);
   useDisposeOne(display);
   const studio = useStudioReflection();
 

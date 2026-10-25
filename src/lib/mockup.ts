@@ -159,7 +159,10 @@ const RULES: Rule[] = [
 // Subtipos por kind, testados em ordem contra o nome normalizado (o primeiro que casa vence).
 // Os modelos 3D leem spec.variant em vez de testar o nome.
 const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
-  pen: [[/\bporcelana\b/, "porcelain"]],
+  pen: [
+    [/\bporcelana\b/, "porcelain"],
+    [/\btouch\b/, "touch"],
+  ],
   paperpack: [
     [/\bfoto\b/, "photo"],
     [/\bsublim/, "sublimation"],
@@ -312,7 +315,11 @@ const VARIANTS: Partial<Record<MockupKind, [RegExp, string][]>> = {
     [/\btecido\b/, "fabric"],
     [/\bs\/ acabamento\b|\bs\/ impressao\b/, "raw"],
   ],
-  board: [[/\blaser\b/, "laser"]],
+  board: [
+    [/\blaser\b/, "laser"],
+    // Tábua de Carne (139): cantos da esquerda bem arredondados; a de frios é retangular.
+    [/\bcarne\b/, "meat"],
+  ],
   rug: [[/\bcapacho\b/, "doormat"]],
   mat: [
     [/\bgamer\b/, "gamer"],
@@ -502,6 +509,8 @@ export function mockupSpec(product: MockupProduct, selection: Selection): Mockup
   // Xícara London: área de arte menor que a da caneca padrão.
   let [widthCm, heightCm] = parsed ?? (teacup ? [16, 5] : [dw, dh]);
   if (kind === "banner" && /faixa/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
+  // Jogo americano só existe na horizontal (revisão da Padrão de 25/10): "30x44 cm" é 44 de largura por 30 de altura.
+  if (kind === "mat" && /\bjogo americano\b/.test(name) && heightCm > widthCm) [widthCm, heightCm] = [heightCm, widthCm];
   const kitHeight = kind === "flag" && !parsed ? /(\d+(?:[.,]\d+)?)\s*m\b/.exec(normalizeName(sizeText)) : null;
   if (kitHeight) {
     heightCm = Math.round(Number(kitHeight[1].replace(",", ".")) * 100 * 0.8);

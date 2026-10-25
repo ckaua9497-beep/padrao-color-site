@@ -94,6 +94,29 @@ export function useStudioReflection() {
   return texture;
 }
 
+/*
+ * Máscara de gravação/talho numa cor só (laser do copo, fresa da tábua), como a produção prepara o arquivo: o fundo é
+ * a cor dos quatro cantos da arte; grava o que se destaca dele (texto, ícones, logo). Com os cantos transparentes
+ * (logo sem fundo), grava o que é opaco e não é quase branco. GLSL para colar no shader: precisa de `map` (a arte).
+ */
+export const ENGRAVE_MASK_GLSL = /* glsl */ `
+vec4 engraveBackground() {
+  vec4 c0 = texture2D(map, vec2(0.012, 0.012));
+  vec4 c1 = texture2D(map, vec2(0.988, 0.012));
+  vec4 c2 = texture2D(map, vec2(0.012, 0.988));
+  vec4 c3 = texture2D(map, vec2(0.988, 0.988));
+  float a = (c0.a + c1.a + c2.a + c3.a) * 0.25;
+  vec3 rgb = (c0.rgb * c0.a + c1.rgb * c1.a + c2.rgb * c2.a + c3.rgb * c3.a) / max(a * 4.0, 1e-4);
+  return vec4(rgb, a);
+}
+float engraveMask(vec4 art, vec4 bg) {
+  float lum = dot(art.rgb, vec3(0.299, 0.587, 0.114));
+  float solid = smoothstep(0.1, 0.22, distance(art.rgb, bg.rgb)) * art.a;
+  float cutout = (1.0 - smoothstep(0.86, 0.97, lum)) * art.a;
+  return mix(cutout, solid, step(0.5, bg.a));
+}
+`;
+
 export type Surface = { color: string; metalness: number; roughness: number; clearcoat: number; transparent?: boolean; opacity?: number };
 
 export function surfaceOf(spec: MockupSpec): Surface {

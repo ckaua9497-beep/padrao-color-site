@@ -6,13 +6,18 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
-import { fontFamily, hasArtContent } from "../art";
+import { hasArtContent } from "../art";
 import { AcrylicMaterials, PrintMaterial, bandGeometry, faceGeometry, makeShape, roughnessOf, useArtTexture, useBackTexture, useGeometryCleanup, type ModelProps } from "./shared";
 import { PrintBand, handleGeometry, lathe, smoothProfile, type Pt } from "./vessel";
 import { BasketBox, PanettoneBox } from "./baskets";
 import { CartonBag, CartonBox } from "./cartons";
+import { sensorDisplayTexture } from "./bottles";
+import { CapModel } from "./textile";
 
 type Vec3 = [number, number, number];
+
+/** Escala interna do boné (CAP_UNIT de textile.tsx: o CapModel é montado em cm e reduzido por ela). */
+const CAP_SCALE = 2.2 / 27;
 
 /** Folga (cm) entre a superfície e o plano da arte, contra z-fighting. */
 const LIFT = 0.02;
@@ -558,171 +563,186 @@ function CinemaKit({ spec, art, label }: ModelProps) {
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Kit Executivo: caixa rígida preta aberta, espuma com agenda, garrafa térmica e caneta; caneca na frente
+ * Kit Executivo: caixa rígida preta de tampa articulada, berço branco com a garrafa térmica, o caderno espiral,
+ * a caneta e a caneca (ou o boné), como nas fotos do produto (399)
  * ---------------------------------------------------------------------------------------------- */
 
-const EXEC = { w: 42, d: 28, h: 9, wall: 0.35, floor: 0.35, foamTop: 8.2, pocket: 1.6, foamBevel: 0.25 };
+/** Caixa (cm, por dentro) e topo do berço de EVA branco. */
+const EXEC = { w: 42, d: 32, h: 8, wall: 0.35, floor: 0.35, insertTop: 6.6, pocket: 1.2, bevel: 0.2 };
+/** Posição dos itens no berço (x para a direita, z para a frente), das fotos: garrafa à esquerda, caderno no meio. */
 const EXEC_ITEMS = {
-  agenda: { x: -11.5, z: 0, w: 15, d: 21 },
-  bottle: { x: 1.8, z: 0 },
-  pen: { x: 8.3, z: 0 },
-  mugSlot: { x: 14.3, z: -4.5, r: 4.4 },
+  bottle: { x: -15.2, z: 0.8, r: 3.4, length: 23.4 },
+  notebook: { x: -1.6, z: 2.4, w: 17, d: 24 },
+  pen: { x: -1.6, z: -12.3, length: 14 },
+  side: { x: 13.6, z: 2.4, w: 11, d: 14 },
 };
 
-/** Camada de cima da espuma, com os berços vazados (no shape, y = −z do mundo). */
-function foamTopGeometry() {
-  const b = EXEC.foamBevel;
+/** Berço de EVA: placa com os encaixes rasos de cada item (no shape, y = −z do mundo). */
+function insertGeometry() {
+  const b = EXEC.bevel;
   const w = EXEC.w - 2 * EXEC.wall - 0.1;
   const d = EXEC.d - 2 * EXEC.wall - 0.1;
-  const { agenda, bottle, pen, mugSlot } = EXEC_ITEMS;
-  const shape = makeShape("rect", w - 2 * b, d - 2 * b, 0.5);
-  shape.holes.push(roundedRectPath(agenda.x, -agenda.z, 15.5 + 2 * b, 21.5 + 2 * b, 0.6));
-  shape.holes.push(roundedRectPath(bottle.x, -bottle.z, 7.3 + 2 * b, 24.6 + 2 * b, (7.3 + 2 * b) * 0.45));
-  shape.holes.push(roundedRectPath(pen.x, -pen.z, 1.5 + 2 * b, 14.6 + 2 * b, (1.5 + 2 * b) * 0.45));
-  const mug = new THREE.Path();
-  mug.absarc(mugSlot.x, -mugSlot.z, mugSlot.r + b, 0, Math.PI * 2, false);
-  shape.holes.push(mug);
+  const { bottle, notebook, pen, side } = EXEC_ITEMS;
+  const shape = makeShape("rect", w - 2 * b, d - 2 * b, 0.4);
+  shape.holes.push(roundedRectPath(bottle.x, -bottle.z, bottle.r * 2 + 0.5 + 2 * b, bottle.length + 0.5 + 2 * b, 2));
+  shape.holes.push(roundedRectPath(notebook.x, -notebook.z, notebook.w + 0.6 + 2 * b, notebook.d + 0.5 + 2 * b, 0.5));
+  shape.holes.push(roundedRectPath(pen.x, -pen.z, pen.length + 0.6 + 2 * b, 1.4 + 2 * b, 0.6));
+  shape.holes.push(roundedRectPath(side.x, -side.z, side.w + 2 * b, side.d + 2 * b, 1.2));
   const geometry = new THREE.ExtrudeGeometry(shape, { depth: EXEC.pocket - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 2, curveSegments: 12 });
   geometry.rotateX(-Math.PI / 2);
-  geometry.translate(0, EXEC.foamTop - EXEC.pocket + b, 0);
+  geometry.translate(0, EXEC.insertTop - EXEC.pocket + b, 0);
   return geometry;
 }
 
-function FoamInsert() {
-  const top = useMemo(() => foamTopGeometry(), []);
+/** EVA branco do berço (fosco, de poro fino). */
+function Eva() {
+  return <meshPhysicalMaterial color="#efeeea" roughness={0.92} sheen={0.4} sheenColor="#ffffff" sheenRoughness={0.8} />;
+}
+
+function KitInsert() {
+  const top = useMemo(() => insertGeometry(), []);
   useGeometryCleanup(top);
-  const baseH = EXEC.foamTop - EXEC.pocket - EXEC.floor;
-  const foam = <meshPhysicalMaterial color="#2a2a2e" roughness={0.95} sheen={0.6} sheenColor="#6a6a74" sheenRoughness={0.9} />;
+  const baseH = EXEC.insertTop - EXEC.pocket - EXEC.floor;
   return (
     <group>
-      <mesh geometry={top}>{foam}</mesh>
-      <Block size={[EXEC.w - 2 * EXEC.wall - 0.1, baseH, EXEC.d - 2 * EXEC.wall - 0.1]} radius={0.5} bevel={0.05} position={[0, EXEC.floor + baseH / 2, 0]}>
-        {foam}
+      <mesh geometry={top}>
+        <Eva />
+      </mesh>
+      <Block size={[EXEC.w - 2 * EXEC.wall - 0.1, baseH, EXEC.d - 2 * EXEC.wall - 0.1]} radius={0.4} bevel={0.05} position={[0, EXEC.floor + baseH / 2, 0]}>
+        <Eva />
       </Block>
     </group>
   );
 }
 
-/** Chanfro das capas da agenda do kit. */
-const AGENDA_BEVEL = 0.08;
-/** Área impressa da capa da agenda (a arte da frente do kit); o verso do cliente usa a mesma área na tampa. */
-const AGENDA_FACE = { w: EXEC_ITEMS.agenda.w - 2 * AGENDA_BEVEL, d: EXEC_ITEMS.agenda.d - 2 * AGENDA_BEVEL };
+/** Capa do caderno do kit (área impressa); o verso do cliente usa a mesma área na tampa da caixa. */
+const COVER = { w: EXEC_ITEMS.notebook.w - 0.9, d: EXEC_ITEMS.notebook.d - 0.16 };
 
-/** Agenda de capa dura deitada: duas capas, miolo creme recuado, lombada arredondada e arte na capa. */
-function Agenda({ spec, art, label, position }: Pick<ModelProps, "spec" | "art" | "label"> & { position: Vec3 }) {
-  const { w, d } = EXEC_ITEMS.agenda;
-  const board = 0.25;
-  const pages = 1.5;
-  const bevel = AGENDA_BEVEL;
-  const faceW = AGENDA_FACE.w;
-  const faceD = AGENDA_FACE.d;
-  const cover = useArtTexture(faceW / faceD, "front", art, label);
-  const wrap = <Coated color={art.background} spec={spec} />;
+/** Caderno de capa dura preta deitado, wire-o na lateral esquerda e a arte do cliente na capa. */
+function KitNotebook({ spec, art, label, position }: Pick<ModelProps, "spec" | "art" | "label"> & { position: Vec3 }) {
+  const { w, d } = EXEC_ITEMS.notebook;
+  const board = 0.22;
+  const pages = 1.3;
+  const cover = useArtTexture(COVER.w / COVER.d, "front", art, label);
+  const rings = useMemo(() => new THREE.TorusGeometry(0.55, 0.055, 8, 28), []);
+  useGeometryCleanup(rings);
+  const black = <meshPhysicalMaterial color="#19191b" roughness={0.6} clearcoat={0.2} clearcoatRoughness={0.5} />;
+  const count = Math.floor((d - 1.2) / 0.85);
+  const top = pages + board * 2;
   return (
     <group position={position}>
-      <Block size={[w, board, d]} radius={0.35} bevel={bevel} position={[0, board / 2, 0]}>
-        {wrap}
+      <Block size={[w, board, d]} radius={0.3} bevel={0.06} position={[0, board / 2, 0]}>
+        {black}
       </Block>
-      <Block size={[w - 0.6, pages, d - 0.6]} radius={0.15} bevel={0.03} position={[0.25, board + pages / 2, 0]}>
-        <meshStandardMaterial color="#f3eee2" roughness={0.92} />
+      <Block size={[w - 0.5, pages, d - 0.5]} radius={0.12} bevel={0.03} position={[0.15, board + pages / 2, 0]}>
+        <meshStandardMaterial color="#f5f3ee" roughness={0.92} />
       </Block>
-      <Block size={[w, board, d]} radius={0.35} bevel={bevel} position={[0, board * 1.5 + pages, 0]}>
-        {wrap}
+      <Block size={[w, board, d]} radius={0.3} bevel={0.06} position={[0, board * 1.5 + pages, 0]}>
+        {black}
       </Block>
-      <Block size={[0.55, pages + board * 2, d]} radius={0.26} bevel={0.1} position={[-w / 2 + 0.2, (pages + board * 2) / 2, 0]}>
-        {wrap}
-      </Block>
-      <Face w={faceW} h={faceD} radius={0.35} map={cover} spec={spec} position={[0, pages + board * 2 + LIFT, 0]} rotation={[-Math.PI / 2, 0, 0]} />
+      {/* Wire-o: um anel a cada 0,85 cm, abraçando a borda esquerda das duas capas. */}
+      {Array.from({ length: count }, (_, i) => (
+        <mesh key={i} geometry={rings} position={[-w / 2 + 0.35, top / 2, -d / 2 + 0.6 + (i + 0.5) * ((d - 1.2) / count)]}>
+          <meshStandardMaterial color="#c9ccd1" metalness={1} roughness={0.3} />
+        </mesh>
+      ))}
+      <Face w={COVER.w} h={COVER.d} radius={0.3} map={cover} spec={spec} position={[0.4, top + LIFT, 0]} rotation={[-Math.PI / 2, 0, 0]} />
     </group>
   );
 }
 
-/** Mostrador de temperatura da tampa (sensor térmico). */
-function displayTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, 128, 128);
-    ctx.fillStyle = "#5fe3ff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = `600 46px ${fontFamily()}`;
-    ctx.fillText("45°", 66, 62);
-    ctx.font = `600 16px ${fontFamily()}`;
-    ctx.fillText("TEMP", 64, 98);
+/**
+ * Faixa de arte ao longo do eixo (y) de um cilindro, voltada para −z local: na garrafa deitada (eixo para a frente)
+ * ela fica para cima e a arte lê da tampa para o fundo, como nas fotos.
+ */
+function axialBand(radius: number, y0: number, length: number, width: number) {
+  const arc = Math.min(width / radius, Math.PI * 0.95);
+  const geometry = new THREE.PlaneGeometry(1, 1, 24, 16);
+  const position = geometry.getAttribute("position");
+  for (let i = 0; i < position.count; i += 1) {
+    const u = position.getX(i) + 0.5;
+    const v = position.getY(i) + 0.5;
+    // θ cresce com v: a face da frente do plano fica para fora do cilindro.
+    const theta = Math.PI - arc / 2 + arc * v;
+    position.setXYZ(i, radius * Math.sin(theta), y0 + length * (1 - u), radius * Math.cos(theta));
   }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
-/** Garrafa térmica deitada ao longo de z, tampa (com sensor) virada para a frente. */
-function ThermalBottle({ position }: { position: Vec3 }) {
-  const body = useMemo(
-    () =>
-      lathe(
+/** Garrafa térmica com sensor (a mesma da 396) deitada ao longo de z, tampa com o visor virada para a frente. */
+function KitBottle({ art, label, color, position }: Pick<ModelProps, "art" | "label"> & { color: string; position: Vec3 }) {
+  const { r, length } = EXEC_ITEMS.bottle;
+  const body = 19.3;
+  const parts = useMemo(() => {
+    const R = EXEC_ITEMS.bottle.r;
+    const capLen = EXEC_ITEMS.bottle.length - body - 0.1;
+    return {
+      body: lathe(
+        [
+          [0, 0.3],
+          [R - 0.45, 0.3],
+          [R - 0.3, 0.02],
+          [R - 0.08, 0.03],
+          [R, 0.4],
+          [R, body - 0.25],
+          [R - 0.1, body],
+          [0, body],
+        ],
+        64,
+      ),
+      cap: lathe(
         [
           [0, 0],
-          [3.0, 0],
-          [3.4, 0.15],
-          [3.5, 0.6],
-          [3.5, 18.3],
-          [3.35, 19.3],
-          [2.8, 20.1],
-          [2.5, 20.5],
-          [0, 20.55],
+          [R - 0.1, 0],
+          [R, 0.12],
+          [R, capLen - 0.5],
+          [R - 0.18, capLen - 0.14],
+          [R - 0.5, capLen],
+          [0, capLen],
         ],
         64,
       ),
-    [],
-  );
-  const cap = useMemo(
-    () =>
-      lathe(
-        [
-          [0, 20.75],
-          [2.58, 20.75],
-          [2.62, 20.9],
-          [2.62, 23.55],
-          [2.5, 23.92],
-          [2.2, 24],
-          [0, 24],
-        ],
-        64,
-      ),
-    [],
-  );
-  const display = useMemo(() => displayTexture(), []);
+      capLen,
+      // Adesivo DTF de 9 × 10 cm deitado: os 10 cm correm ao longo da garrafa.
+      band: axialBand(R + 0.02, (body - 10) / 2 + 0.6, 10, 9),
+    };
+  }, []);
+  useGeometryCleanup(parts.body);
+  useGeometryCleanup(parts.cap);
+  useGeometryCleanup(parts.band);
+  const decal = useMemo(() => (art.src ? { ...art, background: "rgba(0,0,0,0)" } : art), [art]);
+  const map = useArtTexture(10 / 9, "front", decal, label);
+  const display = useMemo(() => sensorDisplayTexture(), []);
   useEffect(() => () => display.dispose(), [display]);
-  useGeometryCleanup(body);
-  useGeometryCleanup(cap);
+  const paint = <meshPhysicalMaterial color={color} roughness={0.55} metalness={0.08} clearcoat={0.3} clearcoatRoughness={0.35} />;
   return (
     <group position={position}>
-      <group rotation-x={Math.PI / 2} position-z={-12}>
-        <mesh geometry={body}>
-          <meshPhysicalMaterial color="#f1f1ef" roughness={0.45} clearcoat={0.3} />
+      {/* Torno em y; deitada: y → +z (tampa para a frente). */}
+      <group rotation-x={Math.PI / 2} position-z={-length / 2}>
+        <mesh geometry={parts.body}>{paint}</mesh>
+        <mesh geometry={parts.band}>
+          <meshPhysicalMaterial map={map} roughness={0.25} clearcoat={0.8} transparent polygonOffset polygonOffsetFactor={-2} />
         </mesh>
-        <mesh position-y={20.65}>
-          <cylinderGeometry args={[2.56, 2.56, 0.3, 64]} />
-          <meshStandardMaterial color="#d9dce1" metalness={1} roughness={0.2} />
-        </mesh>
-        <mesh geometry={cap}>
-          <meshStandardMaterial color="#1b1b1e" roughness={0.55} />
-        </mesh>
+        <group position-y={body + 0.1}>
+          <mesh geometry={parts.cap}>{paint}</mesh>
+          <mesh position-y={parts.capLen + 0.01} rotation-x={-Math.PI / 2}>
+            <circleGeometry args={[r - 0.55, 48]} />
+            <meshPhysicalMaterial color="#07080a" roughness={0.06} clearcoat={1} />
+          </mesh>
+          {/* Visor de frente para a câmera (topo da tampa = +z depois do giro); dígitos de pé. */}
+          <mesh position-y={parts.capLen + 0.02} rotation-x={-Math.PI / 2}>
+            <circleGeometry args={[(r - 0.55) * 0.62, 48]} />
+            <meshBasicMaterial map={display} transparent depthWrite={false} toneMapped={false} />
+          </mesh>
+        </group>
       </group>
-      <mesh position-z={12.02}>
-        <circleGeometry args={[1.5, 48]} />
-        <meshStandardMaterial color="#0b0d10" roughness={0.12} emissive="#ffffff" emissiveMap={display} emissiveIntensity={0.9} />
-      </mesh>
     </group>
   );
 }
 
-/** Caneta metálica deitada ao longo de z, com anel preto e clipe para cima. */
-function Pen({ position }: { position: Vec3 }) {
+/** Caneta metálica preta deitada ao longo de x, ponteira e anel cromados, clipe para cima. */
+function KitPen({ position }: { position: Vec3 }) {
   const body = useMemo(
     () =>
       lathe(
@@ -743,23 +763,27 @@ function Pen({ position }: { position: Vec3 }) {
     [],
   );
   useGeometryCleanup(body);
-  const metal = <meshStandardMaterial color="#d9dce1" metalness={1} roughness={0.22} />;
+  const chrome = <meshStandardMaterial color="#d9dce1" metalness={1} roughness={0.2} />;
   return (
-    <group position={position}>
-      <group rotation-x={Math.PI / 2} position-z={-7}>
-        <mesh geometry={body}>{metal}</mesh>
-        <mesh position-y={3.3}>
-          <cylinderGeometry args={[0.515, 0.515, 0.6, 32]} />
-          <meshStandardMaterial color="#111113" roughness={0.4} />
+    <group position={position} rotation-z={-Math.PI / 2}>
+      <group position-y={-7}>
+        <mesh geometry={body}>
+          <meshPhysicalMaterial color="#141416" roughness={0.3} metalness={0.4} clearcoat={0.8} clearcoatRoughness={0.1} />
         </mesh>
-        {/* Clipe em −z local = topo depois da rotação. */}
-        <Block size={[0.3, 5.2, 0.14]} radius={0.12} bevel={0.04} position={[0, 10.6, -0.6]}>
-          {metal}
+        <mesh>
+          <cylinderGeometry args={[0.5, 0.5, 0.01, 8]} />
+          {chrome}
+        </mesh>
+        {[2.95, 9.4].map((y) => (
+          <mesh key={y} position-y={y}>
+            <cylinderGeometry args={[0.515, 0.515, 0.35, 32]} />
+            {chrome}
+          </mesh>
+        ))}
+        {/* Clipe em −x local = para cima depois do giro. */}
+        <Block size={[0.14, 5.2, 0.3]} radius={0.12} bevel={0.04} position={[-0.6, 10.9, 0]}>
+          {chrome}
         </Block>
-        <mesh position={[0, 8.05, -0.62]}>
-          <sphereGeometry args={[0.13, 16, 12]} />
-          {metal}
-        </mesh>
       </group>
     </group>
   );
@@ -767,8 +791,8 @@ function Pen({ position }: { position: Vec3 }) {
 
 const KIT_MUG = { r: 4.1, h: 9.5, printW: 19, printH: 8 };
 
-/** Caneca branca sublimada (faixa de 19 × 8 cm), alça atrás. */
-function KitMug({ art, label, position, rotationY }: Pick<ModelProps, "art" | "label"> & { position: Vec3; rotationY: number }) {
+/** Caneca branca sublimada (faixa de 19 × 8 cm) deitada no berço: fundo para a frente, arte para cima, alça para a esquerda. */
+function KitMug({ art, label, position }: Pick<ModelProps, "art" | "label"> & { position: Vec3 }) {
   const texture = useArtTexture(KIT_MUG.printW / KIT_MUG.printH, "front", art, label);
   const { r, h } = KIT_MUG;
   const body = useMemo(
@@ -800,52 +824,70 @@ function KitMug({ art, label, position, rotationY }: Pick<ModelProps, "art" | "l
   useGeometryCleanup(handle);
   const ceramic = <meshPhysicalMaterial color="#fbfbfb" roughness={0.12} clearcoat={1} clearcoatRoughness={0.05} />;
   return (
-    <group position={position} rotation-y={rotationY}>
-      <mesh geometry={body}>{ceramic}</mesh>
-      <group position-y={h / 2 + 0.1}>
-        <PrintBand geometry={band} map={texture} />
+    // Torno em y; deitada: y → −z (boca para o fundo), +z do torno (frente da arte) → para cima.
+    <group position={position} rotation-x={-Math.PI / 2}>
+      <group position-y={-h / 2}>
+        <mesh geometry={body}>{ceramic}</mesh>
+        <group position-y={h / 2 + 0.1}>
+          <PrintBand geometry={band} map={texture} />
+        </group>
+        {/* A alça nasce em +x; meia-volta a leva para −x (a esquerda, para o lado do caderno). */}
+        <mesh geometry={handle} rotation-y={Math.PI}>
+          {ceramic}
+        </mesh>
       </group>
-      <mesh geometry={handle} rotation-y={Math.PI / 2}>
-        {ceramic}
-      </mesh>
     </group>
   );
 }
 
-function ExecutiveKit({ spec, art, label }: ModelProps) {
+/** Opção "Modelo" do kit: "agenda + boné + caneta + garrafa" troca a caneca pelo boné. */
+function kitWithCap(spec: MockupSpec) {
+  const model = (spec.details ?? "").split(" | ").find((value) => value.startsWith("agenda")) ?? "";
+  return /\bbone\b/.test(model);
+}
+
+function ExecutiveKit({ spec, art, label, showDims }: ModelProps) {
   const S = 2.5 / EXEC.w;
   const lidW = EXEC.w + 2 * EXEC.wall + 0.2;
   const lidD = EXEC.d + 2 * EXEC.wall + 0.2;
   const skirt = 3;
   const black = <meshPhysicalMaterial color="#161619" roughness={0.58} clearcoat={0.15} clearcoatRoughness={0.4} sheen={0.35} sheenColor="#3a3a42" sheenRoughness={0.6} />;
-  const { agenda, bottle, pen } = EXEC_ITEMS;
-  const seat = EXEC.foamTop - EXEC.pocket;
-  // Verso do cliente: na face de fora da tampa aberta (voltada para −z), na mesma área da capa da agenda.
-  const backArt = useBackTexture(AGENDA_FACE.w / AGENDA_FACE.d, spec, art, label, undefined, "blank");
+  const { bottle, notebook, pen, side } = EXEC_ITEMS;
+  const seat = EXEC.insertTop - EXEC.pocket;
+  const withCap = kitWithCap(spec);
+  // Boné premium preto (a opção diz "preto ou branco"): mesma arte, no DTF da frente.
+  const capSpec = useMemo<MockupSpec>(() => ({ ...spec, kind: "cap", variant: null, widthCm: 12, heightCm: 6, baseColor: "#1c1c1e", accentColor: null }), [spec]);
+  // Verso do cliente: na face de fora da tampa aberta (voltada para −z), na mesma área da capa do caderno.
+  const backArt = useBackTexture(COVER.w / COVER.d, spec, art, label, undefined, "blank");
   const ownBack = hasArtContent(art.back);
   return (
-    <group userData={{ view: { elevation: 0.68 } }}>
+    <group userData={{ view: { elevation: 0.72 } }}>
       <group scale={S}>
         <Tray w={EXEC.w} d={EXEC.d} h={EXEC.h} wall={EXEC.wall} floor={EXEC.floor} radius={0.6} bevel={0.15} material={black} />
-        {/* Tampa articulada na borda de trás, aberta ~110°: o forro de cetim vira fundo da foto. */}
-        <group position={[0, EXEC.h, -EXEC.d / 2]} rotation-x={-1.92}>
+        {/* Tampa articulada na borda de trás, aberta ~100° (quase de pé, como na foto): o forro vira fundo. */}
+        <group position={[0, EXEC.h, -EXEC.d / 2]} rotation-x={-1.74}>
           <group position={[0, 0.35, EXEC.d / 2]}>
             <Tray w={lidW} d={lidD} h={skirt} wall={EXEC.wall} floor={0.35} radius={0.75} bevel={0.15} material={black} rotation={[Math.PI, 0, 0]} />
             <Block size={[lidW - 2 * EXEC.wall - 0.4, 0.18, lidD - 2 * EXEC.wall - 0.4]} radius={0.5} bevel={0.08} position={[0, -0.36 - 0.09, 0]}>
-              <meshPhysicalMaterial color="#1d1d22" roughness={0.32} sheen={1} sheenColor="#8a8a98" sheenRoughness={0.3} />
+              <meshPhysicalMaterial color="#1b1b1f" roughness={0.7} />
             </Block>
             {/* Face de fora da tampa (y = 0 local; borda da frente = +z local = alto da tampa aberta). Giro [π/2, π, 0]:
                 x da arte = −x (direita de quem olha por trás), y da arte = +z, normal = +y. */}
-            {ownBack && <Face w={AGENDA_FACE.w} h={AGENDA_FACE.d} radius={0.35} map={backArt} spec={spec} position={[0, LIFT, 0]} rotation={[Math.PI / 2, Math.PI, 0]} />}
+            {ownBack && <Face w={COVER.w} h={COVER.d} radius={0.35} map={backArt} spec={spec} position={[0, LIFT, 0]} rotation={[Math.PI / 2, Math.PI, 0]} />}
           </group>
         </group>
-        <FoamInsert />
-        <Agenda spec={spec} art={art} label={label} position={[agenda.x, seat, agenda.z]} />
-        {/* Garrafa (Ø 7 cm) afundada no berço: o topo fica rente à borda e a tampa da caixa fecha. */}
-        <ThermalBottle position={[bottle.x, EXEC.h - 3.5, bottle.z]} />
-        <Pen position={[pen.x, seat + 0.55, pen.z]} />
-        {/* A caneca sai do berço vazio e fica na frente, com a arte para a câmera. */}
-        <KitMug art={art} label={label} position={[13.5, 0, EXEC.d / 2 + 5.5]} rotationY={-0.35} />
+        <KitInsert />
+        <KitBottle art={art} label={label} color="#1a1a1c" position={[bottle.x, seat + bottle.r, bottle.z]} />
+        <KitNotebook spec={spec} art={art} label={label} position={[notebook.x, seat, notebook.z]} />
+        <KitPen position={[pen.x, seat + 0.5, pen.z]} />
+        {withCap ? (
+          // Boné deitado de lado no canto direito, aba virada para o caderno (como na foto da versão com boné).
+          <group position={[side.x - 3, seat, side.z - 6]} rotation={[0, -0.6, 0]} scale={1 / CAP_SCALE}>
+            <CapModel spec={capSpec} art={art} label={label} showDims={showDims} />
+          </group>
+        ) : (
+          <KitMug art={art} label={label} position={[side.x, seat + KIT_MUG.r + 0.1, side.z]} />
+        )}
       </group>
     </group>
   );
@@ -1008,6 +1050,26 @@ function cardShape(w: number, h: number, radius: number) {
   return shape;
 }
 
+/**
+ * Face de uma metade da solapa com a UV na folha aberta (W × H, dobra no meio): a frente mostra a metade de baixo da
+ * arte; a de trás, a metade de cima, que na dobra gira em volta do vinco (de cabeça para baixo para quem olha a frente,
+ * como na peça real). `back`: a malha vai girada meia-volta em y (o x local é espelhado).
+ */
+function halfSheetFace(shape: THREE.Shape, W: number, H: number, back: boolean) {
+  const geometry = new THREE.ShapeGeometry(shape, 10);
+  const position = geometry.getAttribute("position");
+  const uv = geometry.getAttribute("uv");
+  const hF = H / 2;
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i);
+    // Altura a partir da borda de baixo da face (0) até o vinco (hF).
+    const up = position.getY(i) + hF / 2;
+    uv.setXY(i, back ? 0.5 - x / W : x / W + 0.5, back ? 1 - up / H : up / H);
+  }
+  uv.needsUpdate = true;
+  return geometry;
+}
+
 /** Meia-cana da dobra no topo do cartão, ligando a frente (z = +g) ao verso (z = −g). */
 function foldGeometry(w: number, g: number, segments = 12) {
   const positions: number[] = [];
@@ -1073,9 +1135,11 @@ function candyGeometry(bag: BagShape) {
 }
 
 function Solapa({ spec, art, label }: ModelProps) {
-  // Formato = face do cartão dobrado (largura × altura).
+  // Formato = folha aberta (largura × altura); a solapa vai sempre dobrada ao meio, então cada face tem metade da
+  // altura (revisão da Padrão de 25/10: "5x10" é uma face de 5 × 5).
   const w = cm(spec.widthCm, 10, 3);
-  const h = cm(spec.heightCm, 5, 2.5);
+  const sheetH = cm(spec.heightCm, 10, 5);
+  const h = sheetH / 2;
   const t = 0.035;
   const g = 0.16;
   const holeY = -clamp(h * 0.2, 0.8, 1.4);
@@ -1088,7 +1152,7 @@ function Solapa({ spec, art, label }: ModelProps) {
     return { w: w - 0.3, top: holeY - 0.6, bottom, fillTop: bottom + 0.9 + bagLen * 0.55, cardBottom: -h, seal: 0.8, bulge: 0.75 };
   }, [w, h, holeY, bagLen]);
   const S = 2.4 / (h + bagLen + 1.2);
-  const front = useArtTexture(w / h, "front", art, label);
+  const front = useArtTexture(w / sheetH, "front", art, label);
 
   const shape = useMemo(() => {
     const s = cardShape(w, h, 0.3);
@@ -1100,7 +1164,8 @@ function Solapa({ spec, art, label }: ModelProps) {
     geometry.translate(0, 0, -t / 2);
     return geometry;
   }, [shape]);
-  const face = useMemo(() => faceGeometry(shape, w, h), [shape, w, h]);
+  const face = useMemo(() => halfSheetFace(shape, w, sheetH, false), [shape, w, sheetH]);
+  const backFace = useMemo(() => halfSheetFace(shape, w, sheetH, true), [shape, w, sheetH]);
   const fold = useMemo(() => foldGeometry(w, g), [w]);
   const filmFront = useMemo(() => bagFilmGeometry(bag, 1), [bag]);
   const filmBack = useMemo(() => bagFilmGeometry(bag, -1), [bag]);
@@ -1108,6 +1173,7 @@ function Solapa({ spec, art, label }: ModelProps) {
   const staple = useMemo(() => new THREE.BoxGeometry(1, 0.07, 0.05), []);
   useGeometryCleanup(panel);
   useGeometryCleanup(face);
+  useGeometryCleanup(backFace);
   useGeometryCleanup(fold);
   useGeometryCleanup(filmFront);
   useGeometryCleanup(filmBack);
@@ -1124,7 +1190,7 @@ function Solapa({ spec, art, label }: ModelProps) {
   return (
     <group>
       <group scale={S}>
-        {/* Cartão: frente e verso impressos (4/0 fica por fora dos dois lados depois de dobrado). */}
+        {/* Cartão dobrado: a impressão (4/0) fica por fora, metade da arte em cada face. */}
         <group position={[0, -h / 2, g]}>
           <mesh geometry={panel}>
             <meshStandardMaterial color="#f7f7f5" roughness={0.7} />
@@ -1137,7 +1203,7 @@ function Solapa({ spec, art, label }: ModelProps) {
           <mesh geometry={panel}>
             <meshStandardMaterial color="#f7f7f5" roughness={0.7} />
           </mesh>
-          <mesh geometry={face} position-z={-t / 2 - 0.008} rotation-y={Math.PI}>
+          <mesh geometry={backFace} position-z={-t / 2 - 0.008} rotation-y={Math.PI}>
             <PrintMaterial map={front} spec={spec} />
           </mesh>
         </group>
@@ -1202,8 +1268,10 @@ function Solapa({ spec, art, label }: ModelProps) {
  * Caixas e kits, em centímetros reais com bordas chanfradas (extrusões com bevel):
  * - padrão: caixa rígida de presente com papel de seda, tampa suspensa inclinada para a câmera; arte na tampa e na frente;
  * - `cinema`: bandeja de madeira com balde de pipoca (grãos procedurais) e copo com tampa e canudo, arte em faixa cônica;
- * - `executive`: caixa preta aberta com espuma (agenda com arte na capa, garrafa térmica com sensor, caneta) e caneca sublimada;
- * - `sleeve`: solapa com furo euro dobrada sobre saquinho de confeitos, pendurada num gancho de PDV;
+ * - `executive`: caixa preta de tampa articulada com berço branco: garrafa térmica com sensor, caderno espiral, caneta e
+ *   caneca deitada (ou o boné, conforme o modelo do kit);
+ * - `sleeve`: solapa com furo euro dobrada ao meio (cada face com metade da altura do formato) sobre saquinho de
+ *   confeitos, pendurada num gancho de PDV;
  * - `acrylic`: caixa de acrílico cristal (sem transmission) com tampa impressa em UV e cartão impresso dentro.
  */
 export function BoxModel(props: ModelProps) {
