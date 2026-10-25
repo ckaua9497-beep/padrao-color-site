@@ -10,11 +10,10 @@
 //
 // Precisa do Google Chrome (CHROME_PATH para outro caminho). Cada foto abre /design-system/fotos?… num Chrome sem
 // janela, espera o 3D e grava o arquivo que o grupo/variação cita em `imagem`, `imagem_1` e `imagem_2`.
-import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { catalogPhoto, openChrome } from "./lib/chrome-cdp.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -22,7 +21,6 @@ const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.
 const BASE = flag("base") ?? "http://localhost:3100";
 const ONLY = flag("only")?.split(",").map(Number);
 const TAM = Number(flag("tam") ?? 1200) || 1200;
-const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 /**
  * Por grupo: cor da estampa (token do espectro), modo ("pattern" chapado; "mark" = 1 cor, para serigrafia) e as
@@ -83,73 +81,28 @@ if (!jobs.length) {
   process.exit(1);
 }
 
-const port = 9900 + Math.floor(Math.random() * 90);
-const profile = join(tmpdir(), `padrao-fotos-${port}`);
-mkdirSync(profile, { recursive: true });
-const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, "--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist", "--hide-scrollbars", "--window-size=1800,1200", "about:blank"], { stdio: "ignore" });
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let wsUrl;
-for (let i = 0; i < 80 && !wsUrl; i += 1) {
-  try {
-    wsUrl = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === "page")?.webSocketDebuggerUrl;
-  } catch {}
-  if (!wsUrl) await sleep(250);
-}
-if (!wsUrl) {
-  console.error(`Não consegui abrir o Chrome em ${CHROME} (defina CHROME_PATH).`);
-  chrome.kill();
-  process.exit(1);
-}
-const ws = new WebSocket(wsUrl);
-await new Promise((r) => ws.addEventListener("open", r));
-let id = 0;
-const pending = new Map();
-let errors = [];
-ws.addEventListener("message", (e) => {
-  const m = JSON.parse(e.data);
-  if (m.id && pending.has(m.id)) {
-    pending.get(m.id)(m);
-    pending.delete(m.id);
-  } else if (m.method === "Runtime.exceptionThrown") errors.push(m.params.exceptionDetails?.exception?.description?.slice(0, 300) ?? "erro");
-});
-const send = (method, params = {}) =>
-  new Promise((r) => {
-    id += 1;
-    pending.set(id, r);
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-const evaluate = async (expression) => (await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result?.result?.value;
-await send("Runtime.enable");
-await send("Page.enable");
 // Escala 3: o canvas do 3D (900 px de largura na página) sai com 2700 px e a foto é reduzida para TAM × TAM (bordas
 // suaves; sobra resolução mesmo depois do recorte em volta do produto).
-await send("Emulation.setDeviceMetricsOverride", { width: 1800, height: 1200, deviceScaleFactor: 3, mobile: false });
-await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+let browser;
+try {
+  browser = await openChrome({ width: 1800, height: 1200, scale: 3 });
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 
 let failed = 0;
 for (const job of jobs) {
-  errors = [];
   const started = Date.now();
-  await send("Page.navigate", { url: job.url });
-  let state = "aguardando";
-  for (let i = 0; i < 240 && state === "aguardando"; i += 1) {
-    await sleep(500);
-    state = (await evaluate(`document.querySelector('[data-foto]')?.dataset.foto ?? 'aguardando'`)) ?? "aguardando";
-  }
-  const data = state === "pronta" ? await evaluate("window.__foto ?? null") : null;
-  if (!data?.startsWith("data:image/webp;base64,")) {
+  const photo = await catalogPhoto(browser, job.url);
+  if (!photo.ok) {
     failed += 1;
-    console.log(`✖ ${job.name}: ${state}${errors.length ? ` · ${errors[0]}` : ""}`);
+    console.log(`✖ ${job.name}: ${photo.state}${browser.errors.length ? ` · ${browser.errors[0]}` : ""}`);
     continue;
   }
   mkdirSync(dirname(job.file), { recursive: true });
-  writeFileSync(job.file, Buffer.from(data.slice(data.indexOf(",") + 1), "base64"));
+  writeFileSync(job.file, Buffer.from(photo.data.slice(photo.data.indexOf(",") + 1), "base64"));
   console.log(`✔ ${job.name} → ${job.file.slice(root.length + 1)} (${((Date.now() - started) / 1000).toFixed(1)} s)`);
 }
-ws.close();
-chrome.kill();
-await sleep(300);
-try {
-  rmSync(profile, { recursive: true, force: true });
-} catch {}
+await browser.close();
 process.exit(failed ? 1 : 0);
