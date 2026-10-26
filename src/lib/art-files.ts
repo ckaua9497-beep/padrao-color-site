@@ -114,6 +114,19 @@ export function parseUploadedFiles(raw: unknown, base: string | readonly string[
   return out;
 }
 
+/** Prévia da arte no gabarito (imagem para "Artes enviadas" em Meus pedidos): sobe com os arquivos, nunca vai para a produção. */
+export type UploadedPreview = { url: string; nome: string };
+
+/** Prévia vinda do navegador, numa das pastas `base` (as mesmas regras dos arquivos da arte); inválida = null. */
+export function parseUploadedPreview(raw: unknown, base: string | readonly string[]): UploadedPreview | null {
+  const bases = (typeof base === "string" ? [base] : base).filter(Boolean);
+  if (typeof raw !== "object" || raw === null || !bases.length) return null;
+  const { url, nome } = raw as Record<string, unknown>;
+  if (typeof url !== "string" || typeof nome !== "string") return null;
+  const pasta = bases.find((b) => isArtFileUrl(url, b));
+  return pasta && url.slice(pasta.length) === nome ? { url, nome } : null;
+}
+
 /**
  * Tipo de anexo de cada arquivo, entre os que a variação aceita na API (tipos_anexo): o PDF montado no gabarito e a
  * arte da frente vão como "Arquivo Único" (ou "Impressão Frente" quando a variação separa frente e verso); a do

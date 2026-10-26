@@ -1,10 +1,14 @@
 import type { ApiEndereco } from "./api/types";
 import type { CustomSize, Variation } from "./catalog";
-import { orderAttachments, parseUploadedFiles, type ArtAttachment, type UploadedArtFile } from "./art-files.ts";
+import { orderAttachments, parseUploadedFiles, parseUploadedPreview, type ArtAttachment, type UploadedArtFile, type UploadedPreview } from "./art-files.ts";
 import { cotarAcabamentos, parseAcabamentosEscolhidos, resumoAcabamentos, type Acabamento, type AcabamentoEscolhido, type CotacaoAcabamentos } from "./acabamentos.ts";
 import { areaQuote, areaRules, cleanOptionLabel } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
 import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./termos-arte.ts";
+import { addBusinessDays, brDate, brasiliaClock, feriadosNacionais, inicioDaContagem, type Relogio } from "./dias-uteis.ts";
+import { LOJA_PADRAO, lojaRetirada, pagaNaRetiradaPermitido, type ModoEntrega } from "./entrega.ts";
+import type { RotaDoCliente } from "./cliente";
+import type { OpcaoFrete } from "./frete";
 
 /*
  * Pedido do site para a API (POST /gerarpedido) — mapeamento explícito, tipado e isolado.
@@ -16,7 +20,8 @@ import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./term
  * (embalagem da variação), tipoProducao ("expresso"/"economico"), productionTime (dias úteis), nomeTrabalho,
  * nome_trabalho, descricao, desc_trabalho, arte {tipo, preco, anexos[{url, nome, tipoArquivo}]}, tratamentoArquivo
  * e precoTotalAcabamentos. No envelope: data e hora (Brasília), previsao (o maior prazo em dias úteis, sem fim de
- * semana nem feriado nacional), idCliente, pagamento {tipo, valor, status} e entrega.
+ * semana nem os feriados do GET /feriados, contando de hoje só até as 18h: dias-uteis.ts), idCliente, pagamento
+ * {tipo, valor, status} e entrega.
  * Premissas a confirmar com a Padrão (trocar aqui):
  * - arte.tipo = 1 com a arte do cliente (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda
  *   depois). Criação de arte pela equipe (preço da variação, `criacao_arte`): arte.tipo = 2 e arte.preco = o preço dela,
@@ -29,8 +34,11 @@ import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./term
  * - Acabamentos extras (acabamentos.ts): o valor vai em precoTotalAcabamentos e a lista em desc_trabalho
  *   ("Acabamentos: Serrilha (2×)…"); precoTotal do item = price × quantidade (só o produto) e o precoTotal do
  *   envelope soma os dois. O prazo dos acabamentos entra em productionTime e na previsão.
- * - entrega: o exemplo traz a loja de retirada ({id, nome}); o site manda {tipo, endereco} até a lista de lojas e o
- *   formato da entrega com endereço chegarem.
+ * - entrega (entrega.ts): {tipo: "Delivery Padrão" | "Retirada" | "Transportadora", endereco, rota {nome, taxa, cobrada},
+ *   loja {id, nome} (ids do site oficial), transportadora {servico, nome, prazo}, frete}. O frete (taxa da rota cobrada ou
+ *   transportadora) vai em `frete` no envelope e entra no precoTotal e no pagamento.valor; retirada nunca cobra frete.
+ * - pagamento "retirada": tipo "Pagamento na Retirada" (nome a confirmar), só com a liberação no cadastro, no Delivery
+ *   Padrão ou numa loja própria. Sem boleto (a Padrão não trabalha com boleto, 26/10/2026).
  * - Extras do site que o exemplo não tem: unidades (lotes × unidades do lote), largura/altura/area (m²) e kit.
  * - Medida livre (m²): quantidade = peças, price = total ÷ peças e precoTotal = total do item, porque o mínimo de 1 m²
  *   vale no item inteiro (revisão da Padrão de 25/10/2026); `area` é a área cobrada de uma peça.
@@ -40,13 +48,16 @@ import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./term
  * O servidor recalcula tudo a partir da variação: o preço que vem do navegador só serve para comparar.
  */
 
-export type PaymentMethod = "pix" | "cartao" | "boleto";
+/** Sem boleto: a Padrão não trabalha com boleto (26/10/2026). "retirada" = pagar na retirada ou na entrega pela rota. */
+export type PaymentMethod = "pix" | "cartao" | "retirada";
 
 export const PAYMENT_METHODS: Record<PaymentMethod, { label: string; hint: string; apiType: string }> = {
   pix: { label: "Pix", hint: "Pagamento instantâneo", apiType: "PIX" },
   cartao: { label: "Cartão de crédito", hint: "Pagamento com cartão de crédito", apiType: "Cartão de Crédito" },
-  boleto: { label: "Boleto bancário", hint: "Pagamento bancário", apiType: "Boleto Bancário" },
+  retirada: { label: "Pagar na retirada", hint: "Liberado no seu cadastro: você paga ao receber ou retirar o pedido", apiType: "Pagamento na Retirada" },
 };
+
+export const isPaymentMethod = (value: unknown): value is PaymentMethod => typeof value === "string" && value in PAYMENT_METHODS;
 
 export const PURCHASE_TYPE = "Site";
 
@@ -69,6 +80,8 @@ export type OrderItemInput = {
   unitPrice: number;
   /** Arquivos da arte já no Bunny (URL pública da pasta de uploads): vão em arte.anexos. */
   files?: UploadedArtFile[];
+  /** Imagem da arte no gabarito, só para "Artes enviadas" em Meus pedidos (src/lib/artes-enviadas): não vai no pedido. */
+  previa?: UploadedPreview | null;
   /** Acabamentos extras escolhidos (serrilha, furo, laminação…): o servidor recalcula o preço pelo catálogo. */
   acabamentos?: AcabamentoEscolhido[];
   /** Aceite dos termos de envio de arte (termos-arte.ts): obrigatório no item personalizado. */
@@ -270,9 +283,35 @@ export function orderJobName(lines: { input: Pick<OrderItemInput, "name" | "opti
 
 export type DeliveryAddress = { cep: string; logradouro: string; numero: string; complemento: string; bairro: string; cidade: string; estado: string };
 
-export type DeliveryChoice = { kind: "cadastro" } | { kind: "retirada" } | { kind: "outro"; address: DeliveryAddress };
+/**
+ * Entrega escolhida no checkout (entrega.ts). "rota" = Delivery Padrão no endereço do cadastro; "transportadora" leva o
+ * endereço (null = o do cadastro) e o serviço da cotação (null = sem cotação: frete combinado com o atendimento).
+ * "cadastro" e "outro" são do checkout antigo (pedidos guardados na fila antes da entrega nova): entrega sem frete.
+ */
+export type DeliveryChoice =
+  | { kind: "rota" }
+  | { kind: "retirada"; loja?: number }
+  | { kind: "transportadora"; address: DeliveryAddress | null; servico: number | null }
+  | { kind: "cadastro" }
+  | { kind: "outro"; address: DeliveryAddress };
 
-export type OrderDelivery = { tipo: "Entrega" | "Retirada"; endereco: DeliveryAddress | null };
+export type OrderDelivery = {
+  tipo: "Delivery Padrão" | "Retirada" | "Transportadora" | "Entrega";
+  endereco: DeliveryAddress | null;
+  /** Rota da Padrão (Delivery Padrão): o nome, a taxa e se ela entra no pedido. */
+  rota?: { nome: string; taxa: number; cobrada: boolean };
+  /** Loja ou ponto de retirada (id do site oficial). */
+  loja?: { id: number; nome: string };
+  /** Serviço cotado na API de frete; null = combinado com o atendimento. */
+  transportadora?: { servico: number; nome: string; prazo: string } | null;
+  /** Frete cobrado no pedido (sem o campo, 0). */
+  frete?: number;
+};
+
+/** Modo de entrega da escolha (o checkout antigo vira transportadora). */
+export function modoDaEntrega(choice: DeliveryChoice): ModoEntrega {
+  return choice.kind === "rota" || choice.kind === "retirada" ? choice.kind : "transportadora";
+}
 
 export function addressProblem(address: DeliveryAddress): string | null {
   if (!isValidCep(address.cep)) return "Informe um CEP válido.";
@@ -297,75 +336,55 @@ export function addressFromApi(endereco: Partial<ApiEndereco> | null | undefined
   };
 }
 
-/** Entrega do pedido: endereço do cadastro (GET /cliente), outro endereço ou retirada. */
-export function orderDelivery(choice: DeliveryChoice, registered: DeliveryAddress | null): OrderDelivery | null {
-  if (choice.kind === "retirada") return { tipo: "Retirada", endereco: null };
-  if (choice.kind === "outro") return { tipo: "Entrega", endereco: choice.address };
-  return registered && !addressProblem(registered) ? { tipo: "Entrega", endereco: registered } : null;
+export const SEM_ENDERECO = "Seu cadastro não tem endereço de entrega completo. Escolha a retirada ou informe outro endereço na transportadora.";
+
+/**
+ * Entrega do pedido, com o frete que ele cobra; texto = o que impede (mostrado ao cliente). `transportadora`: a opção
+ * cotada agora para o serviço escolhido (null = sem cotação possível: frete combinado).
+ */
+export function orderDelivery(
+  choice: DeliveryChoice,
+  { registered, rota, transportadora = null }: { registered: DeliveryAddress | null; rota: RotaDoCliente; transportadora?: Pick<OpcaoFrete, "id" | "preco"> & { nome: string; prazo: string } | null },
+): OrderDelivery | string {
+  const cadastro = registered && !addressProblem(registered) ? registered : null;
+  if (choice.kind === "retirada") {
+    const loja = lojaRetirada(choice.loja ?? LOJA_PADRAO);
+    return loja ? { tipo: "Retirada", endereco: null, loja: { id: loja.id, nome: loja.nome }, frete: 0 } : "Escolha a loja de retirada.";
+  }
+  if (choice.kind === "rota") {
+    if (rota.tipo !== "rota") return "Seu endereço não tem rota de entrega da Padrão Color: escolha a retirada ou a transportadora.";
+    if (!cadastro) return SEM_ENDERECO;
+    return { tipo: "Delivery Padrão", endereco: cadastro, rota: { nome: rota.nome, taxa: rota.taxa, cobrada: rota.cobradaNoPedido }, frete: rota.cobradaNoPedido ? rota.taxa : 0 };
+  }
+  if (choice.kind === "transportadora") {
+    const endereco = choice.address ?? cadastro;
+    if (!endereco) return SEM_ENDERECO;
+    if (choice.servico !== null && transportadora?.id !== choice.servico) return "A forma de entrega escolhida não está mais disponível. Escolha de novo.";
+    const servico = choice.servico !== null && transportadora ? { servico: transportadora.id, nome: transportadora.nome, prazo: transportadora.prazo } : null;
+    return { tipo: "Transportadora", endereco, transportadora: servico, frete: servico ? round2(transportadora!.preco) : 0 };
+  }
+  if (choice.kind === "outro") return { tipo: "Entrega", endereco: choice.address, frete: 0 };
+  return cadastro ? { tipo: "Entrega", endereco: cadastro, frete: 0 } : SEM_ENDERECO;
+}
+
+/** O pagamento escolhido vale para esta entrega? (Pagar na retirada só com a liberação e onde a Padrão recebe.) */
+export function paymentProblem(method: PaymentMethod, choice: DeliveryChoice, liberado: boolean): string | null {
+  if (method !== "retirada") return null;
+  return pagaNaRetiradaPermitido({ liberado, modo: modoDaEntrega(choice), loja: choice.kind === "retirada" ? choice.loja : null })
+    ? null
+    : "O pagamento na retirada não vale para esta entrega. Escolha Pix ou cartão.";
 }
 
 // ---------------------------------------------------------------------------------- datas
 
-/** Data e hora de Brasília: o pedido leva data "DD/MM/AAAA" e hora "HH:MM:SS". */
-export function brasiliaClock(now: Date): { iso: string; data: string; hora: string } {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
-      .formatToParts(now)
-      .map((part) => [part.type, part.value]),
-  );
-  const hour = parts.hour === "24" ? "00" : parts.hour;
-  return { iso: `${parts.year}-${parts.month}-${parts.day}`, data: `${parts.day}/${parts.month}/${parts.year}`, hora: `${hour}:${parts.minute}:${parts.second}` };
-}
-
-const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
-
-/** Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher), em UTC. */
-function easter(year: number): number {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return Date.UTC(year, month - 1, day);
-}
-
-/** Feriados nacionais (AAAA-MM-DD): os fixos e a Sexta-feira Santa. */
-export function nationalHolidays(year: number): string[] {
-  const fixed = ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"].map((day) => `${year}-${day}`);
-  return [...fixed, isoDay(easter(year) - 2 * 86_400_000)];
-}
-
-/** AAAA-MM-DD + `days` dias úteis (sem sábado, domingo nem feriado). */
-export function addBusinessDays(iso: string, days: number, holidays: ReadonlySet<string>): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  let t = Date.UTC(y, m - 1, d);
-  let left = Math.max(0, Math.round(days));
-  while (left > 0) {
-    t += 86_400_000;
-    const weekday = new Date(t).getUTCDay();
-    if (weekday !== 0 && weekday !== 6 && !holidays.has(isoDay(t))) left -= 1;
-  }
-  return isoDay(t);
-}
-
-const brDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
-
-/** Previsão do pedido: o maior prazo de produção dos itens, em dias úteis a partir de hoje (Brasília). */
-export function orderForecast(today: string, leadDays: (number | null)[]): string | null {
+/**
+ * Previsão do pedido: o maior prazo de produção dos itens, em dias úteis a partir do dia em que a produção começa a
+ * contar (hoje até as 18h de um dia útil; senão, o próximo dia útil). `holidays` = GET /feriados (feriados.ts).
+ */
+export function orderForecast(clock: Pick<Relogio, "iso" | "hora">, leadDays: (number | null)[], holidays: ReadonlySet<string> = feriadosNacionais(Number(clock.iso.slice(0, 4)))): string | null {
   const days = leadDays.filter((value): value is number => typeof value === "number" && value > 0);
   if (!days.length) return null;
-  const year = Number(today.slice(0, 4));
-  const holidays = new Set([...nationalHolidays(year), ...nationalHolidays(year + 1)]);
-  return brDate(addBusinessDays(today, Math.max(...days), holidays));
+  return brDate(addBusinessDays(inicioDaContagem(clock, holidays), Math.max(...days), holidays));
 }
 
 // ---------------------------------------------------------------------------------- payload
@@ -433,6 +452,8 @@ export type OrderPayload = {
   produtos: OrderProduct[];
   pagamento: OrderPayment;
   entrega: OrderDelivery;
+  /** Frete cobrado no pedido (taxa da rota ou transportadora); já somado em precoTotal. */
+  frete: number;
   tipo_compra: string;
   nome_trabalho: string;
   precoTotal: number;
@@ -502,20 +523,24 @@ type PayloadInput = {
   delivery: OrderDelivery;
   /** Foto, categoria, embalagem e tipos de anexo de cada item (catálogo). */
   facts?: (line: PricedLine) => ProductFacts | null;
+  /** Dias que não contam no prazo (GET /feriados); sem a lista, os feriados nacionais. */
+  holidays?: ReadonlySet<string>;
   now?: Date;
 };
 
-export function buildOrderPayload({ customerId, lines, method, delivery, facts, now = new Date() }: PayloadInput): OrderPayload {
-  const total = orderTotal(lines);
+export function buildOrderPayload({ customerId, lines, method, delivery, facts, holidays, now = new Date() }: PayloadInput): OrderPayload {
+  const frete = round2(delivery.frete ?? 0);
+  const total = round2(orderTotal(lines) + frete);
   const clock = brasiliaClock(now);
   return {
     data: clock.data,
     hora: clock.hora,
-    previsao: orderForecast(clock.iso, lines.map((line) => line.leadDays)),
+    previsao: orderForecast(clock, lines.map((line) => line.leadDays), holidays),
     idCliente: customerId,
     produtos: lines.map((line) => toOrderProduct(line, facts?.(line) ?? NO_FACTS)),
     pagamento: { tipo: PAYMENT_METHODS[method].apiType, valor: total, status: 0, forma: method, parcelas: 1 },
     entrega: delivery,
+    frete,
     tipo_compra: PURCHASE_TYPE,
     nome_trabalho: orderJobName(lines),
     precoTotal: total,
@@ -573,6 +598,7 @@ export function parseItem(raw: unknown, artBase: ArtBases = ""): OrderItemInput 
   }
   const bundleId = isRecord(raw.bundle) ? text(raw.bundle.id, 64) : null;
   const bundleName = isRecord(raw.bundle) ? text(raw.bundle.name, 120) : null;
+  const previa = parseUploadedPreview(raw.previa, artBase);
   return {
     key,
     slug: text(raw.slug, 200) ?? "",
@@ -588,33 +614,46 @@ export function parseItem(raw: unknown, artBase: ArtBases = ""): OrderItemInput 
     bundle: bundleId && bundleName ? { id: bundleId, name: bundleName } : null,
     unitPrice,
     files: parseUploadedFiles(raw.files, artBase),
+    ...(previa ? { previa } : {}),
     acabamentos: parseAcabamentosEscolhidos(raw.acabamentos),
     termosArte: aceiteValido(raw.termosArte),
     ...(raw.criacaoArte === true ? { criacaoArte: true } : {}),
   };
 }
 
-function parseDelivery(raw: unknown): DeliveryChoice | null {
+function parseAddress(raw: unknown): DeliveryAddress | null {
   if (!isRecord(raw)) return null;
-  if (raw.kind === "cadastro" || raw.kind === "retirada") return { kind: raw.kind };
-  if (raw.kind !== "outro" || !isRecord(raw.address)) return null;
-  const a = raw.address;
   const address: DeliveryAddress = {
-    cep: onlyDigits(text(a.cep, 9) ?? ""),
-    logradouro: text(a.logradouro, 120) ?? "",
-    numero: text(a.numero, 20) ?? "",
-    complemento: text(a.complemento, 80) ?? "",
-    bairro: text(a.bairro, 80) ?? "",
-    cidade: text(a.cidade, 80) ?? "",
-    estado: (text(a.estado, 2) ?? "").toUpperCase(),
+    cep: onlyDigits(text(raw.cep, 9) ?? ""),
+    logradouro: text(raw.logradouro, 120) ?? "",
+    numero: text(raw.numero, 20) ?? "",
+    complemento: text(raw.complemento, 80) ?? "",
+    bairro: text(raw.bairro, 80) ?? "",
+    cidade: text(raw.cidade, 80) ?? "",
+    estado: (text(raw.estado, 2) ?? "").toUpperCase(),
   };
-  return addressProblem(address) ? null : { kind: "outro", address };
+  return addressProblem(address) ? null : address;
 }
 
-/**
- * Valida o corpo do POST /api/pedidos (nada do navegador é confiável). `artBase`: ver parseItem. `termosArte` no corpo
- * é o aceite dado no checkout: vale para os itens personalizados que chegaram sem o aceite da página do produto.
- */
+function parseDelivery(raw: unknown): DeliveryChoice | null {
+  if (!isRecord(raw)) return null;
+  if (raw.kind === "rota" || raw.kind === "cadastro") return { kind: raw.kind };
+  if (raw.kind === "retirada") {
+    const loja = raw.loja === undefined ? LOJA_PADRAO : positiveInt(raw.loja);
+    return lojaRetirada(loja) ? { kind: "retirada", loja } : null;
+  }
+  if (raw.kind === "transportadora") {
+    const address = raw.address === null || raw.address === undefined ? null : parseAddress(raw.address);
+    if (raw.address && !address) return null;
+    const servico = raw.servico === null || raw.servico === undefined ? null : positiveInt(raw.servico);
+    if (servico === undefined) return null;
+    return { kind: "transportadora", address, servico };
+  }
+  if (raw.kind !== "outro") return null;
+  const address = parseAddress(raw.address);
+  return address ? { kind: "outro", address } : null;
+}
+
 export function parseOrderRequest(raw: unknown, { artBase = "" }: { artBase?: ArtBases } = {}): { ok: true; value: OrderRequest } | { ok: false; error: string } {
   if (!isRecord(raw)) return { ok: false, error: "Pedido inválido." };
   if (!Array.isArray(raw.items) || raw.items.length === 0) return { ok: false, error: "Seu carrinho está vazio." };
@@ -627,7 +666,7 @@ export function parseOrderRequest(raw: unknown, { artBase = "" }: { artBase?: Ar
   if (items.some((item) => item === null)) return { ok: false, error: "Há um item inválido no carrinho. Remova e adicione de novo." };
   if (new Set(items.map((item) => item!.key)).size !== items.length) return { ok: false, error: "Há itens repetidos no carrinho." };
   const payment = raw.payment;
-  if (payment !== "pix" && payment !== "cartao" && payment !== "boleto") return { ok: false, error: "Escolha a forma de pagamento." };
+  if (!isPaymentMethod(payment)) return { ok: false, error: "Escolha a forma de pagamento." };
   const delivery = parseDelivery(raw.delivery);
   if (!delivery) return { ok: false, error: "Confira o endereço de entrega." };
   const expectedTotal = Number(raw.expectedTotal);

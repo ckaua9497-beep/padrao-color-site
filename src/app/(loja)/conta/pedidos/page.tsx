@@ -11,7 +11,12 @@ import { ApiError } from "@/lib/api/client";
 import { getPedidos } from "@/lib/api/padrao";
 import type { ApiPedidos } from "@/lib/api/types";
 import { isValidIsoDate } from "@/lib/api/validation";
+import { artesDoCliente } from "@/lib/artes-enviadas/repo";
+import { MINUTOS_PARA_CANCELAR, janelaDeCancelamento } from "@/lib/cancelamento";
+import { brasiliaClock, feriadosNacionais } from "@/lib/dias-uteis";
+import { feriados } from "@/lib/feriados";
 import { daCliente } from "@/lib/fila-pedidos/repo";
+import { STORE } from "@/lib/store";
 import { loginUrl, requireSession } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Meus pedidos", robots: { index: false, follow: false } };
@@ -47,9 +52,15 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   if (expired) redirect(loginUrl("/conta/pedidos", true));
   // Pedidos guardados na fila do site (a API não recebeu na hora). Sem o banco, a lista some.
   const naFila = filtered ? [] : await daCliente(session.id).catch(() => []);
+  // "Artes enviadas": o que o site guardou de cada pedido. Sem o banco, cada item mostra só o que a API tem.
+  const artes = await artesDoCliente(session.id).catch(() => null);
 
   const orders = result?.pedidos ?? [];
   const pages = Math.max(1, result?.paginas ?? 1);
+  // Reenvio de arte: a previsão que valeria se a arte chegasse agora (só busca os feriados quando há arte a reenviar).
+  const clock = brasiliaClock();
+  const resend = orders.some((order) => (order.itens ?? []).some((item) => item.situacao?.reenvia_arte === "Sim"));
+  const resendClock = { clock, holidays: resend ? await feriados() : feriadosNacionais(Number(clock.iso.slice(0, 4))) };
   const pageHref = (target: number) => {
     const query = new URLSearchParams();
     if (number) query.set("pedido", number);
@@ -119,7 +130,24 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
               </Button>
             </div>
           ) : (
-            orders.map((order) => <OrderCard key={order.compra} order={order} />)
+            <>
+              <p className="text-caption text-muted">
+                Você pode cancelar uma compra, ou só um item dela, até {MINUTOS_PARA_CANCELAR} minutos depois de finalizar. Depois disso, fale com o{" "}
+                <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className="font-semibold text-ink underline underline-offset-2">
+                  atendimento
+                </a>
+                .
+              </p>
+              {orders.map((order) => (
+                <OrderCard
+                  key={order.compra}
+                  order={order}
+                  janela={janelaDeCancelamento(order)}
+                  resendClock={resendClock}
+                  artes={{ itens: artes?.compras.get(String(order.compra)) ?? [], reenvios: artes?.reenvios ?? new Map() }}
+                />
+              ))}
+            </>
           )}
         </div>
 

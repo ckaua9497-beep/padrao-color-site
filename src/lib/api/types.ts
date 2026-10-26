@@ -136,11 +136,16 @@ export type ApiEndereco = {
   estado: string;
   cep: string;
   pais?: string;
+  /** Rota de entrega da Padrão: o nome é a cor dela ("VERDE"); sem rota = transportadora (cliente.ts). */
   rota?: string;
+  /** Só no endereço de entrega. */
   taxa_rota?: number;
 };
 
-/** GET /cliente — o cliente dono do token. `tabela` e `categoria` identificam revendedor. */
+/**
+ * GET /cliente — o cliente dono do token. `tabela` e `categoria` identificam revendedor. Formato conferido com uma resposta
+ * real de 26/10/2026; leia saldo, e-mail, nascimento e rota por src/lib/cliente.ts.
+ */
 export type ApiCliente = {
   id: number;
   nome: string;
@@ -152,18 +157,23 @@ export type ApiCliente = {
   telefone_1: string;
   telefone_2: string;
   telefone_3: string;
+  /** Pode vir vazio: o e-mail fica só em `email_cadastro`. */
   email: string;
   email_cadastro: string;
+  /** DD/MM/AAAA. */
+  nascimento?: string;
   /** Bronze, Prata, Ouro, Ouro 2, Diamante… */
   categoria: string;
+  /** "N" = pagamento na retirada liberado (premissa: cliente.ts): a taxa da rota não entra no pedido. */
   pagamento_antecipado: "S" | "N" | string;
   /** "CLIENTE FINAL" = preço de balcão; outra tabela = revenda. */
   tabela: { id: string; nome: string };
-  conta_corrente: { saldo: number; bloqueado: number };
+  /** O saldo vem em `credito` (`saldo` era o formato antigo). */
+  conta_corrente: { credito?: number; saldo?: number; bloqueado: number };
 };
 
 /** GET /contacorrente */
-export type ApiContaCorrente = { id: number; revenda: string; saldo: number; bloqueado: number };
+export type ApiContaCorrente = { id: number; revenda: string; saldo?: number; credito?: number; bloqueado: number };
 
 export type ApiSituacao = {
   id: number;

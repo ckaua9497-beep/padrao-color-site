@@ -1,6 +1,7 @@
 import { apiFailure, clientIp, fail, json, limits, overLimit, readJsonBody } from "@/lib/api/guard";
 import { cadastrarCliente, getCliente, login, type CadastroCliente } from "@/lib/api/padrao";
 import { brDate, cleanDocument, documentKind, EMPTY_SIGNUP, onlyDigits, signupErrors, type SignupInput } from "@/lib/api/validation";
+import { saldoDaConta } from "@/lib/cliente";
 import { newSession, publicCustomer, saveSession } from "@/lib/session";
 
 /** Corpo do formulário → campos conhecidos, só texto e com tamanho máximo. */
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
       if (!cliente?.id) break;
       const session = newSession(api_token, cliente);
       await saveSession(session);
-      return json({ ok: true, loggedIn: true, customer: publicCustomer(session, cliente.conta_corrente?.saldo) });
+      return json({ ok: true, loggedIn: true, customer: publicCustomer(session, saldoDaConta(cliente.conta_corrente)) });
     } catch {
       // tenta o próximo identificador
     }

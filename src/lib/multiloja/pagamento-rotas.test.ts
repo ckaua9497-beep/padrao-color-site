@@ -25,6 +25,7 @@ test("formas no checkout: só com gateway pronto que cobra a forma", () => {
   assert.deepEqual(formasDisponiveis(rotas, { cielo: ["pix", "boleto"] }), []);
   // Rota apontando para um gateway que não cobra a forma não vale.
   assert.deepEqual(formasDisponiveis({ pix: "pagarme", boleto: "pagarme", cartao: "pagarme" }, { pagarme: ["pix"] }), ["pix"]);
+  assert.deepEqual(formasDisponiveis({ pix: "efi", boleto: "efi", cartao: "efi" }, { efi: ["pix", "boleto", "cartao"] }), ["pix", "cartao"], "boleto nunca entra no checkout");
 });
 
 test("resumo do admin: quem cobra cada forma, na ordem Pix, boleto, cartão", () => {

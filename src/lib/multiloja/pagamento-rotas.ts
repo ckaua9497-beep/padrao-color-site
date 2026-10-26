@@ -21,6 +21,9 @@ export const FORMAS_DO_GATEWAY: Record<GatewayName, readonly PaymentKind[]> = { 
 
 export const ROTAS_DESLIGADAS: Rotas = { pix: "desligado", boleto: "desligado", cartao: "desligado" };
 
+/** A Padrão não trabalha com boleto (26/10/2026): ele nunca entra no checkout, mesmo com um gateway que saiba cobrar. */
+export const FORMAS_FORA: readonly PaymentKind[] = ["boleto"];
+
 export function isGatewayName(value: unknown): value is GatewayName {
   return typeof value === "string" && (GATEWAY_NAMES as readonly string[]).includes(value);
 }
@@ -55,6 +58,7 @@ export function usarParaTudo(rotas: Rotas, gateway: GatewayName, sabeCobrar: rea
  */
 export function formasDisponiveis(rotas: Rotas, prontos: Partial<Record<GatewayName, readonly PaymentKind[]>>): PaymentKind[] {
   return PAYMENT_KINDS.filter((k) => {
+    if (FORMAS_FORA.includes(k)) return false;
     const rota = rotas[k];
     return rota !== "desligado" && Boolean(prontos[rota]?.includes(k));
   });

@@ -283,3 +283,78 @@ export async function buildPrintPdf(sheets: SheetJob[], opts: { title: string; v
   const bytes = await doc.save({ useObjectStreams: false });
   return new Blob([bytes as BlobPart], { type: "application/pdf" });
 }
+
+/**
+ * Imagem da arte no gabarito para as "Artes enviadas" de Meus pedidos (src/lib/artes-enviadas): as folhas, uma embaixo da
+ * outra e de pé como no editor, com a arte de cada painel e por cima a sangria (azul tracejado), o corte (linha cheia) e a
+ * área de segurança (laranja tracejado). JPEG leve; não vai para a produção.
+ */
+export async function buildGabaritoPreview(sheets: SheetJob[], opts: { variant: ArtVariant; label: string; maxSide?: number }): Promise<Blob> {
+  const maxSide = opts.maxSide ?? 1400;
+  const gap = 24;
+  const caption = 30;
+  const margin = 16;
+  const widest = Math.max(...sheets.map((s) => s.page.sheet.w));
+  const tallest = sheets.reduce((sum, s) => sum + s.page.sheet.h, 0);
+  // px por mm: a folha mais larga cabe em maxSide e a pilha toda em 2 × maxSide de altura.
+  const k = Math.min(maxSide / widest, (maxSide * 2 - sheets.length * (gap + caption)) / tallest);
+  const dpi = k * 25.4;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(widest * k + margin * 2));
+  canvas.height = Math.max(1, Math.round(tallest * k + sheets.length * (gap + caption) - gap + margin * 2));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas indisponível");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const cache = new Map<PieceJob, HTMLCanvasElement>();
+  let top = margin;
+  for (const sheet of sheets) {
+    const { page } = sheet;
+    ctx.fillStyle = "#4a4a4a";
+    ctx.font = "600 20px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(page.label || "Gabarito", margin, top + caption / 2);
+    top += caption;
+    const ox = (canvas.width - page.sheet.w * k) / 2;
+    ctx.fillStyle = "#f1f1f1";
+    ctx.fillRect(ox, top, page.sheet.w * k, page.sheet.h * k);
+    for (const job of sheet.panels) {
+      const panel = await renderPanel(job, dpi, opts.variant, opts.label, true, cache);
+      ctx.drawImage(panel, ox + job.panel.bleed.x * k, top + job.panel.bleed.y * k, job.panel.bleed.w * k, job.panel.bleed.h * k);
+      panel.width = 0;
+      panel.height = 0;
+    }
+    // Guias por cima, no referencial da folha (mm).
+    ctx.save();
+    ctx.translate(ox, top);
+    ctx.scale(k, k);
+    const line = (color: string, width: number, dash: number[]) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width / k;
+      ctx.setLineDash(dash.map((d) => d / k));
+    };
+    for (const { panel } of sheet.panels) {
+      line("#38bdf8", 1.5, [6, 4]);
+      ctx.strokeRect(panel.bleed.x, panel.bleed.y, panel.bleed.w, panel.bleed.h);
+      line("#1a1a1a", 1.5, []);
+      if (panel.cut.d) ctx.stroke(new Path2D(panel.cut.d));
+      else ctx.strokeRect(panel.cut.x, panel.cut.y, panel.cut.w, panel.cut.h);
+      if (panel.safe) {
+        line("#f59e0b", 1.5, [6, 4]);
+        if (panel.safe.d) ctx.stroke(new Path2D(panel.safe.d));
+        else for (const part of panel.safe.parts ?? [panel.safe]) ctx.strokeRect(part.x, part.y, part.w, part.h);
+      }
+    }
+    ctx.restore();
+    top += page.sheet.h * k + gap;
+  }
+  for (const art of cache.values()) {
+    art.width = 0;
+    art.height = 0;
+  }
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+  canvas.width = 0;
+  canvas.height = 0;
+  if (!blob) throw new Error("não foi possível gerar a imagem do gabarito");
+  return blob;
+}

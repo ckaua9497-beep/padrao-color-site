@@ -1,11 +1,13 @@
 import { apiFailure, json, sessionOr401 } from "@/lib/api/guard";
 import { getCliente, getContaCorrente } from "@/lib/api/padrao";
 import { maskDocument } from "@/lib/api/validation";
+import { pagaNaRetirada, rotaDoCliente, saldoDaConta } from "@/lib/cliente";
 import { addressFromApi } from "@/lib/orders";
 
 /**
  * GET /api/conta/resumo: o que o checkout precisa da conta logada — documento mascarado, endereço de
- * entrega do cadastro (GET /cliente) e saldo/crédito (GET /contacorrente, só informativo).
+ * entrega do cadastro (GET /cliente), a rota dele e se o pagamento na retirada está liberado (cliente.ts), e
+ * saldo/crédito (GET /contacorrente, só informativo).
  */
 export async function GET() {
   const auth = await sessionOr401();
@@ -17,7 +19,9 @@ export async function GET() {
   return json({
     document: maskDocument(data?.documento ?? ""),
     address: addressFromApi(data?.endereco_entrega) ?? addressFromApi(data?.endereco_cadastro),
-    balance: account?.saldo ?? data?.conta_corrente?.saldo ?? null,
+    balance: saldoDaConta(account) ?? saldoDaConta(data?.conta_corrente),
     blocked: account?.bloqueado ?? data?.conta_corrente?.bloqueado ?? null,
+    rota: data ? rotaDoCliente(data) : { tipo: "transportadora" },
+    pagaNaRetirada: data ? pagaNaRetirada(data) : false,
   });
 }

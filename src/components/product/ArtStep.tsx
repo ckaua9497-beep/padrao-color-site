@@ -141,6 +141,11 @@ type Props = {
    * a página não adiciona ao carrinho. Sem a prop (kit, fachada), o aceite fica para o checkout.
    */
   termos?: { aceito: boolean; onAceito: (aceito: boolean) => void; faltando: boolean } | null;
+  /**
+   * Web-to-print da página de produto: quando o cliente começa a escrever numa superfície vazia, o modelo de exemplo
+   * (enfeites e símbolo) sai e a arte fica "Em branco", só com o texto dele. Os modelos continuam a um clique.
+   */
+  blankOnType?: boolean;
   /** Cabeçalho do "Selecione a arte": nome do produto e preço do item agora. */
   itemName?: string;
   priceLabel?: string | null;
@@ -218,6 +223,7 @@ export function ArtStep({
   details = null,
   creation = null,
   termos = null,
+  blankOnType = false,
 }: Props) {
   const pieceKind = kind ?? FAMILY_SAMPLE[family].kind;
   // Superfícies: a lista da página; sem ela, frente e verso nas peças de duas faces e no gabarito com verso/costas.
@@ -321,6 +327,12 @@ export function ArtStep({
         }
       : null;
 
+  // Primeira letra numa superfície vazia: sai o modelo de exemplo, fica só o texto do cliente (neon segue com o tubo).
+  const onTyped = (update: (a: ArtSettings) => ArtSettings) =>
+    onSideArt((a) => {
+      const next = update(a);
+      return blankOnType && !neon && !hasArtContent(a) && hasArtContent(next) ? { ...next, style: "branco" } : next;
+    });
   const pickStyle = (value: ArtStyle) => {
     const suggested = ART_STYLES.find((s) => s.value === value)?.font ?? DEFAULT_ART.font;
     onSideArt((a) => ({ ...a, style: value, font: fontTouched || neon ? a.font : suggested }));
@@ -563,6 +575,16 @@ export function ArtStep({
                 Estilo
                 <span className="text-caption font-normal text-muted">{styleInfo.hint}</span>
               </p>
+              {blankOnType && !neon && (
+                <p className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 text-caption text-muted">
+                  {style === "branco" ? "Em branco: só o seu texto. Quer um modelo pronto? Escolha um abaixo." : "Modelo com enfeites."}
+                  {style !== "branco" && hasArtContent(sideArt) && (
+                    <button type="button" onClick={() => pickStyle("branco")} className="font-semibold text-ink underline underline-offset-2">
+                      Deixar em branco
+                    </button>
+                  )}
+                </p>
+              )}
               <StylePicker
                 art={shownArt}
                 family={ledFrame ? "sign" : family}
@@ -579,7 +601,7 @@ export function ArtStep({
             <TextField
               label={isFront ? "Texto da arte" : back ? "Texto do verso" : `Texto: ${sideInfo.label.toLowerCase()}`}
               value={sideArt.text}
-              onChange={(text) => onSideArt((a) => ({ ...a, text }))}
+              onChange={(text) => onTyped((a) => ({ ...a, text }))}
               maxLength={TEXT_LIMIT[family]}
               placeholder={isFront ? SAMPLE_TEXT[family] : "Ex.: nome ou número"}
               hint={sideArt.src ? "Aparece por cima da imagem; arraste no editor abaixo para mudar o lugar." : "Aparece no mockup na hora. Arraste no editor abaixo para posicionar."}
@@ -588,7 +610,7 @@ export function ArtStep({
             <TextField
               label="Texto secundário (opcional)"
               value={sideArt.subtext}
-              onChange={(subtext) => onSideArt((a) => ({ ...a, subtext }))}
+              onChange={(subtext) => onTyped((a) => ({ ...a, subtext }))}
               maxLength={SUBTEXT_LIMIT[family]}
               placeholder={SAMPLE_SUBTEXT[family] || "Ex.: @seuperfil"}
               hint="Cargo, contato, @perfil ou data, em letra menor."
@@ -978,6 +1000,9 @@ function ImagePanel({ onProduction = null, art, onArt, name, error, busy, onFile
   );
 }
 
+/** Os modelos do seletor ("Em branco" não é um modelo: a página de produto liga e desliga ele à parte). */
+const MODEL_STYLES = ART_STYLES.filter((s) => s.value !== "branco");
+
 type PickerProps = {
   art: ArtSettings;
   family: ArtFamily;
@@ -1004,9 +1029,9 @@ export function StylePicker({ art, family, kind, aspect, ledColors, label, extra
   const [loaded, setLoaded] = useState<{ src: string; image: HTMLImageElement } | null>(null);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const group = useRef<HTMLDivElement>(null);
-  const fontKey = ART_STYLES.map((s) => fontFor(s.value)).join(",");
+  const fontKey = MODEL_STYLES.map((s) => fontFor(s.value)).join(",");
   const selected = styleOf(art.style);
-  const selectedIndex = Math.max(0, ART_STYLES.findIndex((s) => s.value === selected));
+  const selectedIndex = Math.max(0, MODEL_STYLES.findIndex((s) => s.value === selected));
   const neon = family === "neon";
   const variant: ArtVariant = neon ? "neon" : "front";
   const lightInk = contrastRatio(art.textColor, "#ffffff") < 2;
@@ -1033,7 +1058,7 @@ export function StylePicker({ art, family, kind, aspect, ledColors, label, extra
     if (!visible) return;
     let alive = true;
     const fonts = fontKey.split(",") as ArtFont[];
-    Promise.all(ART_STYLES.map((s, i) => loadArtFont({ font: fonts[i] ?? "figtree", text: "Aa", style: s.value, kind }))).then(() => alive && setFontsVersion((v) => v + 1));
+    Promise.all(MODEL_STYLES.map((s, i) => loadArtFont({ font: fonts[i] ?? "figtree", text: "Aa", style: s.value, kind }))).then(() => alive && setFontsVersion((v) => v + 1));
     return () => {
       alive = false;
     };
@@ -1053,12 +1078,12 @@ export function StylePicker({ art, family, kind, aspect, ledColors, label, extra
   const image = art.src && loaded?.src === art.src ? loaded.image : null;
 
   const select = (index: number) => {
-    const next = (index + ART_STYLES.length) % ART_STYLES.length;
-    onPick(ART_STYLES[next].value);
+    const next = (index + MODEL_STYLES.length) % MODEL_STYLES.length;
+    onPick(MODEL_STYLES[next].value);
     refs.current[next]?.focus();
   };
   const onKeyDown = (event: KeyboardEvent, index: number) => {
-    const keys: Record<string, number> = { ArrowRight: index + 1, ArrowDown: index + 1, ArrowLeft: index - 1, ArrowUp: index - 1, Home: 0, End: ART_STYLES.length - 1 };
+    const keys: Record<string, number> = { ArrowRight: index + 1, ArrowDown: index + 1, ArrowLeft: index - 1, ArrowUp: index - 1, Home: 0, End: MODEL_STYLES.length - 1 };
     if (!(event.key in keys)) return;
     event.preventDefault();
     select(keys[event.key]);
@@ -1068,7 +1093,7 @@ export function StylePicker({ art, family, kind, aspect, ledColors, label, extra
 
   return (
     <div ref={group} role="radiogroup" aria-label="Estilo da arte" className={cx("grid gap-2", compact ? "grid-cols-3 sm:grid-cols-6" : "grid-cols-3")}>
-      {ART_STYLES.map((style, index) => {
+      {MODEL_STYLES.map((style, index) => {
         const active = style.value === selected;
         const preview: ArtRender = { ...art, ...extra, back: null, region: null, style: style.value, font: fontFor(style.value), kind, ledColors, aspect };
         return (

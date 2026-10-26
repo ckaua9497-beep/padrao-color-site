@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { track } from "@/lib/tracking";
 import { getJson, lookupCep, postJson } from "@/components/account/client-api";
-import { FormAlert, UfSelect } from "@/components/account/FormBits";
+import { FormAlert } from "@/components/account/FormBits";
 import { LoginForm } from "@/components/account/LoginForm";
 import { SignupForm } from "@/components/account/SignupForm";
 import { IconCheck } from "@/components/icons";
@@ -11,9 +11,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { TextField } from "@/components/ui/TextField";
 import { cx } from "@/components/ui/cx";
-import { formatCep } from "@/lib/api/validation";
+import { formatCep, isValidCep } from "@/lib/api/validation";
+import type { RotaDoCliente } from "@/lib/cliente";
+import { LOJA_PADRAO, lojaRetirada, pagaNaRetiradaPermitido, type ModoEntrega } from "@/lib/entrega";
 import { setCustomer, useCustomer } from "@/lib/customer";
 import { formatBRL } from "@/lib/format";
 import {
@@ -26,11 +27,11 @@ import {
   type OrderPayload,
   type PaymentMethod,
 } from "@/lib/orders";
-import { STORE } from "@/lib/store";
 import { ItemTags, ResellerNote } from "./CartDrawer";
 import { CartThumb } from "./CartThumb";
+import { EntregaCheckout, Option, addressText, entregaTexto, type CotacaoTela, type EscolhaEntrega } from "./EntregaCheckout";
 import { pendingArtFiles, uploadCartArt, type UploadProgress } from "./art-upload";
-import { itemArtFiles, quantityText, toOrderItem, useCart, type CartItem } from "./CartProvider";
+import { itemStoredFiles, quantityText, toOrderItem, useCart, type CartItem } from "./CartProvider";
 import { TermosArte } from "@/components/product/TermosArte";
 import { levaArte, novoAceite } from "@/lib/termos-arte";
 import { PrintFileLink } from "@/components/product/gabarito/PrintFileLink";
@@ -38,7 +39,8 @@ import { keepPrintFiles } from "@/components/product/gabarito/print-store";
 
 /*
  * Checkout: 1 Identificação (sessão: entrar ou criar conta, porque o POST /gerarpedido exige idCliente),
- * 2 Entrega (endereço do cadastro, outro endereço ou retirada), 3 Pagamento. Ao finalizar, os arquivos da arte que
+ * 2 Entrega (Delivery Padrão pela rota do cadastro, retirada numa das lojas ou transportadora cotada: EntregaCheckout),
+ * 3 Pagamento (Pix, cartão ou, com a liberação, pagar na retirada). Ao finalizar, os arquivos da arte que
  * estão no navegador sobem para o Bunny (art-upload.ts) e as URLs vão no pedido (arte.anexos). O servidor recalcula
  * os preços (balcão ou revenda) e monta o payload (src/lib/orders.ts). Com PADRAO_ORDERS_ENABLED desligado é uma
  * SIMULAÇÃO: mostra o que seria enviado e não cria nada na Padrão Color.
@@ -46,11 +48,19 @@ import { keepPrintFiles } from "@/components/product/gabarito/print-store";
 
 /** O item com as URLs dos seus arquivos que acabaram de subir para o Bunny. */
 function withUploads(item: CartItem, uploaded: Record<string, { url: string; nome: string }>): CartItem {
-  const mine = itemArtFiles(item).filter((file) => uploaded[file.id]);
+  const mine = itemStoredFiles(item).filter((file) => uploaded[file.id]);
   return mine.length ? { ...item, uploaded: { ...item.uploaded, ...Object.fromEntries(mine.map((file) => [file.id, uploaded[file.id]])) } } : item;
 }
 
-type AccountSummary = { customerId: number; document: string; address: DeliveryAddress | null; balance: number | null; blocked: number | null };
+type AccountSummary = {
+  customerId: number;
+  document: string;
+  address: DeliveryAddress | null;
+  balance: number | null;
+  blocked: number | null;
+  rota: RotaDoCliente;
+  pagaNaRetirada: boolean;
+};
 type QuoteLine = { key: string; unitPrice: number; total: number; reseller: boolean };
 type Quote = { total: number; reseller: boolean; lines: QuoteLine[] };
 type OrderReply =
@@ -85,11 +95,6 @@ function PrintFiles({ files, className }: { files: PrintFile[]; className?: stri
 }
 
 const EMPTY_ADDRESS: DeliveryAddress = { cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "" };
-
-function addressText(address: DeliveryAddress): string {
-  const street = `${address.logradouro}, ${address.numero}${address.complemento ? ` – ${address.complemento}` : ""}`;
-  return [street, address.bairro, `${address.cidade}/${address.estado}`, address.cep ? `CEP ${formatCep(address.cep)}` : ""].filter(Boolean).join(" · ");
-}
 
 function Step({
   n,
@@ -129,18 +134,6 @@ function Step({
       </div>
       {active ? <div className="mt-4">{children}</div> : <p className="mt-2 text-caption text-muted">{hint}</p>}
     </section>
-  );
-}
-
-function Option({ checked, onSelect, name, title, children }: { checked: boolean; onSelect: () => void; name: string; title: string; children?: ReactNode }) {
-  return (
-    <label className={cx("flex items-start gap-3 rounded-thumb border p-3.5 transition-colors", checked ? "border-ink bg-mist" : "border-line")}>
-      <input type="radio" name={name} checked={checked} onChange={onSelect} className="mt-1 size-4 shrink-0 accent-ink" />
-      <span className="min-w-0">
-        <span className="block text-[15px] font-semibold">{title}</span>
-        {children && <span className="block text-caption text-muted">{children}</span>}
-      </span>
-    </label>
   );
 }
 
@@ -296,7 +289,7 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
           </div>
           <div>
             <dt className="text-caption text-muted">entrega</dt>
-            <dd className="font-semibold">{payload.entrega.endereco ? `${payload.entrega.tipo}: ${addressText(payload.entrega.endereco)}` : payload.entrega.tipo}</dd>
+            <dd className="font-semibold">{entregaTexto(payload.entrega)}</dd>
           </div>
           <div>
             <dt className="text-caption text-muted">precoTotal</dt>
@@ -334,7 +327,9 @@ function OrderResult({ result, onCancelled }: { result: Extract<Result, { mode: 
       ) : (
         <>
           <p className="mt-3 text-ink/75">
-            Total de {formatBRL(result.quote.total)} no {method.label}. Pagamento pendente: a Padrão Color envia as instruções de pagamento pelo e-mail e telefone do seu cadastro. A produção começa depois da confirmação.
+            {result.method === "retirada"
+              ? `Total de ${formatBRL(result.quote.total)}, pago na retirada ou na entrega. A produção segue as regras do seu cadastro.`
+              : `Total de ${formatBRL(result.quote.total)} no ${method.label}. Pagamento pendente: a Padrão Color envia as instruções de pagamento pelo e-mail e telefone do seu cadastro. A produção começa depois da confirmação.`}
           </p>
           <p className="mt-3 text-sm text-muted">Se a arte ainda não foi enviada, mande pelo pedido em Meus pedidos.</p>
           <PrintFiles files={result.files} className="mt-6 ring-1 ring-line" />
@@ -378,7 +373,7 @@ function QueuedResult({ result }: { result: Extract<Result, { mode: "queued" }> 
           : "O sistema de produção da Padrão Color não confirmou o recebimento. Seu pedido e suas artes estão guardados: a nossa equipe confere e confirma com você. Não envie de novo."}
       </p>
       <p className="mt-3 text-sm text-muted">
-        Total de {formatBRL(result.total)} no {method.label}. Nada foi cobrado: as instruções de pagamento chegam pelo e-mail e telefone do cadastro quando o pedido for criado. O número do pedido aparece em Meus pedidos.
+        Total de {formatBRL(result.total)} {result.method === "retirada" ? "a pagar na retirada ou na entrega" : `no ${method.label}`}. Nada foi cobrado: as instruções de pagamento chegam pelo e-mail e telefone do cadastro quando o pedido for criado. O número do pedido aparece em Meus pedidos.
       </p>
       <PrintFiles files={result.files} className="mt-6 ring-1 ring-line" />
       <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -400,8 +395,10 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   const [authTab, setAuthTab] = useState<"entrar" | "criar">("entrar");
   const [authInfo, setAuthInfo] = useState<{ tone: "success" | "info"; text: string } | null>(null);
   const [summary, setSummary] = useState<AccountSummary | null>(null);
-  const [deliveryKind, setDeliveryKind] = useState<DeliveryChoice["kind"]>("cadastro");
+  const [escolha, setEscolha] = useState<EscolhaEntrega>({ modo: null, loja: null, outro: false, servico: null });
   const [address, setAddress] = useState<DeliveryAddress>(EMPTY_ADDRESS);
+  // Cotação da transportadora para o CEP e o carrinho de agora (chave): enquanto a chave não bate, está calculando.
+  const [cotacao, setCotacao] = useState<CotacaoTela | null>(null);
   const [cepStatus, setCepStatus] = useState<string | null>(null);
   const [deliveryDone, setDeliveryDone] = useState(false);
   const [payment, setPayment] = useState<PaymentMethod>("pix");
@@ -447,8 +444,8 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
       if (!alive) return;
       if (reply.ok) setSummary({ ...reply.data, customerId });
       else if (reply.status === 401) sessionLost();
-      // Sem o cadastro agora: segue com outro endereço ou retirada.
-      else setSummary({ customerId, document: "", address: null, balance: null, blocked: null });
+      // Sem o cadastro agora: segue com a retirada ou a transportadora em outro endereço.
+      else setSummary({ customerId, document: "", address: null, balance: null, blocked: null, rota: { tipo: "transportadora" }, pagaNaRetirada: false });
     });
     return () => {
       alive = false;
@@ -457,10 +454,40 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
 
   const account = summary && summary.customerId === customerId ? summary : null;
   const registered = account?.address && !addressProblem(account.address) ? account.address : null;
-  const kind: DeliveryChoice["kind"] = deliveryKind === "cadastro" && account && !registered ? "outro" : deliveryKind;
-  const delivery: DeliveryChoice = kind === "outro" ? { kind, address } : { kind };
-  const total = orderTotal(lines);
+  const temRota = account?.rota.tipo === "rota" && Boolean(registered);
+  // Sem escolha ainda: Delivery Padrão quando o cadastro tem rota; senão, a transportadora.
+  const modo: ModoEntrega = escolha.modo === "rota" && account && !temRota ? "transportadora" : (escolha.modo ?? (temRota || !account ? "rota" : "transportadora"));
+  const outroEndereco = escolha.outro || !registered;
+  // Retirada: a Loja São João já vem marcada, como no site antigo.
+  const loja = escolha.loja ?? LOJA_PADRAO;
+  const destinoCep = modo !== "transportadora" ? "" : outroEndereco ? (isValidCep(address.cep) ? address.cep.replace(/\D/g, "") : "") : registered.cep;
+  const itensFrete = JSON.stringify(lines.map((line) => ({ groupId: line.item.groupId, variationId: line.item.variationId, quantity: line.item.quantity })));
+  const chaveCotacao = destinoCep ? `${destinoCep}|${itensFrete}` : "";
+  const cotacaoAtual = cotacao && cotacao.chave === chaveCotacao ? cotacao : null;
+  const opcaoFrete = cotacaoAtual?.tipo === "opcoes" ? (cotacaoAtual.opcoes.find((o) => o.id === escolha.servico) ?? null) : null;
+  const rotaCliente = account?.rota.tipo === "rota" ? account.rota : null;
+  const frete = modo === "rota" ? (rotaCliente?.cobradaNoPedido ? rotaCliente.taxa : 0) : modo === "transportadora" ? (opcaoFrete?.preco ?? 0) : 0;
+  const delivery: DeliveryChoice =
+    modo === "rota" ? { kind: "rota" } : modo === "retirada" ? { kind: "retirada", loja } : { kind: "transportadora", address: outroEndereco ? address : null, servico: opcaoFrete?.id ?? null };
+  const podePagarNaRetirada = pagaNaRetiradaPermitido({ liberado: Boolean(account?.pagaNaRetirada), modo, loja });
+  const pagamento: PaymentMethod = payment === "retirada" && !podePagarNaRetirada ? "pix" : payment;
+  const total = Math.round((orderTotal(lines) + frete) * 100) / 100;
   const step = !logged ? 1 : !deliveryDone ? 2 : 3;
+
+  // Transportadora: cota o carrinho no CEP de destino (POST /api/pedidos/frete); o pedido cota de novo no fechamento.
+  useEffect(() => {
+    if (!chaveCotacao) return;
+    let alive = true;
+    const corte = chaveCotacao.indexOf("|");
+    const [cep, itens] = [chaveCotacao.slice(0, corte), JSON.parse(chaveCotacao.slice(corte + 1)) as unknown[]];
+    postJson<{ tipo: "opcoes"; opcoes: [] } | { tipo: "combinar"; motivo: "desligado" | "sem-medida" }>("/api/pedidos/frete", { cep, items: itens }).then((reply) => {
+      if (!alive) return;
+      setCotacao(reply.ok ? ({ chave: chaveCotacao, ...reply.data } as CotacaoTela) : { chave: chaveCotacao, tipo: "erro", erro: reply.error });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [chaveCotacao]);
 
   if (result?.mode === "simulation") return <SimulationResult payload={result.payload} files={result.files} onBack={() => setResult(null)} />;
   if (result?.mode === "order") return <OrderResult result={result} onCancelled={() => setResult({ ...result, cancelled: true })} />;
@@ -498,7 +525,25 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
   };
 
   const confirmDelivery = () => {
-    const problem = kind === "outro" ? addressProblem(address) : kind === "cadastro" && !registered ? "Carregando o endereço do cadastro…" : null;
+    const problem =
+      modo === "rota"
+        ? !temRota
+          ? "Seu endereço não tem rota de entrega da Padrão: escolha a retirada ou a transportadora."
+          : null
+        : modo === "retirada"
+          ? !lojaRetirada(loja)
+            ? "Escolha a loja de retirada."
+            : null
+          : (outroEndereco && addressProblem(address)) ||
+            (!cotacaoAtual
+              ? "Aguarde o cálculo do frete."
+              : cotacaoAtual.tipo === "erro"
+                ? cotacaoAtual.erro
+                : cotacaoAtual.tipo === "opcoes" && !opcaoFrete
+                  ? cotacaoAtual.opcoes.length
+                    ? "Escolha a forma de entrega."
+                    : "Nenhuma transportadora atende este CEP. Escolha a retirada ou fale com o atendimento."
+                  : null);
     if (problem) {
       setError(problem);
       return;
@@ -540,7 +585,7 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     // 2. O pedido, com as URLs dos arquivos em cada item.
     const reply = await postJson<OrderReply>("/api/pedidos", {
       items: lines.map((line, index) => toOrderItem(items[index], line.unitPrice)),
-      payment,
+      payment: pagamento,
       delivery,
       expectedTotal,
       ...(semTermos.length ? { termosArte: novoAceite(new Date()) } : {}),
@@ -594,15 +639,15 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
     setQuote(null);
   };
 
+  const lojaEscolhida = lojaRetirada(loja);
+  const freteTexto = (valor: number) => (valor > 0 ? formatBRL(valor) : "sem frete");
   const deliveryHint = !deliveryDone
-    ? "Escolha onde receber o pedido."
-    : kind === "retirada"
-      ? `Retirada na Padrão Color · ${STORE.address}`
-      : kind === "outro"
-        ? addressText(address)
-        : registered
-          ? addressText(registered)
-          : "";
+    ? "Escolha como receber o pedido."
+    : modo === "rota"
+      ? `Delivery Padrão · ${rotaCliente?.nome ?? ""} · ${rotaCliente && !rotaCliente.cobradaNoPedido && rotaCliente.taxa > 0 ? "taxa paga na entrega" : freteTexto(frete)}`
+      : modo === "retirada"
+        ? `Retirada · ${lojaEscolhida?.nome ?? ""} · sem frete`
+        : `${opcaoFrete ? `${opcaoFrete.titulo} · ${formatBRL(opcaoFrete.preco)}` : "Transportadora · frete combinado com o atendimento"} · ${outroEndereco ? addressText(address) : registered ? addressText(registered) : ""}`;
 
   return (
     <div className="mx-auto grid max-w-[1200px] gap-5 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_400px]">
@@ -665,30 +710,25 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
         </Step>
 
         <Step n={2} title="Entrega" done={logged && deliveryDone} active={step === 2} hint={logged ? deliveryHint : "Finalize a identificação para avançar."} onEdit={() => setDeliveryDone(false)}>
-          <fieldset className="space-y-2">
-            <legend className="sr-only">Como receber o pedido</legend>
-            {(!account || registered) && (
-              <Option name="entrega" checked={kind === "cadastro"} onSelect={() => setDeliveryKind("cadastro")} title="Entregar no endereço do cadastro">
-                {registered ? addressText(registered) : "Carregando o endereço…"}
-              </Option>
-            )}
-            <Option name="entrega" checked={kind === "outro"} onSelect={() => setDeliveryKind("outro")} title="Entregar em outro endereço" />
-            {kind === "outro" && (
-              <div className="grid gap-4 rounded-thumb border border-line p-4 md:grid-cols-2">
-                <TextField label="CEP" value={address.cep} onChange={onCep} hint={cepStatus ?? undefined} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" />
-                <TextField label="Rua" value={address.logradouro} onChange={(value) => setAddress((a) => ({ ...a, logradouro: value }))} autoComplete="address-line1" />
-                <TextField label="Número" value={address.numero} onChange={(value) => setAddress((a) => ({ ...a, numero: value }))} autoComplete="off" />
-                <TextField label="Complemento (opcional)" value={address.complemento} onChange={(value) => setAddress((a) => ({ ...a, complemento: value }))} autoComplete="address-line2" />
-                <TextField label="Bairro" value={address.bairro} onChange={(value) => setAddress((a) => ({ ...a, bairro: value }))} autoComplete="address-level3" />
-                <TextField label="Cidade" value={address.cidade} onChange={(value) => setAddress((a) => ({ ...a, cidade: value }))} autoComplete="address-level2" />
-                <UfSelect value={address.estado} onChange={(value) => setAddress((a) => ({ ...a, estado: value }))} />
-              </div>
-            )}
-            <Option name="entrega" checked={kind === "retirada"} onSelect={() => setDeliveryKind("retirada")} title="Retirar na Padrão Color">
-              {STORE.address} · {STORE.hours}
-            </Option>
-          </fieldset>
-          <p className="mt-3 text-caption text-muted">O frete é combinado com o atendimento depois do pedido.</p>
+          <EntregaCheckout
+            conta={account ? { rota: account.rota, pagaNaRetirada: account.pagaNaRetirada, registered } : null}
+            modo={modo}
+            escolha={{ ...escolha, loja }}
+            onEscolha={(update) => {
+              setEscolha((atual) => ({ ...atual, ...update }));
+              setError(null);
+              setQuote(null);
+            }}
+            address={address}
+            setAddress={(update) => {
+              setAddress(update);
+              setEscolha((atual) => ({ ...atual, servico: null }));
+            }}
+            onCep={onCep}
+            cepStatus={cepStatus}
+            cotacao={cotacaoAtual}
+            cotando={Boolean(chaveCotacao) && !cotacaoAtual}
+          />
           {error && step === 2 && <FormAlert className="mt-4">{error}</FormAlert>}
           <Button variant="buy" size="md" block className="mt-5" onClick={confirmDelivery}>
             Continuar
@@ -698,20 +738,22 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
         <Step n={3} title="Pagamento" done={false} active={step === 3} hint="Escolha a entrega para avançar.">
           <fieldset className="space-y-2">
             <legend className="sr-only">Forma de pagamento</legend>
-            {(Object.keys(PAYMENT_METHODS) as PaymentMethod[]).map((value) => (
-              <Option
-                key={value}
-                name="pagamento"
-                checked={payment === value}
-                onSelect={() => {
-                  setPayment(value);
-                  setQuote(null);
-                }}
-                title={PAYMENT_METHODS[value].label}
-              >
-                {PAYMENT_METHODS[value].hint}
-              </Option>
-            ))}
+            {(Object.keys(PAYMENT_METHODS) as PaymentMethod[])
+              .filter((value) => value !== "retirada" || podePagarNaRetirada)
+              .map((value) => (
+                <Option
+                  key={value}
+                  name="pagamento"
+                  checked={pagamento === value}
+                  onSelect={() => {
+                    setPayment(value);
+                    setQuote(null);
+                  }}
+                  title={value === "retirada" && modo === "rota" ? "Pagar na entrega" : PAYMENT_METHODS[value].label}
+                >
+                  {PAYMENT_METHODS[value].hint}
+                </Option>
+              ))}
           </fieldset>
           {account?.balance ? (
             <p className="mt-4 rounded-thumb bg-mist p-3 text-caption">
@@ -815,7 +857,21 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
           </div>
           <div className="flex justify-between">
             <dt className="text-muted">Entrega</dt>
-            <dd>{kind === "retirada" && deliveryDone ? "Retirada (sem frete)" : "A combinar"}</dd>
+            <dd>
+              {!logged || !account
+                ? "Na entrega"
+                : modo === "retirada"
+                  ? "Sem frete"
+                  : modo === "rota"
+                    ? rotaCliente && !rotaCliente.cobradaNoPedido && rotaCliente.taxa > 0
+                      ? "Taxa paga na entrega"
+                      : freteTexto(frete)
+                    : opcaoFrete
+                      ? formatBRL(opcaoFrete.preco)
+                      : cotacaoAtual?.tipo === "combinar"
+                        ? "A combinar"
+                        : "A calcular"}
+            </dd>
           </div>
           <div className="flex justify-between border-t border-line pt-3 text-base">
             <dt className="font-bold">Total</dt>

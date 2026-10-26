@@ -6,6 +6,7 @@ import { productFacts } from "../order-facts";
 import { gerarPedido } from "../api/padrao";
 import type { Product } from "../catalog";
 import { catalogoVivo } from "../catalogo-vivo";
+import { feriados } from "../feriados";
 import { orderCode, priceProduct, type PaymentKind } from "./core";
 import { cotarFretePadrao, freteApi } from "../frete-api";
 import { embalagemDe, nomeFrete, pacotesDoPedido, prazoFrete, type OpcaoFrete } from "../frete";
@@ -385,7 +386,7 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
     lines.push(line);
   }
   const payload = {
-    ...buildOrderPayload({ customerId: customerId ?? 0, lines, method: "cartao", delivery: { tipo: "Entrega", endereco: pedido.entrega }, facts: productFacts }),
+    ...buildOrderPayload({ customerId: customerId ?? 0, lines, method: "cartao", delivery: { tipo: "Entrega", endereco: pedido.entrega }, facts: productFacts, holidays: await feriados() }),
     tipo_compra: "Multiloja",
     nome_trabalho: `${pedido.codigo} ${pedido.cliente.nome}`.slice(0, 60),
   };

@@ -1,12 +1,19 @@
+import Image from "next/image";
 import { Badge } from "@/components/ui/Badge";
 import type { ApiEndereco, ApiPedido, ApiPedidoItem, ApiSituacao } from "@/lib/api/types";
+import { arquivosRecebidos, casarItens, estadoDaArte, type ArquivoArte, type ArtesDoItem, type EstadoArte, type Reenvio } from "@/lib/artes-enviadas/regras";
 import { formatCep } from "@/lib/api/validation";
+import { estornoDe, itemCancelado, textoDoEstorno, type JanelaDeCancelamento } from "@/lib/cancelamento";
+import { previsaoAposReenvio, type Relogio } from "@/lib/dias-uteis";
 import { formatBRL } from "@/lib/format";
-import { OrderActions } from "./OrderActions";
+import { formatDateTime } from "@/lib/multiloja/core";
+import { OrderActions, PurchaseCancel, type CancelWindow } from "./OrderActions";
 
 /*
  * Pedidos do GET /pedidos. Uma COMPRA (compra, pagamento, nota fiscal, totais) tem vários PEDIDOS (itens:
- * produto, situação, previsão, entrega, valores). Reenvio de arte e cancelamento são por pedido.
+ * produto, situação, previsão, entrega, valores). Reenvio de arte é por pedido; o cancelamento, nos 15 min depois da
+ * compra (cancelamento.ts), vale para a compra inteira ou para um item. "Artes enviadas" (src/lib/artes-enviadas): por
+ * item, a arte no gabarito, o que o cliente mandou, o que a Padrão recebeu e a situação da arte.
  */
 
 type Tone = "dark" | "brand" | "new" | "neutral";
@@ -20,12 +27,6 @@ export function situationTone(situacao: Partial<ApiSituacao> | undefined): Tone 
   return "new";
 }
 
-/** Situações finais não mostram "Cancelar pedido" (a API recusa de qualquer forma, com o motivo). */
-export function canCancel(situacao: Partial<ApiSituacao> | undefined): boolean {
-  const text = `${situacao?.descricao ?? ""} ${situacao?.status ?? ""}`.toLowerCase();
-  return !/cancel|entregue|conclu|finaliz|retirad|expedid|enviad|despachad|em rota/.test(text);
-}
-
 const isLink = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//i.test(url);
 
 function addressLine(endereco: Partial<ApiEndereco> | undefined): string | null {
@@ -33,13 +34,6 @@ function addressLine(endereco: Partial<ApiEndereco> | undefined): string | null 
   const street = [endereco.logradouro, endereco.numero].filter(Boolean).join(", ");
   const city = [endereco.cidade, endereco.estado].filter(Boolean).join("/");
   return [street + (endereco.complemento ? ` – ${endereco.complemento}` : ""), endereco.bairro, city, endereco.cep ? `CEP ${formatCep(endereco.cep)}` : ""].filter(Boolean).join(" · ");
-}
-
-function files(item: ApiPedidoItem): { name: string; url: string | null; kind: string }[] {
-  const raw = Array.isArray(item.produto?.arquivos) ? item.produto.arquivos : [];
-  return raw
-    .filter((file): file is Record<string, unknown> => typeof file === "object" && file !== null)
-    .map((file) => ({ name: typeof file.nome === "string" ? file.nome : "arquivo", url: isLink(file.url) ? file.url : null, kind: typeof file.tipo === "string" ? file.tipo : "" }));
 }
 
 function Money({ label, value, strong = false }: { label: string; value: number | undefined; strong?: boolean }) {
@@ -52,10 +46,72 @@ function Money({ label, value, strong = false }: { label: string; value: number 
   );
 }
 
-function OrderItem({ item }: { item: ApiPedidoItem }) {
+const ESTADO_TOM: Record<EstadoArte, Tone> = { aprovada: "dark", analise: "new", recusada: "brand", cancelada: "neutral" };
+
+function FileList({ files, empty }: { files: (ArquivoArte & { em?: string })[]; empty: string }) {
+  if (!files.length) return <p className="mt-1 text-muted">{empty}</p>;
+  return (
+    <ul className="mt-1 space-y-2">
+      {files.map((file, index) => (
+        <li key={`${file.nome}-${index}`} className="min-w-0">
+          {isLink(file.url) ? (
+            <a href={file.url} target="_blank" rel="noreferrer" title={file.nome} className="block truncate font-semibold underline underline-offset-2">
+              {file.nome}
+            </a>
+          ) : (
+            <span title={file.nome} className="block truncate font-semibold">
+              {file.nome}
+            </span>
+          )}
+          {file.tipo || file.em ? <span className="block text-caption text-muted">{[file.tipo, file.em].filter(Boolean).join(" · ")}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Artes enviadas do item: a arte no gabarito, o que o cliente mandou (e reenviou), o que recebemos e a situação. */
+function ArtesEnviadas({ item, artes, reenvios }: { item: ApiPedidoItem; artes: ArtesDoItem | null; reenvios: Reenvio[] }) {
+  const recebidos = arquivosRecebidos(item);
+  const enviados = [...(artes?.enviados ?? []), ...reenvios.map((r) => ({ ...r.arquivo, em: formatDateTime(r.em) }))];
+  if (!artes?.gabarito && !enviados.length && !recebidos.length) return null;
+  const estado = estadoDaArte(item.situacao);
+  return (
+    <section aria-label={`Artes enviadas do pedido ${item.pedido}`} className="mt-4 rounded-thumb border border-line p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-[15px] font-bold">Artes enviadas</h4>
+        <Badge tone={ESTADO_TOM[estado.estado]}>{estado.texto}</Badge>
+      </div>
+      <div className="mt-3 grid gap-4 text-sm md:grid-cols-[200px_minmax(0,1fr)_minmax(0,1fr)]">
+        <div>
+          <p className="text-caption text-muted">No gabarito</p>
+          {artes?.gabarito ? (
+            <a href={artes.gabarito.url} target="_blank" rel="noreferrer" className="mt-1 block overflow-hidden rounded-thumb border border-line bg-mist" title="Abrir a arte no gabarito">
+              <Image src={artes.gabarito.url} alt={`Arte de “${artes.nome}” no gabarito`} width={400} height={300} unoptimized className="h-auto w-full" />
+            </a>
+          ) : (
+            <p className="mt-1 text-muted">Sem a imagem do gabarito neste pedido.</p>
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="text-caption text-muted">Você enviou</p>
+          <FileList files={enviados} empty="Nenhum arquivo registrado pelo site." />
+        </div>
+        <div className="min-w-0">
+          <p className="text-caption text-muted">Recebemos</p>
+          <FileList files={recebidos} empty="A pré-impressão ainda não registrou os arquivos." />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Relógio de Brasília e feriados da hora da página: a previsão que o reenvio de arte daria agora. */
+type ResendClock = { clock: Relogio; holidays: ReadonlySet<string> };
+
+function OrderItem({ item, cancel, resendClock, artes, reenvios }: { item: ApiPedidoItem; cancel: CancelWindow | null; resendClock: ResendClock; artes: ArtesDoItem | null; reenvios: Reenvio[] }) {
   const situacao = item.situacao;
   const address = addressLine(item.entrega_retirada?.endereco);
-  const attachments = files(item);
   const name = item.nome_trabalho?.trim() || item.produto?.descricao || `Pedido ${item.pedido}`;
   return (
     <li className="px-5 py-5 md:px-6">
@@ -90,7 +146,10 @@ function OrderItem({ item }: { item: ApiPedidoItem }) {
           <div>
             <dt className="text-caption text-muted">Entrega</dt>
             <dd>
-              <span className="font-semibold">{item.entrega_retirada.tipo}</span>
+              <span className="font-semibold">
+                {item.entrega_retirada.tipo}
+                {item.entrega_retirada.rota?.trim() ? ` · ${item.entrega_retirada.rota.trim()}` : ""}
+              </span>
               {address && <span className="block text-muted">{address}</span>}
             </dd>
           </div>
@@ -115,33 +174,33 @@ function OrderItem({ item }: { item: ApiPedidoItem }) {
         )}
       </dl>
 
-      {attachments.length > 0 && (
-        <div className="mt-3 text-sm">
-          <p className="text-caption text-muted">Arquivos</p>
-          <ul className="mt-1 flex flex-wrap gap-2">
-            {attachments.map((file, index) => (
-              <li key={`${file.name}-${index}`} className="max-w-full truncate rounded-full bg-mist px-3 py-1">
-                {file.url ? (
-                  <a href={file.url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2">
-                    {file.name}
-                  </a>
-                ) : (
-                  file.name
-                )}
-                {file.kind && <span className="text-muted"> · {file.kind}</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <ArtesEnviadas item={item} artes={artes} reenvios={reenvios} />
 
-      <OrderActions order={item.pedido} jobName={name} canResendArt={situacao?.reenvia_arte === "Sim"} canCancel={canCancel(situacao)} />
+      <OrderActions
+        order={item.pedido}
+        jobName={name}
+        resend={situacao?.reenvia_arte === "Sim" && { previsao: item.previsao ?? "", novaPrevisao: previsaoAposReenvio(item.previsao, resendClock.clock, resendClock.holidays) }}
+        cancel={cancel}
+        tratamento={!itemCancelado(situacao)}
+      />
     </li>
   );
 }
 
-export function OrderCard({ order }: { order: ApiPedido }) {
+const cancelWindow = (order: ApiPedido, janela: JanelaDeCancelamento, items: number[]): CancelWindow | null =>
+  janela.aberta && janela.ate !== null ? { until: janela.ate, untilTime: janela.ateHora, refund: textoDoEstorno(estornoDe(order, items)) } : null;
+
+/** O que o site guardou da compra (artes-enviadas/repo.ts): os itens dela e os reenvios por pedido. */
+export type ArtesDaCompra = { itens: ArtesDoItem[]; reenvios: ReadonlyMap<string, Reenvio[]> };
+
+/** `janela` = prazo de cancelamento na hora da página (janelaDeCancelamento). */
+export function OrderCard({ order, janela, resendClock, artes }: { order: ApiPedido; janela: JanelaDeCancelamento; resendClock: ResendClock; artes: ArtesDaCompra }) {
   const invoice = order.nota_fiscal;
+  const itens = order.itens ?? [];
+  const casados = casarItens(itens, artes.itens);
+  const cancelaveis = itens.filter((item) => janela.itens.includes(item.pedido));
+  // Com um item só para cancelar, a faixa da compra basta; com mais, cada item tem o seu botão.
+  const porItem = cancelaveis.length > 1;
   return (
     <article className="overflow-hidden rounded-card border border-line-strong bg-white">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4 md:px-6">
@@ -158,9 +217,17 @@ export function OrderCard({ order }: { order: ApiPedido }) {
           {order.pagamento?.tipo && <p className="text-caption text-muted">{order.pagamento.tipo}</p>}
         </div>
       </header>
+      <PurchaseCancel purchase={order.compra} items={cancelaveis.map((item) => item.nome_trabalho?.trim() || item.produto?.descricao || `Pedido ${item.pedido}`)} cancel={cancelWindow(order, janela, janela.itens)} />
       <ul className="divide-y divide-line">
-        {(order.itens ?? []).map((item) => (
-          <OrderItem key={item.pedido} item={item} />
+        {itens.map((item) => (
+          <OrderItem
+            key={item.pedido}
+            item={item}
+            cancel={porItem && janela.itens.includes(item.pedido) ? cancelWindow(order, janela, [item.pedido]) : null}
+            resendClock={resendClock}
+            artes={casados.get(item.pedido) ?? null}
+            reenvios={artes.reenvios.get(String(item.pedido)) ?? []}
+          />
         ))}
       </ul>
       <footer className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-line bg-mist px-5 py-4 text-caption tabular-nums md:px-6">

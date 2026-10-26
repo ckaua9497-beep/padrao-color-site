@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api/client";
 import { json } from "@/lib/api/guard";
 import { getCliente } from "@/lib/api/padrao";
+import { saldoDaConta } from "@/lib/cliente";
 import { clearSession, getSession, publicCustomer, saveSession, withProfile } from "@/lib/session";
 
 /**
@@ -19,7 +20,7 @@ export async function GET() {
     }
     const updated = withProfile(session, cliente);
     if (updated.changed) await saveSession(updated.session);
-    return json(publicCustomer(updated.session, cliente.conta_corrente?.saldo));
+    return json(publicCustomer(updated.session, saldoDaConta(cliente.conta_corrente)));
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       await clearSession();

@@ -636,18 +636,38 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     }
     // Arquivo de impressão no gabarito (PDF no tamanho real): fica no navegador e segue com o pedido.
     let printFile: { id: string; name: string } | null = null;
+    // Imagem da arte no gabarito: só para as "Artes enviadas" de Meus pedidos (não vai para a produção).
+    let previa: { id: string; name: string } | null = null;
     // Só quando a composição é do cliente: arquivo anexado que o site não lê (CDR, AI) vai como foi enviado. Com a frente
     // enviada pronta (arquivo único ou "Impressão Frente"), os arquivos de produção são a arte: não sai PDF do editor.
     const ownArt = Boolean(art.src || art.back?.src) || (!artName && hasArtContent(art)) || hasArtContent(art.back) || facesWithArt(art).length > 0 || ledDrawn;
-    if (gabarito && !artLater && ownArt && !frontCovered && !creationOn) {
+    const withPdf = ownArt && !frontCovered;
+    // A frente pronta que o site consegue ler (imagem, PDF) também ganha a imagem no gabarito.
+    const withPreview = withPdf || (frontCovered && Boolean(art.src));
+    if (gabarito && !artLater && !creationOn && withPreview) {
       try {
-        const [{ buildPrintPdf }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
+        const [{ buildPrintPdf, buildGabaritoPreview }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
         const sheets = printSheets(gabarito, renderArt);
-        const blob = await buildPrintPdf(sheets, { title: `${product.name} — arte no gabarito`, variant: family === "neon" ? "neon" : "front", label: product.name, transparent: gabarito.transparent });
-        const id = crypto.randomUUID();
-        const name = printFileName(product.slug);
+        const variant = family === "neon" ? "neon" : "front";
         const summary = frontFacts ? `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` : "";
-        if (await savePrintFile(id, blob, { name, product: product.name, pages: sheets.length, summary })) printFile = { id, name };
+        if (withPdf) {
+          try {
+            const blob = await buildPrintPdf(sheets, { title: `${product.name} — arte no gabarito`, variant, label: product.name, transparent: gabarito.transparent });
+            const id = crypto.randomUUID();
+            const name = printFileName(product.slug);
+            if (await savePrintFile(id, blob, { name, product: product.name, pages: sheets.length, summary })) printFile = { id, name };
+          } catch {
+            printFile = null;
+          }
+        }
+        try {
+          const blob = await buildGabaritoPreview(sheets, { variant, label: product.name });
+          const id = crypto.randomUUID();
+          const name = `${product.slug}-no-gabarito.jpg`;
+          if (await savePrintFile(id, blob, { name, product: product.name, pages: sheets.length, summary: "prévia da arte no gabarito" })) previa = { id, name };
+        } catch {
+          previa = null;
+        }
       } catch {
         printFile = null;
       }
@@ -711,6 +731,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
       image: product.image,
       preview: thumb,
       printFile,
+      previa,
       artFiles: artFiles.length ? artFiles : null,
       options: {
         ...Object.fromEntries(keys.map((k) => [cleanOptionLabel(k), selection[k]])),
@@ -928,6 +949,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
           {!semArte && (
             <ArtStep
               step={artStep}
+              blankOnType
               family={family}
               spec={spec}
               surfaces={surfaces}
@@ -1110,7 +1132,7 @@ function CepLookup({ leadDays, groupId, variationId, quantity }: { leadDays: num
           ? `Entrega para ${result.place}. ${production}; o frete deste produto é combinado com o atendimento.`
           : result.opcoes
             ? `Nenhuma transportadora entrega este produto em ${result.place}. Fale com o atendimento.`
-            : `Entrega para ${result.place}. ${production}; o frete é combinado na finalização do pedido.`
+            : `Entrega para ${result.place}. ${production}; o frete aparece no checkout.`
       : result.error
     : null;
 

@@ -60,7 +60,7 @@ export function ContactForm({ initial }: { initial: Contact }) {
         <TextField label="Telefone principal" type="tel" value={form.telefone1} onChange={set("telefone1")} autoComplete="tel" inputMode="tel" placeholder="(21) 90000-0000" />
         <TextField label="Outro telefone (opcional)" type="tel" value={form.telefone2} onChange={set("telefone2")} autoComplete="tel" inputMode="tel" />
         <TextField label="E-mail" type="email" value={form.email} onChange={set("email")} autoComplete="email" inputMode="email" />
-        <TextField label="Data de nascimento" type="date" value={form.nascimento} onChange={set("nascimento")} autoComplete="bday" hint="Opcional. A Padrão não devolve essa data na consulta: preencha só para atualizar." />
+        <TextField label="Data de nascimento" type="date" value={form.nascimento} onChange={set("nascimento")} autoComplete="bday" hint="Opcional." />
       </div>
       {error && <FormAlert>{error}</FormAlert>}
       {done && <FormAlert tone="success">{done}</FormAlert>}
