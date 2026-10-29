@@ -70,6 +70,7 @@ Copie `.env.example` para `.env.local` e preencha. Só o servidor do Next lê es
 | `PADRAO_API_TOKEN`      | Bearer Token da integração: sincronização do catálogo, cadastro e pedidos de quem ainda não tem token próprio. |
 | `PADRAO_SESSION_SECRET` | Segredo (64+ caracteres aleatórios) que assina o cookie de sessão do cliente logado.                        |
 | `PADRAO_ORDERS_ENABLED` | `true` envia o pedido de verdade (`POST /gerarpedido`); qualquer outro valor deixa o checkout em simulação (padrão). |
+| `PADRAO_TIPO_COMPRA` / `PADRAO_TIPO_COMPRA_MULTILOJA` | Código inteiro de `tipo_compra` da Padrão para o pedido do site e o da multiloja (a API recusa texto). Sem ele, o pedido real não sai: o do site vai para a fila (conferir) e o da multiloja fica no admin. A Padrão ainda não informou os códigos (29/10/2026). |
 | `PADRAO_SITE_ORIGINS`   | Opcional. Origens extras aceitas nos POST, separadas por vírgula (proxy que troca o Host).                  |
 | `BUNNY_ACCESS_KEY`, `BUNNY_STORAGE_URL`, `BUNNY_CDN_URL`, `BUNNY_UPLOAD_FOLDER` | Bunny Storage dos arquivos de arte (ver "Arquivos de arte no Bunny"). Sem a chave, o checkout segue sem os arquivos. |
 | `PADRAO_FRETE_URL`, `PADRAO_FRETE_API_KEY` | API de frete da Padrão (ver "Frete"). Sem a chave não há cotação: a página de produto mostra só a cidade e cada loja da multiloja cobra o frete fixo dela. |
@@ -101,7 +102,11 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   `nomeTrabalho`/`nome_trabalho`, `desc_trabalho` (a linha da arte e o que o site acrescenta: texto, kit, tamanhos, medida),
   `arte {tipo, preco, anexos}`, `tratamentoArquivo` e `precoTotalAcabamentos`; no envelope, `data`, `hora` (Brasília), `previsao`
   (o maior prazo em dias úteis, sem fim de semana nem feriado nacional), `idCliente`, `pagamento {tipo, valor, status}`,
-  `entrega`, `tipo_compra`, `nome_trabalho` e `precoTotal`. As premissas ainda abertas estão no comentário do arquivo.
+  `entrega`, `tipo_compra`, `envio`, `nome_trabalho` e `precoTotal`. As premissas ainda abertas estão no comentário do arquivo.
+- **`tipo_compra` e `envio` (teste na API real de 29/10/2026).** `tipo_compra` é inteiro: com o texto "Site" a API aponta o campo.
+  O código vem de `PADRAO_TIPO_COMPRA` e, sem ele, o POST nem sai. "Site" é o canal e vai em `envio`, como nos pedidos do
+  `GET /pedidos`. No mesmo teste, o envelope sem produtos passou (200) e qualquer linha de produto, mesmo o cartão 22 no preço ao
+  vivo, com arte, retirada e pagamento, voltou 406 "Não foi possível gerar o Pedido!": a causa está com a Padrão.
 - **Reenvio de arte** (Meus pedidos, `POST /api/pedidos/[id]/arte`): com o Bunny, o arquivo sobe para lá e o `/reenviararte`
   leva `url` e `nome`; sem ele, o arquivo vai em base64, como antes.
 - **Teste local:** `node scripts/bunny-mock.mjs` (porta 3196, grava em `.data/bunny-mock/`) e, no `.env.development.local`,
@@ -131,8 +136,9 @@ Quando o pedido não chega à produção pelo `POST /gerarpedido`, o site guarda
 - **Quando entra na fila.** Sem conexão com a API (no `GET /cliente`, nos preços ou no próprio `gerarpedido`: API fora do ar,
   firewall, disjuntor do `client.ts`) → **aguardando reenvio**, com o token do cliente selado (chave derivada do
   `PADRAO_SESSION_SECRET`) para refazer cliente e preços. Resposta sem confirmação (5xx, conexão caída depois de enviar) →
-  **conferir**: pode ter sido criado, então nada é reenviado sozinho. Recusa da API (4xx) volta para o cliente corrigir, como
-  antes. Regras puras em `regras.ts` (testadas); fechamento compartilhado entre o checkout e a fila em `processar.ts`.
+  **conferir**: pode ter sido criado, então nada é reenviado sozinho. Recusa da API (4xx, como o 406 "Não foi possível gerar o
+  Pedido!") ou o site sem o código de `tipo_compra` → **conferir**: o pedido já passou pelas conferências do site e o cliente
+  não tem o que corrigir. Só a sessão vencida (401) volta para o login. Regras puras em `regras.ts` (testadas); fechamento compartilhado entre o checkout e a fila em `processar.ts`.
 - **O que o cliente vê.** "Pedido recebido · Protocolo PF-00001" (o carrinho é limpo, nada é cobrado) e, em Meus pedidos, a
   lista "Pedidos recebidos pelo site" com a situação e o número da Padrão quando sai.
 - **Artes.** Sem Bunny (ou com ele fora), `/api/arte` guarda o arquivo no banco (`arquivos`, dono `fila/<cliente>`) e a URL é do

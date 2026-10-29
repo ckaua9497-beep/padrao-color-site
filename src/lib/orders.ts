@@ -35,8 +35,11 @@ import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./term
  * - Medida livre (m²): quantidade = peças, price = total ÷ peças e precoTotal = total do item, porque o mínimo de 1 m²
  *   vale no item inteiro (revisão da Padrão de 25/10/2026); `area` é a área cobrada de uma peça.
  * - pagamento.status 0 = aguardando; forma e parcelas vão junto.
- * - tipo_compra = "Site"; nome_trabalho = texto da arte do primeiro item (ou o nome) + "+ N itens"; precoTotal =
- *   soma dos itens no preço do cliente (balcão ou revenda). Sem desconto no PIX (revisão da Padrão de 25/10/2026).
+ * - tipo_compra é um inteiro (a API recusa texto nesse campo; teste de 29/10/2026): o código da Padrão para a compra
+ *   pelo site, em PADRAO_TIPO_COMPRA (a Padrão ainda não informou). Sem ele, o pedido não sai (fila-pedidos: a equipe
+ *   confere). "Site" é o canal e vai em envio, como nos pedidos que o GET /pedidos devolve.
+ * - nome_trabalho = texto da arte do primeiro item (ou o nome) + "+ N itens"; precoTotal = soma dos itens no preço do
+ *   cliente (balcão ou revenda). Sem desconto no PIX (revisão da Padrão de 25/10/2026).
  * O servidor recalcula tudo a partir da variação: o preço que vem do navegador só serve para comparar.
  */
 
@@ -48,7 +51,18 @@ export const PAYMENT_METHODS: Record<PaymentMethod, { label: string; hint: strin
   boleto: { label: "Boleto bancário", hint: "Pagamento bancário", apiType: "Boleto Bancário" },
 };
 
-export const PURCHASE_TYPE = "Site";
+/** Canal do pedido (`envio` no GET /pedidos): o site. */
+export const CANAL_DO_PEDIDO = "Site";
+
+/** Código de tipo_compra vindo do ambiente (PADRAO_TIPO_COMPRA…): inteiro positivo; null quando falta ou é inválido. */
+export function tipoCompraDe(valor: string | undefined): number | null {
+  const texto = valor?.trim() ?? "";
+  if (!/^\d{1,9}$/.test(texto)) return null;
+  const n = Number(texto);
+  return n > 0 ? n : null;
+}
+
+export const SEM_TIPO_COMPRA = "Falta o código de tipo_compra da Padrão (PADRAO_TIPO_COMPRA): o pedido não foi enviado.";
 
 /** Item do carrinho como o checkout manda para o servidor (sem miniaturas). */
 export type OrderItemInput = {
@@ -433,7 +447,9 @@ export type OrderPayload = {
   produtos: OrderProduct[];
   pagamento: OrderPayment;
   entrega: OrderDelivery;
-  tipo_compra: string;
+  /** Código da Padrão (inteiro); null = não configurado, e o pedido não é enviado. */
+  tipo_compra: number | null;
+  envio: string;
   nome_trabalho: string;
   precoTotal: number;
 };
@@ -502,10 +518,12 @@ type PayloadInput = {
   delivery: OrderDelivery;
   /** Foto, categoria, embalagem e tipos de anexo de cada item (catálogo). */
   facts?: (line: PricedLine) => ProductFacts | null;
+  /** tipo_compra (tipoCompraDe); null enquanto a Padrão não informar o código. */
+  tipoCompra?: number | null;
   now?: Date;
 };
 
-export function buildOrderPayload({ customerId, lines, method, delivery, facts, now = new Date() }: PayloadInput): OrderPayload {
+export function buildOrderPayload({ customerId, lines, method, delivery, facts, tipoCompra = null, now = new Date() }: PayloadInput): OrderPayload {
   const total = orderTotal(lines);
   const clock = brasiliaClock(now);
   return {
@@ -516,7 +534,8 @@ export function buildOrderPayload({ customerId, lines, method, delivery, facts, 
     produtos: lines.map((line) => toOrderProduct(line, facts?.(line) ?? NO_FACTS)),
     pagamento: { tipo: PAYMENT_METHODS[method].apiType, valor: total, status: 0, forma: method, parcelas: 1 },
     entrega: delivery,
-    tipo_compra: PURCHASE_TYPE,
+    tipo_compra: tipoCompra,
+    envio: CANAL_DO_PEDIDO,
     nome_trabalho: orderJobName(lines),
     precoTotal: total,
   };

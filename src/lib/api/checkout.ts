@@ -1,6 +1,6 @@
 import "server-only";
 
-import { PAYMENT_METHODS, type PaymentMethod } from "../orders";
+import { PAYMENT_METHODS, tipoCompraDe, type PaymentMethod } from "../orders";
 import { atualizarPagamento, cancelarCompra } from "./padrao";
 
 /*
@@ -17,6 +17,11 @@ import { atualizarPagamento, cancelarCompra } from "./padrao";
 
 export function ordersEnabled(): boolean {
   return process.env.PADRAO_ORDERS_ENABLED === "true";
+}
+
+/** tipo_compra do pedido do site (inteiro, código da Padrão em PADRAO_TIPO_COMPRA); null enquanto não configurado. */
+export function tipoCompraSite(): number | null {
+  return tipoCompraDe(process.env.PADRAO_TIPO_COMPRA);
 }
 
 export type GatewayResult = {

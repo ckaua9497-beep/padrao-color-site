@@ -105,12 +105,15 @@ export const getPedidos = ({ pedido, dataInicial, dataFinal, pag, reg }: FiltroP
     query: { pedido, data_inicial: dataInicial ? apiDate(dataInicial) : undefined, data_final: dataFinal ? apiDate(dataFinal) : undefined, pag, reg },
   });
 
-/** O PDF não traz o contrato completo de `produtos` e `pagamento` ("contrato de pedido fornecido para a integração"). */
+/**
+ * O PDF não traz o contrato completo de `produtos` e `pagamento` ("contrato de pedido fornecido para a integração").
+ * tipo_compra é inteiro: a API recusa texto nesse campo (teste de 29/10/2026).
+ */
 export type GerarPedido = {
   idCliente: number;
   produtos: unknown[];
   pagamento: Record<string, unknown>;
-  tipo_compra: string;
+  tipo_compra: number;
   nome_trabalho: string;
   precoTotal: number;
 };

@@ -214,7 +214,11 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
           </div>
           <div>
             <dt className="text-caption text-muted">tipo_compra</dt>
-            <dd className="font-semibold">{payload.tipo_compra}</dd>
+            <dd className="font-semibold">{payload.tipo_compra ?? "sem código (PADRAO_TIPO_COMPRA)"}</dd>
+          </div>
+          <div>
+            <dt className="text-caption text-muted">envio</dt>
+            <dd className="font-semibold">{payload.envio}</dd>
           </div>
           <div>
             <dt className="text-caption text-muted">data e hora</dt>

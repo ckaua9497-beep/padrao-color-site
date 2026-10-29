@@ -19,6 +19,7 @@ import {
   parseOrderRequest,
   priceLine,
   resolveVariationId,
+  tipoCompraDe,
   totalsDiffer,
   type LinePrices,
   type OrderItemInput,
@@ -165,12 +166,13 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
       ? { image: "https://img.padraocolor.com.br/cartao.webp", categoryId: 3, packaging: [0.5, 10, 5, 12, 2] as const, attachments: ["Impressão Frente", "Impressão Verso"] }
       : null;
   // 09/10/2026, 08:31:49 em Brasília (11:31:49 UTC).
-  const payload = buildOrderPayload({ customerId: 575, lines: [cards, banner], method: "pix", delivery, facts, now: new Date("2026-10-09T11:31:49Z") });
+  const payload = buildOrderPayload({ customerId: 575, lines: [cards, banner], method: "pix", delivery, facts, tipoCompra: 7, now: new Date("2026-10-09T11:31:49Z") });
   assert.equal(payload.data, "09/10/2026");
   assert.equal(payload.hora, "08:31:49");
   assert.equal(payload.previsao, "15/10/2026", "maior prazo (3 d.u.) a partir de sexta, sem o feriado de 12/10");
   assert.equal(payload.idCliente, 575);
-  assert.equal(payload.tipo_compra, "Site");
+  assert.equal(payload.tipo_compra, 7, "inteiro: a API recusa texto em tipo_compra");
+  assert.equal(payload.envio, "Site", "o canal vai em envio, como no GET /pedidos");
   assert.equal(payload.nome_trabalho, "Padaria Pão Quente + 1 item");
   assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 180.38, status: 0, forma: "pix", parcelas: 1 });
   assert.equal(payload.precoTotal, 180.38, "130,38 + 50 (banner de 0,8 m² cobra o mínimo de 1 m²), sem desconto no PIX");
@@ -214,6 +216,15 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
   assert.deepEqual(second.arte, { tipo: 1, preco: 0, anexos: [] });
   assert.equal(second.desc_trabalho, "Arte: enviar depois");
   assert.deepEqual(second.kit, { id: "festa-1", nome: "Kit Aniversário" });
+
+  // Sem o código da Padrão, tipo_compra fica null (o pedido não sai: fila-pedidos/processar.ts).
+  assert.equal(buildOrderPayload({ customerId: 575, lines: [cards], method: "pix", delivery }).tipo_compra, null);
+});
+
+test("tipo_compra do ambiente: só inteiro positivo", () => {
+  assert.equal(tipoCompraDe("3"), 3);
+  assert.equal(tipoCompraDe(" 12 "), 12);
+  for (const valor of [undefined, "", "Site", "0", "-1", "1.5", "2a", "1e3"]) assert.equal(tipoCompraDe(valor), null, String(valor));
 });
 
 test("arquivos da arte no pedido: só os da pasta pública do Bunny", () => {
