@@ -12,7 +12,7 @@ import { keepArtFiles, uploadedFileOf } from "./art-source";
 import type { ArtRequest } from "./SendArtDialog";
 import { artSummary } from "./art-summary";
 import { useCart } from "@/components/cart/CartProvider";
-import { IconClock, IconCube, IconTruck } from "@/components/icons";
+import { IconBolt, IconClock, IconCube, IconTruck } from "@/components/icons";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { OptionGroup } from "@/components/ui/OptionGroup";
@@ -69,6 +69,8 @@ import PreviewModal from "./PreviewModal";
 import SizeBreakdown from "./SizeBreakdown";
 import SizeInput, { type SizeText } from "./SizeInput";
 import NeonSizeStep from "./NeonSizeStep";
+import { EnvioRapidoDialog } from "./EnvioRapidoDialog";
+import { uploadProblem } from "@/lib/art-files";
 import TemplateDownload from "./TemplateDownload";
 import { fitToTemplate, madeForTemplate, needsRefit, printFileName, printSheets, type Gabarito, type GabaritoSide } from "./gabarito/jobs";
 import { FotoProduto } from "@/components/FotoProduto";
@@ -284,9 +286,13 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const modeloPronto = custom.modo === "neon-modelo" && !spec.blank;
   const semArte = spec.blank || !recebeArte(custom);
   const producao = semArte ? [] : anexosDeProducao(custom);
+  // Envio rápido: o arquivo único vale sempre, mesmo na variação que só aceita ele (em que a página usa o editor).
+  const tiposRapidos = semArte ? [] : producao.length ? producao : [ARQUIVO_UNICO];
   // Arquivos de produção enviados no "Enviar sua arte" (só os tipos da variação atual). Com o arquivo único ou a
   // "Impressão Frente", a frente vai como o cliente mandou: a arte montada no site não vira arquivo de impressão.
-  const productionFiles = Object.fromEntries(Object.entries(extraFiles).filter(([tipo]) => producao.includes(tipo)));
+  const productionFiles = Object.fromEntries(Object.entries(extraFiles).filter(([tipo]) => tiposRapidos.includes(tipo)));
+  // O passo da arte da página mostra o arquivo único que veio do envio rápido (com o resumo e o "Alterar").
+  const tiposDaPagina = producao.length || !productionFiles[ARQUIVO_UNICO] ? producao : [ARQUIVO_UNICO];
   // Criação de arte pela equipe: o preço da variação (API) soma uma vez no item; com ela pedida, a arte vem da equipe.
   const creationPrice = !semArte && custom.criacao ? custom.criacao : null;
   const creationOn = creationPrice !== null && creationRequest !== null;
@@ -499,6 +505,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
   const choose = (key: string, value: string) => setSelection((s) => chooseOption(keys, variations, s, key, value));
   // Termos de envio de arte (src/lib/termos-arte.ts): o aceite vai com o item para o carrinho e o pedido.
   const [termosAceitos, setTermosAceitos] = useState(false);
+  // Envio rápido: configuração e arquivos numa tela só, antes do web-to-print (EnvioRapidoDialog).
+  const [rapido, setRapido] = useState(false);
   const [termosFaltando, setTermosFaltando] = useState(false);
   const updateArt = (update: (art: ArtSettings) => ArtSettings) => {
     setArt(update);
@@ -603,27 +611,32 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     setAttachedFile(null);
   };
 
-  const goTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  // Com o envio rápido aberto, o mesmo passo dentro do modal.
+  const NO_RAPIDO: Record<string, string> = { "passo-medida": "rapido-medida", "passo-tamanhos": "rapido-tamanhos", "passo-arte": "rapido-arte", "termos-arte": "rapido-termos" };
+  const goTo = (id: string) => document.getElementById(rapido ? (NO_RAPIDO[id] ?? id) : id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const checarArquivo = (file: File) =>
+    uploadProblem(file.name, file.size) ?? (arquivoServe(processo, file.name) ? null : "Para o talhamento na madeira, envie arte vetorial (SVG, PDF, AI, CDR ou EPS).");
 
-  const addToCart = async () => {
+  /** Adiciona ao carrinho; false quando falta algo (medida, tamanhos, arte ou o aceite dos termos). */
+  const addToCart = async (): Promise<boolean> => {
     if (area?.error || gridError) {
       setAttempted(true);
       setPreview(false);
       goTo(area?.error ? "passo-medida" : "passo-tamanhos");
-      return;
+      return false;
     }
     if (!hasArt) {
       setArtMissing(true);
       setPreview(false);
       goTo("passo-arte");
-      return;
+      return false;
     }
     // Todo produto personalizado pede o aceite dos termos de envio de arte.
     if (!semArte && !termosAceitos) {
       setTermosFaltando(true);
       setPreview(false);
       goTo("termos-arte");
-      return;
+      return false;
     }
     setAdding(true);
     let thumb: string | null = null;
@@ -754,6 +767,73 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     });
     setAdding(false);
     setPreview(false);
+    return true;
+  };
+
+  // Passos de configuração do produto (opções, medida, tamanhos e acabamentos): na página e no envio rápido, no mesmo
+  // estado. No modal, sem a contagem "passo x de y" e com ids próprios (a página continua por baixo).
+  const configuracao = (onde: "pagina" | "rapido") => {
+    const naPagina = onde === "pagina";
+    const titulo = (n: number, title: string) => (naPagina ? <StepTitle n={n} total={totalSteps} title={title} /> : <p className="mb-2.5 text-[15px] font-bold">{title}</p>);
+    const id = (nome: string) => `${naPagina ? "passo" : "rapido"}-${nome}`;
+    return (
+      <>
+        {keys.map((key, i) => {
+          // Só os valores que combinam com os passos anteriores (quantidades em ordem crescente).
+          const values = displayOrder(key, stepValues(key, keys, product.options, variations, selection));
+          return (
+            <li key={key} className={naPagina ? "motion-safe:animate-fade-up" : undefined} style={naPagina ? { animationDelay: `${i * 60}ms` } : undefined}>
+              {titulo(i + 1, cleanOptionLabel(key))}
+              <OptionGroup
+                label={cleanOptionLabel(key)}
+                value={selection[key]}
+                onChange={(value) => choose(key, value)}
+                options={values.map((value) => ({ value }))}
+              />
+            </li>
+          );
+        })}
+
+        {area && neonFrase && (
+          <li id={id("medida")} className="scroll-mt-painel">
+            {titulo(sizeStep, "Tamanho do letreiro")}
+            <NeonSizeStep width={neonWidth} onWidth={setNeonWidth} heightCm={heightCm} aspect={neonAspect} lines={neonLines} limits={rules.limits ?? { minWidth: 0, maxWidth: 0, minHeight: 0, maxHeight: 0, minArea: 0, maxArea: 0 }} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
+          </li>
+        )}
+
+        {area && product.customSize && (
+          <li id={id("medida")} className="scroll-mt-painel">
+            {titulo(sizeStep, "Medida (largura × altura)")}
+            <SizeInput value={size} onChange={setSize} limits={rules.limits ?? product.customSize} rules={rules} quantity={quantity} presets={presets} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
+          </li>
+        )}
+
+        {apparel && (
+          <li id={id("tamanhos")} className="scroll-mt-painel">
+            {titulo(gridStep, "Tamanhos e quantidades")}
+            <SizeBreakdown
+              sizes={sizes}
+              counts={counts}
+              onChange={setCounts}
+              sizeChart={product.sizeChart ?? null}
+              minQty={product.minQty ?? 1}
+              maxQty={product.maxQty ?? 0}
+              total={units}
+              error={gridError}
+              showError={attempted}
+            />
+          </li>
+        )}
+
+        {finishes.length > 0 && (
+          <AcabamentosStep step={naPagina ? finishStep : undefined} total={naPagina ? totalSteps : undefined} disponiveis={finishes} escolhidos={chosenFinishes} onChange={setFinishing} unidades={pieces} />
+        )}
+      </>
+    );
+  };
+
+  const adicionarRapido = async () => {
+    if (await addToCart()) setRapido(false);
   };
 
   return (
@@ -855,57 +935,23 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         ))}
         {product.source === "site" && <p className="mt-2 text-caption text-muted">Produto novo: monte a arte e o orçamento aqui; o pedido é fechado com o nosso atendimento.</p>}
 
+        {!semArte && (
+          <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card bg-vitrine p-4 ring-1 ring-line">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-coral-700 text-white" aria-hidden>
+              <IconBolt className="size-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[15px] font-bold">Já tem a arte pronta?</p>
+              <p className="text-caption text-muted">No envio rápido você configura o produto e envia os arquivos numa tela só, sem passar pelo editor.</p>
+            </div>
+            <Button variant="dark" size="sm" onClick={() => setRapido(true)}>
+              Envio rápido
+            </Button>
+          </div>
+        )}
+
         <ol className="mt-8 space-y-6">
-          {keys.map((key, i) => {
-            // Só os valores que combinam com os passos anteriores (quantidades em ordem crescente).
-            const values = displayOrder(key, stepValues(key, keys, product.options, variations, selection));
-            return (
-              <li key={key} className="motion-safe:animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
-                <StepTitle n={i + 1} total={totalSteps} title={cleanOptionLabel(key)} />
-                <OptionGroup
-                  label={cleanOptionLabel(key)}
-                  value={selection[key]}
-                  onChange={(value) => choose(key, value)}
-                  options={values.map((value) => ({ value }))}
-                />
-              </li>
-            );
-          })}
-
-          {area && neonFrase && (
-            <li id="passo-medida" className="scroll-mt-painel">
-              <StepTitle n={sizeStep} total={totalSteps} title="Tamanho do letreiro" />
-              <NeonSizeStep width={neonWidth} onWidth={setNeonWidth} heightCm={heightCm} aspect={neonAspect} lines={neonLines} limits={rules.limits ?? { minWidth: 0, maxWidth: 0, minHeight: 0, maxHeight: 0, minArea: 0, maxArea: 0 }} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
-            </li>
-          )}
-
-          {area && product.customSize && (
-            <li id="passo-medida" className="scroll-mt-painel">
-              <StepTitle n={sizeStep} total={totalSteps} title="Medida (largura × altura)" />
-              <SizeInput value={size} onChange={setSize} limits={rules.limits ?? product.customSize} rules={rules} quantity={quantity} presets={presets} quote={area} pricePerM2={chosen.price} showErrors={attempted} />
-            </li>
-          )}
-
-          {apparel && (
-            <li id="passo-tamanhos" className="scroll-mt-painel">
-              <StepTitle n={gridStep} total={totalSteps} title="Tamanhos e quantidades" />
-              <SizeBreakdown
-                sizes={sizes}
-                counts={counts}
-                onChange={setCounts}
-                sizeChart={product.sizeChart ?? null}
-                minQty={product.minQty ?? 1}
-                maxQty={product.maxQty ?? 0}
-                total={units}
-                error={gridError}
-                showError={attempted}
-              />
-            </li>
-          )}
-
-          {finishes.length > 0 && (
-            <AcabamentosStep step={finishStep} total={totalSteps} disponiveis={finishes} escolhidos={chosenFinishes} onChange={setFinishing} unidades={pieces} />
-          )}
+          {configuracao("pagina")}
 
           {canOrient && !semArte && (
             <li>
@@ -935,7 +981,7 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
               contorno={contorno}
               automaticFiles={automaticFiles}
               onSide={setArtSide}
-              extraTypes={producao}
+              extraTypes={tiposDaPagina}
               extraFiles={extraFiles}
               onExtraFile={onProductionFile}
               itemName={product.name}
@@ -1036,6 +1082,72 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
 
         <CepLookup leadDays={leadDays} groupId={product.groupId} variationId={price.variation?.id} quantity={apparel ? units : quantity} />
       </div>
+
+      {rapido && (
+        <EnvioRapidoDialog
+          open
+          onClose={() => setRapido(false)}
+          produto={{ name: product.name, image: product.image }}
+          configuracao={configuracao("rapido")}
+          quantidade={
+            !apparel && !neonFrase ? (
+              <QtyStepper value={quantity} onChange={setQty} min={minQty} max={maxQty} label={perUnit ? "Quantidade de unidades" : area ? "Quantidade de peças" : "Quantidade de pedidos"} />
+            ) : null
+          }
+          quantidadeTitulo={perUnit ? "Quantidade de unidades" : area ? "Quantidade de peças" : `Lotes · ${quantityLabel(price.qty).replace("por ", "")} cada`}
+          prazo={
+            expressAvailable ? (
+              <DeliverySpeed
+                value={expressChosen ? "expresso" : "economico"}
+                onChange={setSpeed}
+                economic={{ price: speedPrice(price.price), days: price.leadDays }}
+                express={{ price: speedPrice(price.expressPrice ?? price.price), days: price.expressDays ?? price.leadDays }}
+                unit={display.unit}
+              />
+            ) : null
+          }
+          arte={
+            semArte
+              ? null
+              : {
+                  types: tiposRapidos,
+                  files: productionFiles,
+                  onFile: onProductionFile,
+                  check: checarArquivo,
+                  automatic: automaticFiles,
+                  editorFront: frontCovered ? null : art.src ? artName : typedArt ? "texto" : null,
+                  editorBack: art.back?.src ? "imagem do verso" : hasArtContent(art.back) ? "texto" : null,
+                  faltando: artMissing,
+                }
+          }
+          details={semArte ? null : { title: artTitle, note: artNote, onTitle: setArtTitle, onNote: setArtNote }}
+          termos={
+            semArte
+              ? null
+              : {
+                  aceito: termosAceitos,
+                  onAceito: (value) => {
+                    setTermosAceitos(value);
+                    if (value) setTermosFaltando(false);
+                  },
+                  faltando: termosFaltando,
+                }
+          }
+          resumo={{
+            linhas: [...keys.map((k) => [cleanOptionLabel(k), selection[k]] as const), ...extras.filter(([k]) => k !== "Nome da arte" && k !== "Observação")],
+            totalLabel,
+            total: formatBRL(total),
+            prazo: leadLabel(leadDays),
+            nota: creationOn ? `inclui a criação da arte · ${formatBRL(creationPrice)}` : null,
+          }}
+          onAdd={adicionarRapido}
+          adding={adding}
+          onMontar={() => {
+            setRapido(false);
+            requestAnimationFrame(() => document.getElementById("passo-arte")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+          }}
+        />
+      )}
 
       {preview && (
         <PreviewModal

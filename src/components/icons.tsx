@@ -296,3 +296,9 @@ export const IconTrash = (p: IconProps) => (
     <path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a1.5 1.5 0 0 0 1.5 1.4h7a1.5 1.5 0 0 0 1.5-1.4L18 7M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
   </svg>
 );
+
+export const IconBolt = (p: IconProps) => (
+  <svg {...base} {...p} aria-hidden>
+    <path d="M13 3 5 13.5h6L10 21l8-10.5h-6L13 3z" />
+  </svg>
+);

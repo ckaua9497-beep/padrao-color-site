@@ -69,6 +69,83 @@ function Or() {
   );
 }
 
+/**
+ * Os arquivos de produção da variação: o arquivo único (enviado, esconde os separados) ou um arquivo para cada parte
+ * (enviado um, esconde o único; camposVisiveis). No "Selecione a arte" e no envio rápido. `idPrefixo` separa os ids
+ * quando os dois estão na página.
+ */
+export function ArquivosParaProducao({
+  types,
+  files,
+  onFile,
+  check,
+  automatic,
+  editorFront,
+  editorBack,
+  idPrefixo = "envio",
+}: Common & { onFile: (tipo: string, file: File | null) => void; check: (file: File) => string | null; idPrefixo?: string }) {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const visible = camposVisiveis(types, files);
+  const single = visible.includes(ARQUIVO_UNICO);
+  const separate = visible.filter((tipo) => tipo !== ARQUIVO_UNICO);
+  const pick = (tipo: string, file: File | undefined) => {
+    if (!file) return;
+    const problem = check(file);
+    setErrors((e) => ({ ...e, [tipo]: problem ?? "" }));
+    if (!problem) onFile(tipo, file);
+  };
+  const fromEditor = (tipo: string) => (tipo === "Impressão Frente" ? editorFront : tipo === "Impressão Verso" ? editorBack : null);
+  return (
+    <>
+      {single && (
+        <section className="mt-4" aria-labelledby={`${idPrefixo}-unico`}>
+          <p id={`${idPrefixo}-unico`} className="flex flex-wrap items-center gap-2 text-[15px] font-bold">
+            Arquivo único {!files[ARQUIVO_UNICO] && separate.length > 0 && <Badge tone="pix">Mais prático</Badge>}
+          </p>
+          <p className="mt-1 text-caption text-muted">Um arquivo com a arte completa: todas as páginas e partes. Ele vai sozinho para a produção.</p>
+          <FileTile tipo={ARQUIVO_UNICO} file={files[ARQUIVO_UNICO] ?? null} onPick={pick} onRemove={() => onFile(ARQUIVO_UNICO, null)} error={errors[ARQUIVO_UNICO]} big />
+        </section>
+      )}
+
+      {single && separate.length > 0 && <Or />}
+
+      {separate.length > 0 && (
+        <section className={cx(!single && "mt-4")} aria-labelledby={`${idPrefixo}-separados`}>
+          <p id={`${idPrefixo}-separados`} className="text-[15px] font-bold">
+            Um arquivo para cada parte
+          </p>
+          <p className="mt-1 text-caption text-muted">Cada arquivo vai para a produção como a parte dele.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {separate.map((tipo) => (
+              <div key={tipo}>
+                <p className="text-sm font-semibold">{label(tipo)}</p>
+                <FileTile
+                  tipo={tipo}
+                  file={files[tipo] ?? null}
+                  note={!files[tipo] ? (automatic.includes(tipo) ? "Feito automaticamente a partir da sua arte" : fromEditor(tipo) ? `Vai a arte montada no site (${fromEditor(tipo)})` : null) : null}
+                  onPick={pick}
+                  onRemove={() => onFile(tipo, null)}
+                  error={errors[tipo]}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
+/** Nome da arte (nome do trabalho) e observação, que vão no pedido. */
+export function DetalhesDaArte({ details, className }: { details: ArtDetails; className?: string }) {
+  return (
+    <div className={cx("grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]", className)}>
+      <TextField label="Nome da arte" value={details.title} onChange={details.onTitle} maxLength={60} placeholder="Ex.: Cartão Padaria Doce Pão" hint="Opcional: ajuda a achar o pedido depois." autoComplete="off" />
+      <TextArea label="Observação" value={details.note} onChange={details.onNote} maxLength={NOTE_LIMIT} rows={3} placeholder="Observações sobre a arte (opcional)" />
+    </div>
+  );
+}
+
 type SendArtProps = Common & {
   open: boolean;
   onClose: () => void;
@@ -136,18 +213,7 @@ function SendArtContent({
   creation,
 }: SendArtProps) {
   const [tab, setTab] = useState<SendTab>(creation ? initialTab : "enviar");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const visible = camposVisiveis(types, files);
-  const single = visible.includes(ARQUIVO_UNICO);
-  const separate = visible.filter((tipo) => tipo !== ARQUIVO_UNICO);
   const sent = types.some((tipo) => files[tipo]);
-  const pick = (tipo: string, file: File | undefined) => {
-    if (!file) return;
-    const problem = check(file);
-    setErrors((e) => ({ ...e, [tipo]: problem ?? "" }));
-    if (!problem) onFile(tipo, file);
-  };
-  const fromEditor = (tipo: string) => (tipo === "Impressão Frente" ? editorFront : tipo === "Impressão Verso" ? editorBack : null);
 
   // Criação: rascunho do pedido (vale ao clicar em "Solicitar criação").
   const [briefing, setBriefing] = useState(creation?.request?.briefing ?? "");
@@ -214,41 +280,7 @@ function SendArtContent({
                 A arte vai para a produção exatamente como você enviar. PDF, JPG, PNG, PSD, AI, CDR, EPS ou SVG, até {ART_UPLOAD_MAX_MB} MB por arquivo.
               </p>
 
-              {single && (
-                <section className="mt-4" aria-labelledby="envio-unico">
-                  <p id="envio-unico" className="flex flex-wrap items-center gap-2 text-[15px] font-bold">
-                    Arquivo único {!files[ARQUIVO_UNICO] && <Badge tone="pix">Mais prático</Badge>}
-                  </p>
-                  <p className="mt-1 text-caption text-muted">Um arquivo com a arte completa: todas as páginas e partes. Ele vai sozinho para a produção.</p>
-                  <FileTile tipo={ARQUIVO_UNICO} file={files[ARQUIVO_UNICO] ?? null} onPick={pick} onRemove={() => onFile(ARQUIVO_UNICO, null)} error={errors[ARQUIVO_UNICO]} big />
-                </section>
-              )}
-
-              {single && separate.length > 0 && <Or />}
-
-              {separate.length > 0 && (
-                <section className={cx(!single && "mt-4")} aria-labelledby="envio-separados">
-                  <p id="envio-separados" className="text-[15px] font-bold">
-                    Um arquivo para cada parte
-                  </p>
-                  <p className="mt-1 text-caption text-muted">Cada arquivo vai para a produção como a parte dele.</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {separate.map((tipo) => (
-                      <div key={tipo}>
-                        <p className="text-sm font-semibold">{label(tipo)}</p>
-                        <FileTile
-                          tipo={tipo}
-                          file={files[tipo] ?? null}
-                          note={!files[tipo] ? (automatic.includes(tipo) ? "Feito automaticamente a partir da sua arte" : fromEditor(tipo) ? `Vai a arte montada no site (${fromEditor(tipo)})` : null) : null}
-                          onPick={pick}
-                          onRemove={() => onFile(tipo, null)}
-                          error={errors[tipo]}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
+              <ArquivosParaProducao types={types} files={files} onFile={onFile} check={check} automatic={automatic} editorFront={editorFront} editorBack={editorBack} />
 
               {onEditorImage && !sent && (
                 <>
@@ -352,12 +384,7 @@ function SendArtContent({
           )
         )}
 
-        {details && (
-          <div className="mt-6 grid gap-4 border-t border-line pt-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-            <TextField label="Nome da arte" value={details.title} onChange={details.onTitle} maxLength={60} placeholder="Ex.: Cartão Padaria Doce Pão" hint="Opcional: ajuda a achar o pedido depois." autoComplete="off" />
-            <TextArea label="Observação" value={details.note} onChange={details.onNote} maxLength={NOTE_LIMIT} rows={3} placeholder="Observações sobre a arte (opcional)" />
-          </div>
-        )}
+        {details && <DetalhesDaArte details={details} className="mt-6 border-t border-line pt-6" />}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-line bg-white px-5 py-4 md:px-8">

@@ -109,6 +109,21 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
 - **Hospedagem:** o envio aceita até 60 MB por arquivo; plataformas serverless limitam o corpo bem abaixo disso (4,5 MB na
   Vercel). Num servidor próprio (VPS + Cloudflare Tunnel), sem limite extra.
 
+### Envio rápido (`EnvioRapidoDialog.tsx`)
+
+Para quem já tem a arte pronta (pedido de 29/10/2026). Antes do passo 1 da página (o caminho do web-to-print, com o editor
+e o 3D), a faixa "Já tem a arte pronta? · Envio rápido" abre um modal com tudo numa tela só:
+
+1. **Configuração do produto:** os mesmos passos da página (opções, medida por m², grade de tamanhos, acabamentos), no
+   mesmo estado: o que muda no modal muda na página. Depois, a quantidade (unidades, peças ou lotes) e o prazo.
+2. **Arquivos da arte:** o arquivo único (sempre, mesmo na variação que só aceita ele) ou um arquivo para cada parte,
+   pelos `tipos_anexo` da variação, com os mesmos campos do "Selecione a arte" (`ArquivosParaProducao`).
+3. **Para a produção:** nome da arte, observação e o aceite dos termos de envio de arte.
+
+Ao lado, o resumo (opções, arquivos, total e prazo); no rodapé, "Adicionar ao carrinho". Faltando medida, tamanhos,
+arquivo ou o aceite, o modal rola até o que falta. "Montar a arte no site" fecha o modal e leva ao passo da arte.
+Produto sem personalização não tem a faixa.
+
 ### Fila de pedidos do site (`src/lib/fila-pedidos/`)
 
 Quando o pedido não chega à produção pelo `POST /gerarpedido`, o site guarda o pedido e as artes em vez de dar erro.

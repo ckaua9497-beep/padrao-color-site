@@ -6,9 +6,9 @@ import { MAX_QTD_ACABAMENTO, precoAcabamento, type Acabamento, type AcabamentoEs
 import { formatBRL } from "@/lib/format";
 
 type Props = {
-  /** Número do passo e total de passos da página. */
-  step: number;
-  total: number;
+  /** Número do passo e total de passos da página; sem eles (envio rápido), o título vai sem a contagem. */
+  step?: number;
+  total?: number;
   /** Acabamentos que a variação escolhida aceita. */
   disponiveis: readonly Acabamento[];
   escolhidos: readonly AcabamentoEscolhido[];
@@ -22,17 +22,18 @@ const dias = (n: number) => `+${n} ${n === 1 ? "dia útil" : "dias úteis"}`;
 
 /** Passo "Acabamentos extras" (opcional): serrilha, furo, dobra, laminação…, com o preço para a quantidade escolhida. */
 export function AcabamentosStep({ step, total, disponiveis, escolhidos, onChange, unidades }: Props) {
+  const numerado = step !== undefined && total !== undefined;
   const toggle = (acabamento: Acabamento, on: boolean) =>
     onChange(on ? [...escolhidos.filter((e) => e.id !== acabamento.id), { id: acabamento.id, qtd: 1 }] : escolhidos.filter((e) => e.id !== acabamento.id));
   const setQtd = (id: string, qtd: number) => onChange(escolhidos.map((e) => (e.id === id ? { ...e, qtd } : e)));
 
   return (
-    <li id="passo-acabamentos" className="scroll-mt-painel">
+    <li id={numerado ? "passo-acabamentos" : undefined} className="scroll-mt-painel">
       <p className="mb-2.5 flex items-center gap-2 text-[15px] font-bold">
-        <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>
+        {numerado && <span className="grid size-5 place-items-center rounded-full bg-ink text-[11px] text-white">{step}</span>}
         Acabamentos extras
         <span className="text-caption font-normal text-muted">
-          · opcional · passo {step} de {total}
+          · opcional{numerado ? ` · passo ${step} de ${total}` : ""}
         </span>
       </p>
       <ul className="grid gap-2">
