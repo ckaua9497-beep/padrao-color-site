@@ -9,7 +9,7 @@ import { atualizarPagamento, cancelarCompra } from "./padrao";
  * PADRAO_ORDERS_ENABLED (padrão "false"): enquanto não for "true", o checkout roda como SIMULAÇÃO — monta e
  * mostra o payload do POST /gerarpedido, mas não chama a API (nada chega à produção da gráfica).
  *
- * Pagamento: ainda não há gateway (Pix/cartão/boleto) integrado. O pedido nasce com o pagamento pendente e a
+ * Pagamento: ainda não há gateway (Pix/cartão) integrado; a Padrão não trabalha com boleto. O pedido nasce com o pagamento pendente e a
  * Padrão cobra pelo atendimento. Quando houver gateway, a confirmação chega por notificação dele (webhook com
  * assinatura conferida no servidor) e só então registerPayment → POST /atualizarpagamento. O navegador nunca
  * decide que um pedido está pago: por isso não há rota pública para atualizar pagamento.

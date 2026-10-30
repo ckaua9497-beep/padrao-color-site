@@ -49,7 +49,7 @@ function LineRow({ line, grouped }: { line: CartLine; grouped: boolean }) {
   );
 }
 
-const DELIVERY_NOTE = "Entrega no seu endereço ou retirada na loja: o frete é combinado depois do pedido.";
+const DELIVERY_NOTE = "Entrega pela rota da Padrão, retirada numa das lojas (sem frete) ou transportadora: o frete aparece no checkout.";
 
 /**
  * `resellerHint`: convite ao revendedor da Padrão para entrar na conta (fica de fora nas lojas da multiloja).

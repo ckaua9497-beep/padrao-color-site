@@ -1,5 +1,6 @@
 import { apiFailure, fail, isSameOrigin, json, limits, overLimit, sessionOr401 } from "@/lib/api/guard";
 import { reenviarArte } from "@/lib/api/padrao";
+import { guardarReenvio } from "@/lib/artes-enviadas/repo";
 import { ART_MAX_MB, artFileProblem, safeFileName } from "@/lib/api/validation";
 import { BunnyError, bunnyConfig, uploadArtFile } from "@/lib/bunny";
 
@@ -60,5 +61,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   } catch (error) {
     return apiFailure(error, { session: true, fallback: "Não foi possível enviar a arte agora. Tente de novo." });
   }
+  // "Artes enviadas" de Meus pedidos: o reenvio fica registrado (sem o Bunny, só o nome do arquivo).
+  await guardarReenvio({ clienteId: auth.session.id, pedido: order, arquivo: { nome: sent.nome, url: sent.url, tipo: "Reenvio" } }).catch((error) =>
+    console.error("[arte] reenvio, artes enviadas:", error instanceof Error ? error.message : "erro desconhecido"),
+  );
   return json({ ok: true, message: "Arte enviada. A equipe de pré-impressão vai conferir o arquivo." });
 }

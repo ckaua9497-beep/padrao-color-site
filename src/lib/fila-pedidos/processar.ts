@@ -3,12 +3,16 @@ import "server-only";
 import { hkdfSync } from "node:crypto";
 import { ordersEnabled, tipoCompraSite } from "@/lib/api/checkout";
 import { ApiError, apiUnavailable } from "@/lib/api/client";
-import { gerarPedido, getCliente } from "@/lib/api/padrao";
+import { gerarPedido, getCliente, getContaCorrente } from "@/lib/api/padrao";
+import { creditoDisponivel, divisaoDoPagamento } from "@/lib/creditos";
 import { groupPrices, linePricesFor, type PriceAccount } from "@/lib/api/prices";
 import { seal, unseal } from "@/lib/api/seal";
 import { artBase, bunnyConfig, uploadArtFile } from "@/lib/bunny";
 import { getProduct, type Product } from "@/lib/catalog";
 import { produtoDoGrupo } from "@/lib/catalogo-vivo";
+import { pagaNaRetirada, rotaDoCliente, saldoDaConta } from "@/lib/cliente";
+import { feriados } from "@/lib/feriados";
+import { cotarEntrega } from "@/lib/frete-pedido";
 import { publicUrl } from "@/lib/multiloja/config";
 import { productFacts } from "@/lib/order-facts";
 import {
@@ -21,7 +25,9 @@ import {
   missingTerms,
   orderDelivery,
   orderTotal,
+  paymentProblem,
   priceLine,
+  SEM_ENDERECO,
   totalsDiffer,
   SEM_TIPO_COMPRA,
   type LineError,
@@ -38,20 +44,24 @@ import { concluir, lerArquivo, paraConferir, pegarPendente, reagendar, type Entr
 /*
  * Fechamento do pedido do site, igual no checkout (/api/pedidos) e no reenvio da fila (worker.ts):
  *   1. prepararPedido: GET /cliente com o token do cliente, preços da conta, conferência dos itens (arte, termos de
- *      envio de arte, preço), endereço e o corpo do POST /gerarpedido.
+ *      envio de arte), a entrega (rota, loja ou transportadora cotada de novo) e o pagamento, o total com o frete e o
+ *      corpo do POST /gerarpedido.
  *   2. enviarPedido: o POST /gerarpedido.
  * Falha de rede em qualquer passo vira { tipo: "falha", classe } (regras.ts): o checkout guarda na fila e o worker
  * decide entre tentar de novo e mandar conferir.
  */
 
-export type Quote = { total: number; reseller: boolean; lines: { key: string; unitPrice: number; total: number; reseller: boolean }[] };
+/** `total` já com o frete (`frete`: taxa da rota cobrada ou transportadora). */
+/** `credito`: a parte do total paga com os créditos da conta (creditos.ts). */
+export type Quote = { total: number; frete: number; credito: number; reseller: boolean; lines: { key: string; unitPrice: number; total: number; reseller: boolean }[] };
 
 export type Preparo =
   | { tipo: "pronto"; payload: OrderPayload; quote: Quote; total: number; lines: PricedLine[] }
   | { tipo: "sessao" }
   | { tipo: "itens"; items: LineError[] }
   | { tipo: "precos"; quote: Quote }
-  | { tipo: "endereco" }
+  /** Entrega ou pagamento que não vale (sem endereço, sem rota, frete que mudou, pagar na retirada sem a liberação…). */
+  | { tipo: "entrega"; erro: string }
   | { tipo: "falha"; classe: ClasseFalha; erro: unknown };
 
 export type Envio = { tipo: "criado"; numero: number | null } | { tipo: "falha"; classe: ClasseFalha; erro: unknown };
@@ -110,13 +120,39 @@ export async function prepararPedido(pedido: OrderRequest, conta: { id: number; 
   if (problems.length) return { tipo: "itens", items: problems };
   const lines = priced as PricedLine[];
 
-  const total = orderTotal(lines);
-  const quote: Quote = { total, reseller: profile.reseller, lines: lines.map((line) => ({ key: line.key, unitPrice: line.unitPrice, total: line.total, reseller: line.reseller })) };
-  if (totalsDiffer(total, pedido.expectedTotal)) return { tipo: "precos", quote };
-
+  // Entrega: na transportadora, cota de novo e cobra o serviço escolhido (o preço do navegador não vale).
   const registered = addressFromApi(cliente.endereco_entrega) ?? addressFromApi(cliente.endereco_cadastro);
-  const deliveryInfo = orderDelivery(pedido.delivery, registered);
-  if (!deliveryInfo) return { tipo: "endereco" };
+  const escolha = pedido.delivery;
+  let transportadora = null;
+  if (escolha.kind === "transportadora") {
+    const destino = escolha.address ?? registered;
+    if (!destino) return { tipo: "entrega", erro: SEM_ENDERECO };
+    const cotacao = await cotarEntrega(destino.cep, lines.map((line) => ({ groupId: line.groupId, variationId: line.variation.id, quantity: line.lots })));
+    if (cotacao.tipo === "falha") return { tipo: "entrega", erro: "Não foi possível calcular o frete agora. Tente de novo em instantes." };
+    // Sem serviço escolhido, só quando não há cotação (frete combinado com o atendimento).
+    if (escolha.servico === null && cotacao.tipo === "opcoes") return { tipo: "entrega", erro: "Escolha a forma de entrega da transportadora." };
+    const opcao = cotacao.tipo === "opcoes" ? cotacao.opcoes.find((o) => o.id === escolha.servico) : undefined;
+    transportadora = opcao ? { id: opcao.id, preco: opcao.preco, nome: opcao.titulo, prazo: opcao.prazoTexto } : null;
+  }
+  const deliveryInfo = orderDelivery(escolha, { registered, rota: rotaDoCliente(cliente), transportadora });
+  if (typeof deliveryInfo === "string") return { tipo: "entrega", erro: deliveryInfo };
+  const frete = deliveryInfo.frete ?? 0;
+  const total = Math.round((orderTotal(lines) + frete) * 100) / 100;
+
+  // Créditos Padrão Color: o saldo de agora na conta corrente (o navegador só diz se quer usar).
+  let divisao = divisaoDoPagamento(total, 0, false);
+  if (pedido.usarCredito) {
+    const corrente = await getContaCorrente(conta.token).catch(() => null);
+    const disponivel = creditoDisponivel(saldoDaConta(corrente) ?? saldoDaConta(cliente.conta_corrente), corrente?.bloqueado ?? cliente.conta_corrente?.bloqueado);
+    if (disponivel <= 0) return { tipo: "entrega", erro: "Você não tem créditos disponíveis agora. Escolha outra forma de pagamento." };
+    divisao = divisaoDoPagamento(total, disponivel, true);
+  }
+  // A forma de pagamento só vale para o que os créditos não pagam.
+  const pagamento = divisao.restante > 0 ? paymentProblem(pedido.payment, escolha, pagaNaRetirada(cliente)) : null;
+  if (pagamento) return { tipo: "entrega", erro: pagamento };
+
+  const quote: Quote = { total, frete, credito: divisao.credito, reseller: profile.reseller, lines: lines.map((line) => ({ key: line.key, unitPrice: line.unitPrice, total: line.total, reseller: line.reseller })) };
+  if (totalsDiffer(total, pedido.expectedTotal)) return { tipo: "precos", quote };
 
   // Foto, categoria, embalagem e anexos do produto que precificou cada linha (catálogo em tempo real; já em cache).
   const vivos = new Map<number, Product | undefined>();
@@ -128,6 +164,8 @@ export async function prepararPedido(pedido: OrderRequest, conta: { id: number; 
     delivery: deliveryInfo,
     facts: (line) => productFacts(line, vivos.get(line.groupId)),
     tipoCompra: tipoCompraSite(),
+    credito: divisao.credito,
+    holidays: await feriados(),
   });
   return { tipo: "pronto", payload, quote, total, lines };
 }
@@ -239,7 +277,7 @@ async function processarEntrada(entrada: EntradaFila): Promise<Reenvio> {
     if (preparo.tipo === "sessao") return conferir("A sessão do cliente venceu antes do reenvio: o pedido precisa ser refeito com o cliente.");
     if (preparo.tipo === "itens") return conferir(`Itens com problema: ${preparo.items.map((i) => `${i.name} (${i.error})`).join("; ")}`.slice(0, 300));
     if (preparo.tipo === "precos") return conferir(`O total mudou de ${entrada.pedido.expectedTotal.toFixed(2)} para ${preparo.quote.total.toFixed(2)}: confirme com o cliente.`);
-    if (preparo.tipo === "endereco") return conferir("O cadastro do cliente ficou sem endereço de entrega completo.");
+    if (preparo.tipo === "entrega") return conferir(`Entrega: ${preparo.erro}`.slice(0, 300));
     payload = preparo.payload;
   }
 

@@ -1,10 +1,11 @@
 import type { MockupKind } from "@/lib/mockup-kinds";
 import { printQuality, type ImageAnalysis } from "@/lib/image-prep";
 import type { LedDesenho } from "@/lib/led-linhas";
+import { opacidadeDoPreto } from "@/lib/preto-k100";
 import { ART_FONTS, canvasFont, fontFamilyOf, isScriptFont, type ArtFont } from "./fonts";
 
 /** Estilos de layout dos templates de texto. */
-export type ArtStyle = "classico" | "moderno" | "retro" | "minimal" | "vibrante" | "elegante";
+export type ArtStyle = "branco" | "classico" | "moderno" | "retro" | "minimal" | "vibrante" | "elegante";
 
 /** O que o cliente configura no passo "Sua arte". */
 export type ArtSettings = {
@@ -575,8 +576,12 @@ export const ART_BACKGROUNDS = [
   { value: "#000000", label: "Preto", ink: "#ffffff" },
 ];
 
-/** Estilos do template: nome, descrição curta e a fonte sugerida ao escolher o estilo. */
+/**
+ * Estilos do template: nome, descrição curta e a fonte sugerida ao escolher o estilo. "Em branco" é só o texto do cliente
+ * no fundo escolhido: a página de produto troca para ele quando o cliente começa a digitar (ArtStep `blankOnType`).
+ */
 export const ART_STYLES: readonly { value: ArtStyle; label: string; hint: string; font: ArtFont }[] = [
+  { value: "branco", label: "Em branco", hint: "Só o seu texto, sem enfeites do modelo", font: "figtree" },
   { value: "classico", label: "Clássico", hint: "Centralizado, filete coral e faixa de cores", font: "figtree" },
   { value: "moderno", label: "Moderno", hint: "Grade suíça e blocos geométricos", font: "unbounded" },
   { value: "retro", label: "Retrô", hint: "Raios de sol, letra com volume e faixas anos 70", font: "fraunces" },
@@ -946,6 +951,8 @@ type Scene = {
   accent: string;
   accent2: string;
   transparent: boolean;
+  /** Texto de exemplo (o cliente ainda não escreveu nada): só aí o estilo desenha o símbolo de exemplo. */
+  exemplo: boolean;
   rng: () => number;
   /** Separação entre o quadro do estilo e o bloco de texto (posição livre); null = desenho direto. */
   layer: LayerControl | null;
@@ -1084,6 +1091,7 @@ const ACCENTS: Record<ArtStyle, { primary: readonly string[]; secondary: readonl
   moderno: { primary: [C.blue, C.cyan, C.magenta, C.sun], secondary: [C.cyan, C.sun, C.magenta, C.blue] },
   retro: { primary: [C.amber, C.sun, C.red], secondary: [C.red, C.magenta, C.amber, C.blue] },
   minimal: { primary: [C.coral, C.red, C.sun], secondary: [C.ink, "#ffffff"] },
+  branco: { primary: [C.ink, "#ffffff"], secondary: [C.ink, "#ffffff"] },
   vibrante: { primary: [C.magenta, C.cyan, C.sun], secondary: [C.magenta, C.blue, C.red, C.cyan] },
   elegante: { primary: [C.gold, C.paleGold, C.amber], secondary: [C.ink, "#ffffff"] },
 };
@@ -1100,7 +1108,8 @@ function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
     text = sub;
     sub = "";
   }
-  if (!text && opts.sample) {
+  const exemplo = !text && opts.sample;
+  if (exemplo) {
     text = SAMPLE_TEXT[family];
     sub = SAMPLE_SUBTEXT[family];
   }
@@ -1130,6 +1139,7 @@ function makeScene(ctx: CanvasRenderingContext2D, w: number, h: number, art: Art
     accent,
     accent2,
     transparent: opts.transparent,
+    exemplo,
     rng: seeded(`${label}|${style}|${family}`),
     layer,
   };
@@ -1572,12 +1582,16 @@ function paintClassico(s: Scene) {
 
   const pad = unit * 0.09;
   const band = unit * 0.055;
+  // O símbolo da Padrão é só o "logo de exemplo": com o texto do cliente ele sai e o texto ocupa o lugar.
+  const mark = s.exemplo;
   if (shape === "strip") {
     spectrumBand(ctx, 0, h - h * 0.09, w, h * 0.09);
     const size = h * 0.42;
-    drawMark(ctx, pad, (h - size * MARK_H) / 2 - h * 0.04, size);
-    if (family === "wrap") drawMark(ctx, w - pad - size * MARK_W, (h - size * MARK_H) / 2 - h * 0.04, size);
-    const left = pad * 2 + size * MARK_W;
+    if (mark) {
+      drawMark(ctx, pad, (h - size * MARK_H) / 2 - h * 0.04, size);
+      if (family === "wrap") drawMark(ctx, w - pad - size * MARK_W, (h - size * MARK_H) / 2 - h * 0.04, size);
+    }
+    const left = mark ? pad * 2 + size * MARK_W : pad;
     const right = family === "wrap" ? left : pad;
     inline(s, {
       box: { x: left, y: h * 0.08, w: w - left - right, h: h * 0.76 },
@@ -1585,7 +1599,7 @@ function paintClassico(s: Scene) {
       sub,
       mainPaint,
       subPaint,
-      align: family === "wrap" ? "center" : "left",
+      align: family === "wrap" || !mark ? "center" : "left",
       sep: { width: 0.35, draw: (x0, x1, cy, sz) => {
         ctx.fillStyle = s.accent;
         ctx.fillRect(x0, cy - sz * 0.03, Math.max(1, x1 - x0), sz * 0.06);
@@ -1595,11 +1609,11 @@ function paintClassico(s: Scene) {
   }
 
   if (family === "card" && shape !== "tall" && shape !== "pole") {
-    // Cartão deitado: símbolo à esquerda, nome alinhado à esquerda, filete e contato.
+    // Cartão deitado: símbolo à esquerda, nome alinhado à esquerda, filete e contato (sem o símbolo, centralizado).
     const size = Math.min(unit * 0.3, w * 0.18);
-    drawMark(ctx, pad, (h - size * MARK_H) / 2 - band / 2, size);
-    const textX = pad * 2 + size * MARK_W;
-    stack(s, { box: { x: textX, y: pad, w: w - textX - pad, h: h - pad * 2 - band }, main, sub, mainMax: unit * 0.22, maxLines: 2, mainPaint, subPaint, align: "left", divider: leftRule, dividerH: unit * 0.012, subLines: 2 });
+    if (mark) drawMark(ctx, pad, (h - size * MARK_H) / 2 - band / 2, size);
+    const textX = mark ? pad * 2 + size * MARK_W : pad;
+    stack(s, { box: { x: textX, y: pad, w: w - textX - pad, h: h - pad * 2 - band }, main, sub, mainMax: unit * 0.22, maxLines: 2, mainPaint, subPaint, align: mark ? "left" : "center", divider: mark ? leftRule : centerRule, dividerH: unit * 0.012, subLines: 2 });
     spectrumBand(ctx, 0, h - band, w, band);
     return;
   }
@@ -1621,15 +1635,19 @@ function paintClassico(s: Scene) {
   spectrumBand(ctx, 0, h - band, w, band);
   let top = pad;
   if (family === "wrap" && shape === "wide") {
-    const size = unit * 0.28;
-    drawMark(ctx, w * 0.05, h * 0.36, size);
-    drawMark(ctx, w * 0.95 - size * MARK_W, h * 0.36, size);
+    const size = mark ? unit * 0.28 : 0;
+    if (mark) {
+      drawMark(ctx, w * 0.05, h * 0.36, size);
+      drawMark(ctx, w * 0.95 - size * MARK_W, h * 0.36, size);
+    }
     stack(s, { box: { x: w * 0.05 + size * MARK_W + pad, y: pad, w: w * 0.9 - (size * MARK_W + pad) * 2, h: h - pad * 2 - band }, main, sub, mainMax: unit * 0.34, maxLines: 2, mainPaint, subPaint, divider: centerRule, dividerH: unit * 0.012 });
     return;
   }
-  const size = shape === "pole" ? w * 0.4 : unit * 0.17;
-  drawMark(ctx, w / 2 - (size * MARK_W) / 2, top, size);
-  top += size * MARK_H + pad * 0.5;
+  if (mark) {
+    const size = shape === "pole" ? w * 0.4 : unit * 0.17;
+    drawMark(ctx, w / 2 - (size * MARK_W) / 2, top, size);
+    top += size * MARK_H + pad * 0.5;
+  }
   stack(s, { box: { x: pad, y: top, w: w - pad * 2, h: h - top - pad - band }, main, sub, mainMax: unit * 0.24, maxLines: lines, mainPaint, subPaint, divider: centerRule, dividerH: unit * 0.012, subLines: shape === "tall" || shape === "pole" ? 2 : 1 });
 }
 
@@ -2271,7 +2289,24 @@ function paintElegante(s: Scene) {
   stack(s, { box, main, sub, mainMax: unit * 0.24, maxLines: lines, mainPaint, subPaint, divider, dividerH: lw * 4, subLines: shape === "tall" || shape === "pole" ? 2 : 1 });
 }
 
+/** Em branco: só o texto do cliente, centralizado no fundo escolhido, na fonte e na cor dele, sem enfeite nenhum. */
+function paintBranco(s: Scene) {
+  const { w, h, unit, shape } = s;
+  const pad = unit * 0.09;
+  stack(s, {
+    box: inset({ x: 0, y: 0, w, h }, pad),
+    main: { font: s.font, lineHeight: 1.06 },
+    sub: { font: "figtree", weight: 500 },
+    mainMax: unit * 0.26,
+    maxLines: MAX_LINES[shape],
+    mainPaint: { fill: s.ink },
+    subPaint: { fill: s.ink },
+    subLines: shape === "strip" ? 1 : 2,
+  });
+}
+
 const PAINTERS: Record<ArtStyle, (s: Scene) => void> = {
+  branco: paintBranco,
   classico: paintClassico,
   moderno: paintModerno,
   retro: paintRetro,
@@ -2301,12 +2336,16 @@ type Painter = (s: Scene) => void;
  * quadro parado e depois o bloco levado até a posição do cliente, sempre inteiro dentro da área.
  */
 function drawBlock(ctx: CanvasRenderingContext2D, w: number, h: number, art: ArtRender, label: string, painter: Painter, opts: Omit<SceneOpts, "layer">, placement: LayerPlacement | null): LayerInfo | null {
-  const ww = Math.round(w * windowShare(art));
-  const ox = Math.round((w - ww) / 2);
+  // Só a janela frontal (caneca) estreita e recorta a área. Na área inteira vale a largura exata: no arquivo de
+  // impressão ela é fracionária (sangria em volta) e arredondar recortava a última coluna, que a sangria esticada
+  // copiava como uma faixa clara na lateral ("fantasma", revisão da Padrão de 29/10/2026).
+  const share = windowShare(art);
+  const ww = share < 1 ? Math.round(w * share) : w;
+  const ox = share < 1 ? Math.round((w - ww) / 2) : 0;
   const run = (layer: LayerControl, clip: boolean) => {
     ctx.save();
     ctx.translate(ox, 0);
-    if (clip && ww < w) {
+    if (clip && share < 1) {
       ctx.beginPath();
       ctx.rect(0, 0, ww, h);
       ctx.clip();
@@ -2429,6 +2468,9 @@ function paintCaption(s: Scene, style: ArtStyle) {
     case "minimal":
       stack(s, { ...base, mainMax: s.unit * 0.12, main: { ...main, weight: 500 }, mainPaint: { fill: s.ink, shadow: "rgba(0,0,0,0.25)", shadowBlur: 0.1 }, subPaint: { fill: s.ink, shadow: "rgba(0,0,0,0.25)", shadowBlur: 0.2 }, gap: 0.4 });
       break;
+    case "branco":
+      stack(s, { ...base, mainPaint: { fill: s.ink }, subPaint: { fill: s.ink } });
+      break;
     case "elegante":
       stack(s, { ...base, mainPaint: soft, subPaint: soft, divider: (x, y) => diamondRule(ctx, x, y, s.unit * 0.2, s.accent, Math.max(1, s.unit * 0.004)), dividerH: s.unit * 0.02 });
       break;
@@ -2479,6 +2521,7 @@ type NeonLook = {
 
 /** Cada estilo muda a letra do tubo, a espessura e o brilho; as cores vêm do LED escolhido. */
 const NEON_LOOK: Record<ArtStyle, NeonLook> = {
+  branco: { font: "neon", tube: 0.085, core: 0.03, glow: 1 },
   classico: { font: "neon", tube: 0.085, core: 0.03, glow: 1 },
   moderno: { font: "unbounded", weight: 500, tube: 0.05, core: 0.018, glow: 0.75, tracking: 0.02, extra: "frame" },
   retro: { font: "righteous", caps: true, tube: 0.075, core: 0.026, glow: 1.1, extra: "double" },
@@ -2745,16 +2788,73 @@ function drawNeon(ctx: CanvasRenderingContext2D, w: number, h: number, image: HT
 export type PaintBleed = { left: number; top: number; right: number; bottom: number };
 
 /**
+ * Preto do texto em K100 no arquivo de impressão (src/lib/preto-k100.ts). "sem": pinta tudo menos o texto preto (a imagem
+ * RGB); "so": só o texto preto, em preto com a opacidade dele e sem sombra, num canvas transparente (a máscara da camada
+ * K). `desenhou` diz se havia texto preto.
+ */
+export type CamadaPreto = { camada: "sem" | "so"; desenhou?: boolean };
+
+const DESENHOS_FORA_DO_TEXTO = new Set<PropertyKey>(["fill", "stroke", "fillRect", "strokeRect", "drawImage", "putImageData"]);
+
+/** Contexto que separa o texto preto do resto (fillText/strokeText com cor preta: opacidadeDoPreto). */
+function contextoDoPreto(ctx: CanvasRenderingContext2D, preto: CamadaPreto): CanvasRenderingContext2D {
+  const bound = new Map<PropertyKey, unknown>();
+  const texto = (key: "fillText" | "strokeText") => (...args: [string, number, number, number?]) => {
+    const alpha = opacidadeDoPreto(key === "fillText" ? ctx.fillStyle : ctx.strokeStyle);
+    if (alpha === null) {
+      if (preto.camada === "sem") ctx[key](...args);
+      return;
+    }
+    preto.desenhou = true;
+    if (preto.camada === "so") {
+      ctx.save();
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+      ctx[key](...args);
+      ctx.restore();
+      return;
+    }
+    // Sem o texto preto, a sombra dele continua na imagem: o texto vai para fora do canvas e só a sombra cai no lugar.
+    const sombra = !/^rgba\([^)]*,\s*0\)$/.test(ctx.shadowColor) &&(ctx.shadowBlur > 0 || ctx.shadowOffsetX !== 0 || ctx.shadowOffsetY !== 0);
+    if (!sombra) return;
+    const desvio = ctx.canvas.width + ctx.canvas.height + 1000;
+    ctx.save();
+    ctx.setTransform(new DOMMatrix().translate(desvio, 0).multiply(ctx.getTransform()));
+    ctx.shadowOffsetX -= desvio;
+    ctx[key](...args);
+    ctx.restore();
+  };
+  return new Proxy(ctx, {
+    get(target, key) {
+      if (key === "fillText" || key === "strokeText") return texto(key);
+      if (preto.camada === "so" && DESENHOS_FORA_DO_TEXTO.has(key)) return noop;
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== "function") return value;
+      let fn = bound.get(key);
+      if (!fn) {
+        fn = (value as (...args: unknown[]) => unknown).bind(target);
+        bound.set(key, fn);
+      }
+      return fn;
+    },
+    set: (target, key, value) => Reflect.set(target, key, value, target),
+  });
+}
+
+/**
  * Pinta a arte no canvas da peça e devolve onde ficaram o texto e a imagem (o editor 2D põe as alças ali).
  * No chinelo com região escolhida, a arte vai só na faixa da região (dedos, meio ou calcanhar) e o resto
  * da palmilha fica na cor da peça; a posição livre (art.layout) é relativa à região.
  * `opts.bleed`: o canvas inclui a sangria do gabarito em volta da área (arquivo de impressão e editor).
+ * `opts.preto`: separa o texto preto para a camada K100 do arquivo de impressão (CamadaPreto).
  */
-export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string, opts?: { bleed?: PaintBleed | null; extend?: boolean }): PaintInfo {
+export function paintArt(canvas: HTMLCanvasElement, variant: ArtVariant, art: ArtRender, image: HTMLImageElement | null, label: string, opts?: { bleed?: PaintBleed | null; extend?: boolean; preto?: CamadaPreto }): PaintInfo {
   if (art.varnishMask) return paintVarnishMask(canvas, variant, art, image, label, opts);
   const info: PaintInfo = { text: null, image: null };
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return info;
+  const raw = canvas.getContext("2d");
+  if (!raw) return info;
+  const ctx = opts?.preto ? contextoDoPreto(raw, opts.preto) : raw;
   const { width: w, height: h } = canvas;
   if (!w || !h) return info;
   ctx.setTransform(1, 0, 0, 1, 0, 0);

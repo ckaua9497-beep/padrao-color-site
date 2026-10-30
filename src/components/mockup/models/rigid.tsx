@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "rea
 import * as THREE from "three";
 import type { MockupSpec } from "@/lib/mockup";
 import { artAspect } from "@/lib/mockup-kinds";
+import { placasDoMosaico } from "@/lib/mosaico";
 import { fontFamily } from "../art";
 import { useSceneMode } from "../viewer-hooks";
 import { AcrylicMaterials, Dimensions, PrintMaterial, faceArtOf, fitFlat, makeShape, metalColor, sizeLabels, useArtTexture, useGeometryCleanup, type ModelProps } from "./shared";
@@ -790,30 +791,25 @@ function WallPanel({ spec, art, label, showDims }: ModelProps) {
   );
 }
 
-/** Quadro mosaico: a mesma arte cortada em placas com frestas, coladas (fita VHB) numa parede. */
+/**
+ * Quadro mosaico: placas lado a lado como no gabarito e na foto do produto (src/lib/mosaico.ts: 3 ou 5 placas, mais
+ * baixas para as pontas, centradas na altura, com vão), coladas (fita VHB) numa parede. A arte é uma só e atravessa
+ * todas: a textura cobre o conjunto, vãos incluídos, e cada placa mostra a parte dela.
+ */
 function MosaicPanel({ spec, art, label, showDims }: ModelProps) {
-  const { w, h, scale } = fitFlat(spec, 2.5);
-  const front = useArtTexture(artAspect(spec), "front", art, label);
+  const mosaico = useMemo(() => placasDoMosaico(spec.widthCm, spec.heightCm), [spec.widthCm, spec.heightCm]);
+  const scale = 2.5 / Math.max(mosaico.larguraCm, mosaico.alturaCm);
+  const w = mosaico.larguraCm * scale;
+  const h = mosaico.alturaCm * scale;
+  const front = useArtTexture(mosaico.larguraCm / mosaico.alturaCm, "front", art, label);
   const look = panelLook(spec.depthCm);
   const d = Math.max(spec.depthCm * scale, 0.008);
   const b = Math.min(look.bevelCm * scale, d * 0.3);
   const r = Math.max(look.radiusCm * scale, b + 0.002);
-  const cols = Math.max(2, Math.round(spec.widthCm / 34));
-  const rows = Math.max(2, Math.round(spec.heightCm / 34));
-  const gap = Math.max(1.6 * scale, 0.02);
   const plate = useMemo<Plate>(() => {
-    const tileW = (w - gap * (cols - 1)) / cols;
-    const tileH = (h - gap * (rows - 1)) / rows;
-    const shapes: THREE.Shape[] = [];
-    for (let row = 0; row < rows; row += 1) {
-      for (let col = 0; col < cols; col += 1) {
-        const cx = -w / 2 + tileW / 2 + col * (tileW + gap);
-        const cy = -h / 2 + tileH / 2 + row * (tileH + gap);
-        shapes.push(roundedRect(tileW - 2 * b, tileH - 2 * b, r - b, cx, cy));
-      }
-    }
+    const shapes = mosaico.placas.map((p) => roundedRect(p.w * scale - 2 * b, p.h * scale - 2 * b, r - b, p.x * scale, p.y * scale));
     return { body: extrudeBody(shapes, d, b), face: printFace(shapes, w, h) };
-  }, [w, h, d, b, r, cols, rows, gap]);
+  }, [mosaico, scale, w, h, d, b, r]);
   usePlateCleanup(plate);
   const margin = Math.max(w, h) * 0.09;
   const wallD = 0.06;

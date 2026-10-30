@@ -101,14 +101,17 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   `precoTotal`, `variations` (opções da variação), `package` (embalagem da variação), `tipoProducao`, `productionTime`,
   `nomeTrabalho`/`nome_trabalho`, `desc_trabalho` (a linha da arte e o que o site acrescenta: texto, kit, tamanhos, medida),
   `arte {tipo, preco, anexos}`, `tratamentoArquivo` e `precoTotalAcabamentos`; no envelope, `data`, `hora` (Brasília), `previsao`
-  (o maior prazo em dias úteis, sem fim de semana nem feriado nacional), `idCliente`, `pagamento {tipo, valor, status}`,
-  `entrega`, `tipo_compra`, `envio`, `nome_trabalho` e `precoTotal`. As premissas ainda abertas estão no comentário do arquivo.
+  (o maior prazo em dias úteis, sem fim de semana nem os feriados do `GET /feriados`, contando de hoje só até as 18h: ver
+  "Prazo de produção e feriados"), `idCliente`, `pagamento {tipo, valor, status}`,
+  `entrega`, `frete`, `tipo_compra`, `envio`, `nome_trabalho` e `precoTotal`. As premissas ainda abertas estão no comentário do arquivo.
 - **`tipo_compra` e `envio` (teste na API real de 29/10/2026).** `tipo_compra` é inteiro: com o texto "Site" a API aponta o campo.
   O código vem de `PADRAO_TIPO_COMPRA` e, sem ele, o POST nem sai. "Site" é o canal e vai em `envio`, como nos pedidos do
   `GET /pedidos`. No mesmo teste, o envelope sem produtos passou (200) e qualquer linha de produto, mesmo o cartão 22 no preço ao
   vivo, com arte, retirada e pagamento, voltou 406 "Não foi possível gerar o Pedido!": a causa está com a Padrão.
 - **Reenvio de arte** (Meus pedidos, `POST /api/pedidos/[id]/arte`): com o Bunny, o arquivo sobe para lá e o `/reenviararte`
-  leva `url` e `nome`; sem ele, o arquivo vai em base64, como antes.
+  leva `url` e `nome`; sem ele, o arquivo vai em base64, como antes. O formulário avisa que a arte reenviada depois das 18h
+  de um dia útil (ou num dia não útil) aumenta a previsão em 1 dia útil e mostra a nova data (`previsaoAposReenvio`); quem
+  recalcula a previsão é o sistema da Padrão.
 - **Teste local:** `node scripts/bunny-mock.mjs` (porta 3196, grava em `.data/bunny-mock/`) e, no `.env.development.local`,
   `BUNNY_ACCESS_KEY=teste`, `BUNNY_STORAGE_URL=http://localhost:3196/padraocolor`, `BUNNY_CDN_URL=http://localhost:3196/cdn`.
 - **Hospedagem:** o envio aceita até 60 MB por arquivo; plataformas serverless limitam o corpo bem abaixo disso (4,5 MB na
@@ -128,6 +131,82 @@ e o 3D), a faixa "Já tem a arte pronta? · Envio rápido" abre um modal com tud
 Ao lado, o resumo (opções, arquivos, total e prazo); no rodapé, "Adicionar ao carrinho". Faltando medida, tamanhos,
 arquivo ou o aceite, o modal rola até o que falta. "Montar a arte no site" fecha o modal e leva ao passo da arte.
 Produto sem personalização não tem a faixa.
+
+### Prazo de produção e feriados (`src/lib/dias-uteis.ts`, `src/lib/feriados.ts`)
+
+- **Dia útil:** segunda a sexta, fora dos dias do `GET /feriados` (feriados e outros dias que a Padrão cadastrar, mesmo sem
+  ser feriado). `feriados.ts` lê o ano atual e o seguinte, com cache de 6 h; sem resposta ou com a lista vazia, valem os
+  feriados nacionais e a próxima tentativa é em 5 min.
+- **Corte das 18h:** pedido ou arte que chega depois das 18h (Brasília) de um dia útil, ou num dia não útil, conta como
+  chegado no próximo dia útil (`inicioDaContagem`). A `previsao` do pedido soma o prazo a partir desse dia.
+
+### Cancelamento em "Meus pedidos" (`src/lib/cancelamento.ts`)
+
+- **Prazo:** o cliente cancela a compra inteira (`POST /api/pedidos/compra/[id]/cancelar` → `/cancelarcompra`) ou só um
+  item (`POST /api/pedidos/[id]/cancelar` → `/cancelarpedido`) até 15 min depois de finalizar a compra (data e hora do
+  `GET /pedidos`, Brasília). As rotas conferem o prazo no servidor (`compraRecente` em `src/lib/api/compras.ts`: compras
+  de ontem e de hoje com o token do cliente); depois disso, só pelo atendimento. Compra da multiloja não cancela por aqui.
+- **Estorno de acordo com o valor pago:** cada item leva a parte dele (valor do item ÷ soma dos itens) do `credito_usado` e
+  do `valor_pago`. A parte em créditos Padrão Color volta sozinha para a conta corrente; a paga em Pix, cartão ou boleto é
+  estornada pela Padrão. A confirmação e a resposta mostram os dois valores. Premissas no cabeçalho do arquivo.
+
+### Modalidade da compra em "Meus pedidos" (`src/lib/modalidade-pedido.ts`)
+
+Revisão da Padrão de 29/10/2026: o painel de pedidos mostra as compras das 3 modalidades, System Color, Loja São João e
+Site. A modalidade vem no `envio` de cada compra do `GET /pedidos` e aparece num selo ao lado do número; texto desconhecido
+aparece como veio. O filtro "Modalidade" busca até 5 páginas de 50 compras (o `GET /pedidos` não filtra por ela) e separa no
+site; com mais compras que isso, a página avisa para filtrar também pelo período. A confirmar com a Padrão: o texto exato de
+`envio` da loja e do System Color.
+
+### Artes enviadas em "Meus pedidos" (`src/lib/artes-enviadas/`)
+
+- **O que aparece por item:** a arte no gabarito (a imagem que o carrinho guarda, ver "Gabaritos"), o que o cliente enviou
+  (arquivos do checkout e cada reenvio de arte, com a data), o que a Padrão recebeu (`produto.arquivos` do `GET /pedidos`) e a
+  situação da arte (aprovada, em análise, recusada ou cancelada, lida do texto da situação: `estadoDaArte`).
+- **Banco:** tabela `artes_pedido` (migração 6). `/api/pedidos` grava os itens do pedido criado (número da compra) ou guardado
+  na fila (protocolo; o número vem de `pedidos_fila` quando a fila envia) e o reenvio de arte grava o arquivo do item. Falha
+  ao gravar nunca derruba o pedido; sem o banco, cada item mostra só o que a API tem.
+- **Casamento com a API:** os itens do `GET /pedidos` casam com os gravados pela variação (`produto.id`) e, sem ela, pela
+  posição na compra (`casarItens`). Pedidos feitos antes disso mostram só o que a Padrão recebeu.
+
+### Entrega e pagamento no checkout (`src/lib/entrega.ts`)
+
+Como no site antigo da Padrão (`components/cart/EntregaCheckout.tsx`), três formas à esquerda e o que vale para a escolhida à
+direita:
+- **Delivery Padrão:** no endereço de entrega do cadastro, sempre pela rota dele ("Entrega pela Rota Verde"). Sem rota no cadastro,
+  a opção fica desligada. A taxa da rota entra no pedido como frete, a não ser com o pagamento na retirada liberado.
+- **Retirada em uma das lojas Padrão Color:** "Selecione uma loja" com as 7 em duas colunas, na ordem, nos nomes e nos endereços
+  do checkout antigo (`LOJAS_RETIRADA`; a Loja São João já vem marcada): 5 lojas próprias e os pontos parceiros Niterói e Serra-ES.
+  Os ids são os do site oficial (a confirmar com os da Padrão). Nunca cobra frete. Ponto parceiro não recebe pagamento na
+  retirada (o aviso aparece para quem tem a liberação).
+- **Frete por transportadora:** no endereço do cadastro ou em outro (a única forma de receber fora do cadastro), com as formas de
+  entrega cotadas na API de frete da Padrão para o carrinho (`POST /api/pedidos/frete`, `src/lib/frete-pedido.ts`). Sem a chave da
+  API ou com item sem medida de envio, o frete é combinado com o atendimento.
+- **Pagamento:** Pix e cartão; **"Pagar na retirada"** ("Pagar na entrega" no Delivery Padrão) só para o cliente com a liberação, no
+  Delivery Padrão ou numa loja própria (`pagaNaRetiradaPermitido`). Sem boleto: a Padrão não trabalha com boleto (nas lojas da
+  multiloja ele também fica fora do checkout, `FORMAS_FORA`).
+- **Créditos Padrão Color** (`src/lib/creditos.ts`, revisão da Padrão de 29/10/2026): com crédito na conta corrente (saldo menos o
+  bloqueado), o passo 3 mostra "Usar meus créditos nesta compra" / "Não usar créditos agora", como no site antigo. Os créditos
+  pagam o pedido inteiro (as formas de pagamento somem) ou parte dele (o restante vai na forma escolhida); o resumo mostra
+  "Créditos Padrão Color" e "A pagar". O navegador só manda `usarCredito`: o servidor lê o saldo de novo (`GET /contacorrente`,
+  ou o `conta_corrente` do `GET /cliente`) e divide. No pedido: `credito_usado` no envelope e `pagamento.credito`, com
+  `pagamento.valor` = o que falta pagar; pago todo em crédito, `pagamento.tipo` "Crédito". Esses nomes estão a confirmar com a Padrão.
+- **No pedido** (`orders.ts`): `entrega {tipo, endereco, rota, loja, transportadora, frete}` e `frete` no envelope, somado ao
+  `precoTotal` e ao `pagamento.valor`. O servidor cota a transportadora de novo e confere o total com o frete; a escolha de entrega
+  ou pagamento que não vale volta com o motivo. A confirmar com a Padrão: os nomes no `/gerarpedido` (`frete`, `entrega.loja.id`,
+  pagamento "Pagamento na Retirada").
+
+### Dados do cliente e rota de entrega (`src/lib/cliente.ts`)
+
+- Formato conferido com um `GET /cliente` real (26/10/2026): o saldo vem em `conta_corrente.credito` (o `saldo` antigo ainda
+  é lido), `email` pode vir vazio com o endereço só em `email_cadastro`, e `nascimento` vem em DD/MM/AAAA ("Minha conta"
+  mostra e preenche o formulário de contato com eles).
+- **Rota:** a Padrão tem uma lista de rotas, cada uma com cor e taxa. O nome da rota é a cor (`"rota": "VERDE"`) e a taxa vem
+  em `taxa_rota` no endereço de entrega. "Minha conta" mostra a rota no quadro Endereços, com a bolinha na cor do nome.
+- Sem rota: "Transportadora", e a entrega por rota não fica disponível. Com rota e pagamento na retirada liberado, a taxa
+  não é cobrada junto com o pedido; sem essa liberação, a taxa entra no pedido como frete.
+- A confirmar com a Padrão: se a liberação é `pagamento_antecipado` "N". No checkout, a taxa vai no frete do Delivery Padrão (ver
+  "Entrega e pagamento no checkout").
 
 ### Fila de pedidos do site (`src/lib/fila-pedidos/`)
 
@@ -172,9 +251,8 @@ personalizado sem aceite. O texto é provisório, para a Padrão validar; mudar 
   de entrega, mais barata primeiro; os `unavailable` ficam de fora. Regras puras e testadas em `src/lib/frete.ts`.
 - **Onde aparece.** "Calcular entrega" na página de produto (`POST /api/frete {cep, groupId, variationId, quantity}`; a embalagem
   sai do catálogo no servidor; 40 consultas a cada 10 minutos por IP): a cidade (ViaCEP) e as formas de entrega com preço e prazo
-  de transporte, contado depois que o pedido fica pronto. É uma estimativa: no checkout do site o frete ainda é combinado com o
-  atendimento, porque o contrato do `gerarpedido` não tem campo de frete. Nas lojas da multiloja o checkout cota e cobra (ver
-  "Multiloja").
+  de transporte, contado depois que o pedido fica pronto. É uma estimativa: o frete do pedido sai no checkout ("Entrega no
+  checkout"). Nas lojas da multiloja o checkout cota e cobra (ver "Multiloja").
 - **Teste local:** `node scripts/frete-mock.mjs` (porta 3197, mesmo formato de resposta, preços inventados com peso cubado e
   distância pelo CEP) e, no `.env.development.local`, `PADRAO_FRETE_URL=http://localhost:3197/api/v2/melhor-envio/freight/calculate`
   e `PADRAO_FRETE_API_KEY=teste`.
@@ -417,10 +495,28 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
     carrinho, o checkout, o resultado do pedido e "Meus pedidos" (por 14 dias) oferecem o download. Arquivo que o site não lê
     (CDR, AI) vai anexado como foi enviado, sem PDF no gabarito; LED neon não tem arquivo de impressão. No checkout, o PDF e os
     arquivos enviados sobem para o Bunny e vão no pedido (ver "Arquivos de arte no Bunny e o pedido");
+  - junto do PDF sai uma **imagem da arte no gabarito** (`buildGabaritoPreview`: as folhas com a arte e as linhas de sangria,
+    corte e segurança, JPEG leve). Ela sobe no checkout só para as "Artes enviadas" de Meus pedidos e nunca vai para a produção;
   - limites: canvas de até 40 MP por painel (16 MP no iPhone/iPad, por isso lonas grandes saem com menos dpi), páginas acima
-    de ~5 m com `/UserUnit`, PDF sem object streams. Página com só verso (cartão 4/0) e máscaras de verniz ficam fora.
+    de ~5 m com `/UserUnit`, PDF sem object streams. Página com só verso (cartão 4/0) e máscaras de verniz ficam fora;
+  - **preto do texto em K100** (revisão da Padrão de 29/10/2026, `src/lib/preto-k100.ts`): o painel é uma imagem RGB e o RIP
+    converteria o preto dela em preto composto. O texto preto (cor neutra e bem escura, com a opacidade dela: o subtexto a 70%
+    sai em K70) não vai na imagem: `paintArt(..., { preto })` separa `fillText`/`strokeText` pretos, e o PDF põe por cima uma
+    imagem de 1 pixel CMYK 0/0/0/100 com a máscara suave do texto (SMask). Fora: estampa DTF (PNG transparente), neon, peça lisa e
+    processos de um tom só (laser, talhamento, P&B). Conferido com PyMuPDF: a letra sai em C0 M0 Y0 K100;
+  - **sem "fantasma" na lateral**: na área inteira o modelo do estilo usa a largura exata da área (fracionária com a sangria em
+    volta). Antes ela era arredondada e recortada, a última coluna saía meio coberta e a sangria esticada copiava uma faixa clara.
 - **QA:** `/design-system/gabaritos` lista todos os produtos com as medidas, o mapeamento e as pendências, e desenha as folhas
   de cada um. `/gabaritos` mostra a medida de cada gabarito ao lado do download.
+
+### Modelo de exemplo e "Em branco" (web-to-print)
+
+- Enquanto a arte está vazia, o editor mostra o modelo do estilo escolhido com o texto de exemplo e o símbolo da Padrão como
+  "logo de exemplo". Na página de produto (`ArtStep` com `blankOnType`), a primeira letra digitada numa superfície vazia troca a
+  arte para **"Em branco"** (`style: "branco"`, `paintBranco`): só o texto do cliente no fundo e na fonte dele, sem enfeites.
+  Os modelos continuam a um clique no seletor, e "Deixar em branco" volta. Neon, kits, festa e fachada seguem como antes.
+- O símbolo da Padrão só aparece com o texto de exemplo (`Scene.exemplo`): com o texto do cliente, o Clássico tira o símbolo
+  e o texto ocupa o lugar dele, em qualquer fluxo.
 
 ### Arte: superfícies, verso, processos e arquivos automáticos
 
@@ -728,6 +824,13 @@ O caminho de um produto até a tela:
    com órbita limitada), como a fachada. A prop `focus` (> 0; um número novo refaz) leva a câmera de frente para a parte
    marcada com `userData.focus` ({ elevation, margin }), escurece o estúdio para o fim de tarde (fundo, luzes e ambiente) e
    avisa o modelo por `useSceneMode().focus`; a foto do carrinho passa a ser essa vista. Sem WebGL, mostra a foto do catálogo.
+
+### Quadro Mosaico (`src/lib/mosaico.ts`)
+
+As placas seguem o gabarito oficial e a foto do produto (revisão da Padrão de 29/10/2026): lado a lado, da mesma largura,
+centradas na altura e mais baixas para as pontas, com vão entre elas. 1,0 × 1,0 m: 3 placas de 33 cm (75/100/75 cm de
+altura); 1,5 × 1,0 m: 5 de 30 cm (55/75/100/75/55); 2,0 × 1,0 m: 5 de 40 cm (60/80/100/80/60). Vão de 2,3 cm (3 placas) ou
+3 cm (5 placas). A arte é uma só, sobre o conjunto com os vãos (`MosaicPanel` em `models/rigid.tsx`).
 
 ### Fachadas (`/fachadas`)
 

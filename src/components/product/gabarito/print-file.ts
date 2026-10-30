@@ -1,4 +1,4 @@
-import { loadArtFont, loadImage, paintArt, sourceOf, sourceSizeOf, type ArtRender, type ArtVariant } from "@/components/mockup/art";
+import { loadArtFont, loadImage, paintArt, sourceOf, sourceSizeOf, type ArtRender, type ArtVariant, type CamadaPreto } from "@/components/mockup/art";
 import { bleedFractions, boxFromPlacement, containBox, coverBox, pixelsFor, unrotateBox, type Box, type Mm, type TemplatePage, type TemplatePanel } from "@/lib/templates";
 import { canvasLimits, rasterSvg } from "@/components/mockup/image-intake";
 import { renderPdfFirstPage } from "./pdf-artwork";
@@ -8,6 +8,10 @@ import { renderPdfFirstPage } from "./pdf-artwork";
  * a arte de cada painel ocupando a caixa da sangria — exatamente onde a produção espera ("não mova o
  * gabarito de posição"). Sem linhas de corte, sangria ou segurança (a orientação da Padrão pede para tirar).
  * Folha de um painel só ganha TrimBox (corte) e BleedBox (sangria).
+ *
+ * Preto do texto em K100 (revisão da Padrão de 29/10/2026, src/lib/preto-k100.ts): o texto preto não vai na imagem RGB do
+ * painel; vai por cima, numa imagem de 1 pixel em CMYK 0/0/0/100 esticada no painel, com a máscara suave do texto
+ * (SMask, PDF 1.4). Assim a letra sai só no preto, com a borda suavizada sobre o fundo de verdade.
  *
  * Referencial da arte:
  *   - "cut": a área do editor É o corte do painel (o layout da arte está em frações do corte; a imagem pode
@@ -129,63 +133,92 @@ async function loadBlobImage(blob: Blob): Promise<HTMLImageElement> {
  * (painel inteiro ou face) no lugar e no giro do gabarito.
  * `preview`: usa a cópia reduzida da imagem (prévia rápida da folha no passo da arte).
  */
-export async function renderPanel(job: PanelJob, dpi: number, variant: ArtVariant, label: string, preview = false, cache?: Map<PieceJob, HTMLCanvasElement>): Promise<HTMLCanvasElement> {
-  const { panel } = job;
-  const px = pixelsFor(panel.bleed, dpi);
+export async function renderPanel(job: PanelJob, dpi: number, variant: ArtVariant, label: string, preview = false, cache?: Map<PieceJob, PieceCanvas>): Promise<HTMLCanvasElement> {
+  return (await composePanel(job, dpi, variant, label, preview, false, cache)).canvas;
+}
+
+/** Peça pintada: a imagem e, com o preto em K100, a máscara do texto preto (null quando não há texto preto). */
+type PieceCanvas = { art: HTMLCanvasElement; preto: HTMLCanvasElement | null };
+
+function panelCanvas(px: Mm): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement("canvas");
   canvas.width = px.w;
   canvas.height = px.h;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("canvas indisponível");
+  return { canvas, ctx };
+}
+
+/** Painel inteiro; `preto`: separa o texto preto numa máscara do tamanho do painel (camada K100 do PDF). */
+async function composePanel(job: PanelJob, dpi: number, variant: ArtVariant, label: string, preview: boolean, preto: boolean, cache?: Map<PieceJob, PieceCanvas>): Promise<{ canvas: HTMLCanvasElement; preto: HTMLCanvasElement | null }> {
+  const { panel } = job;
+  const px = pixelsFor(panel.bleed, dpi);
+  const { canvas, ctx } = panelCanvas(px);
   if (job.fill && job.fill !== "rgba(0,0,0,0)") {
     ctx.fillStyle = job.fill;
     ctx.fillRect(0, 0, px.w, px.h);
   }
+  let mask: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
   const k = px.w / panel.bleed.w;
   for (const piece of job.pieces) {
     if (!piece.art) continue;
     // Peça maior que o painel (mosaico): pintada uma vez, numa resolução que caiba, e recortada por placa.
     const shared = piece.at.w > panel.bleed.w + 0.5 || piece.at.h > panel.bleed.h + 0.5;
-    let art = shared ? cache?.get(piece) : undefined;
-    if (!art) {
-      art = await renderPiece(piece, shared ? Math.min(dpi, printDpi(piece.at)) : dpi, variant, label, preview);
-      if (shared) cache?.set(piece, art);
+    let painted = shared ? cache?.get(piece) : undefined;
+    if (!painted) {
+      painted = await renderPiece(piece, shared ? Math.min(dpi, printDpi(piece.at)) : dpi, variant, label, preview, preto);
+      if (shared) cache?.set(piece, painted);
     }
     // Volta a peça (pintada de pé) para o giro dela no gabarito, no lugar da sangria dela no painel.
     const w = piece.at.w * k;
     const h = piece.at.h * k;
-    ctx.save();
-    ctx.translate((piece.at.x - panel.bleed.x) * k + w / 2, (piece.at.y - panel.bleed.y) * k + h / 2);
-    ctx.rotate((piece.rotate * Math.PI) / 180);
     const turned = piece.rotate === 90 || piece.rotate === 270;
     const dw = turned ? h : w;
     const dh = turned ? w : h;
-    ctx.drawImage(art, -dw / 2, -dh / 2, dw, dh);
-    ctx.restore();
-    if (!shared) {
-      art.width = 0;
-      art.height = 0;
+    const place = (target: CanvasRenderingContext2D, source: HTMLCanvasElement) => {
+      target.save();
+      target.translate((piece.at.x - panel.bleed.x) * k + w / 2, (piece.at.y - panel.bleed.y) * k + h / 2);
+      target.rotate((piece.rotate * Math.PI) / 180);
+      target.drawImage(source, -dw / 2, -dh / 2, dw, dh);
+      target.restore();
+    };
+    place(ctx, painted.art);
+    if (painted.preto) {
+      mask ??= panelCanvas(px);
+      place(mask.ctx, painted.preto);
     }
+    if (!shared) releaseCanvases(painted);
   }
-  return canvas;
+  return { canvas, preto: mask?.canvas ?? null };
+}
+
+function releaseCanvases(piece: PieceCanvas) {
+  for (const c of [piece.art, piece.preto]) {
+    if (!c) continue;
+    c.width = 0;
+    c.height = 0;
+  }
 }
 
 /** Pinta uma peça de pé: canvas da caixa da sangria dela, com a arte no referencial do editor. */
-async function renderPiece(job: PieceJob, dpi: number, variant: ArtVariant, label: string, preview: boolean): Promise<HTMLCanvasElement> {
+async function renderPiece(job: PieceJob, dpi: number, variant: ArtVariant, label: string, preview: boolean, preto: boolean): Promise<PieceCanvas> {
   const { panel } = job;
   const art = job.art as ArtRender;
   const px = pixelsFor(panel.bleed, dpi);
-  const canvas = document.createElement("canvas");
-  canvas.width = px.w;
-  canvas.height = px.h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas indisponível");
+  const { canvas, ctx } = panelCanvas(px);
   await loadArtFont(art);
   const render: ArtRender = { ...art, sample: false, back: null };
+  // Processo de um tom só (laser, talhamento, P&B) não leva a camada K: a peça inteira já é aquele tom.
+  const sem: CamadaPreto | undefined = preto && !art.mono ? { camada: "sem" } : undefined;
+  const so: CamadaPreto = { camada: "so" };
   if (job.frame === "cut") {
     const image = await sourceImage(art.src, cappedPixels(placedBox(art, panel), dpi), preview);
-    paintArt(canvas, variant, { ...render, aspect: panel.cut.w / panel.cut.h }, image, label, { bleed: bleedFractions(panel) });
-    return canvas;
+    const pintura: ArtRender = { ...render, aspect: panel.cut.w / panel.cut.h };
+    paintArt(canvas, variant, pintura, image, label, { bleed: bleedFractions(panel), preto: sem });
+    if (!sem?.desenhou) return { art: canvas, preto: null };
+    const mask = panelCanvas(px).canvas;
+    paintArt(mask, variant, pintura, image, label, { bleed: bleedFractions(panel), extend: false, preto: so });
+    return { art: canvas, preto: mask };
   }
   // "fit": pinta a área do editor na proporção dela e encaixa a composição no painel.
   const aspect = job.aspect && job.aspect > 0 ? job.aspect : panel.cut.w / panel.cut.h;
@@ -193,19 +226,27 @@ async function renderPiece(job: PieceJob, dpi: number, variant: ArtVariant, labe
   const unit = { w: aspect * 1000, h: 1000 };
   const place = job.mode === "contain" ? containBox(unit, target) : coverBox(unit, target);
   const areaPx = pixelsFor(place, dpi);
-  const area = document.createElement("canvas");
-  area.width = areaPx.w;
-  area.height = areaPx.h;
+  const area = panelCanvas(areaPx).canvas;
   const image = await sourceImage(art.src, cappedPixels(place, dpi), preview);
-  paintArt(area, variant, { ...render, aspect }, image, label);
+  paintArt(area, variant, { ...render, aspect }, image, label, { preto: sem });
   // Estampa sem fundo (DTF) fica transparente em volta; as demais ganham o fundo da arte.
   if (art.background !== "rgba(0,0,0,0)") {
     ctx.fillStyle = art.background || "#ffffff";
     ctx.fillRect(0, 0, px.w, px.h);
   }
   const k = px.w / panel.bleed.w;
-  ctx.drawImage(area, (place.x - panel.bleed.x) * k, (place.y - panel.bleed.y) * k, place.w * k, place.h * k);
-  return canvas;
+  const at = [(place.x - panel.bleed.x) * k, (place.y - panel.bleed.y) * k, place.w * k, place.h * k] as const;
+  ctx.drawImage(area, ...at);
+  area.width = 0;
+  area.height = 0;
+  if (!sem?.desenhou) return { art: canvas, preto: null };
+  const areaMask = panelCanvas(areaPx).canvas;
+  paintArt(areaMask, variant, { ...render, aspect }, image, label, { preto: so });
+  const mask = panelCanvas(px);
+  mask.ctx.drawImage(areaMask, ...at);
+  areaMask.width = 0;
+  areaMask.height = 0;
+  return { art: canvas, preto: mask.canvas };
 }
 
 const mmToPt = (mm: number) => (mm / 25.4) * 72;
@@ -224,6 +265,21 @@ function hasAlpha(canvas: HTMLCanvasElement): boolean {
   return false;
 }
 
+/** Canal alfa do canvas (a máscara do texto preto), lido em faixas para não alocar o RGBA inteiro de um painel grande. */
+function alphaOf(canvas: HTMLCanvasElement): Uint8Array {
+  const { width: w, height: h } = canvas;
+  const out = new Uint8Array(w * h);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return out;
+  const band = Math.max(1, Math.floor(4_000_000 / Math.max(1, w)));
+  for (let top = 0; top < h; top += band) {
+    const rows = Math.min(band, h - top);
+    const data = ctx.getImageData(0, top, w, rows).data;
+    for (let i = 0, o = top * w; i < data.length; i += 4, o += 1) out[o] = data[i + 3];
+  }
+  return out;
+}
+
 async function canvasBytes(canvas: HTMLCanvasElement, png: boolean): Promise<Uint8Array> {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, png ? "image/png" : "image/jpeg", 0.95));
   if (!blob) throw new Error("não foi possível gerar a imagem do painel");
@@ -232,8 +288,10 @@ async function canvasBytes(canvas: HTMLCanvasElement, png: boolean): Promise<Uin
 
 /** PDF de impressão: uma página por folha do gabarito, no tamanho real, com a arte de cada painel no lugar. */
 export async function buildPrintPdf(sheets: SheetJob[], opts: { title: string; variant: ArtVariant; label: string; transparent?: boolean }): Promise<Blob> {
-  const { PDFDocument, PDFName, PDFNumber, degrees } = await import("pdf-lib");
-  const cache = new Map<PieceJob, HTMLCanvasElement>();
+  const { PDFDocument, PDFName, PDFNumber, degrees, drawImage } = await import("pdf-lib");
+  const cache = new Map<PieceJob, PieceCanvas>();
+  // Preto do texto em K100: não na estampa sem fundo (DTF, PNG com transparência), nem no neon e na peça lisa.
+  const comPreto = !opts.transparent && opts.variant !== "neon" && opts.variant !== "blank";
   const doc = await PDFDocument.create();
   doc.setTitle(opts.title);
   doc.setCreator("Padrão Color — loja online");
@@ -262,18 +320,29 @@ export async function buildPrintPdf(sheets: SheetJob[], opts: { title: string; v
       // Painel sem arte e sem fundo (estampa sem fundo): nada a imprimir nele.
       if (!job.pieces.some((p) => p.art) && (!job.fill || job.fill === "rgba(0,0,0,0)")) continue;
       const dpi = printDpi(job.panel.bleed);
-      const canvas = await renderPanel(job, dpi, opts.variant, opts.label, false, cache);
+      const { canvas, preto } = await composePanel(job, dpi, opts.variant, opts.label, false, comPreto, cache);
       // PNG só quando o painel tem transparência de fato (estampa DTF); foto e fundo cheio vão em JPEG.
       const png = Boolean(opts.transparent) && hasAlpha(canvas);
       const bytes = await canvasBytes(canvas, png);
       const image = png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
       const [x, y, width, height] = box(job.panel.bleed);
-      if (rotated) {
-        // A arte foi pintada na folha girada (sentido horário): volta 90° no anti-horário, girando no canto de baixo.
-        pdfPage.drawImage(image, { x: x + width, y, width: height, height: width, rotate: degrees(90) });
-      } else pdfPage.drawImage(image, { x, y, width, height });
+      // A arte foi pintada na folha girada (sentido horário): volta 90° no anti-horário, girando no canto de baixo.
+      const lugar = rotated ? { x: x + width, y, width: height, height: width, rotate: degrees(90) } : { x, y, width, height, rotate: degrees(0) };
+      pdfPage.drawImage(image, lugar);
       // Grava a imagem no documento agora e solta os buffers decodificados (o pdf-lib só faria isso no save).
       await image.embed();
+      if (preto) {
+        // Camada K100: 1 pixel CMYK 0/0/0/100 com a máscara suave do texto preto (SMask do tamanho do painel).
+        const smask = doc.context.register(
+          doc.context.flateStream(alphaOf(preto), { Type: "XObject", Subtype: "Image", Width: preto.width, Height: preto.height, ColorSpace: "DeviceGray", BitsPerComponent: 8 }),
+        );
+        const k100 = doc.context.register(
+          doc.context.stream(new Uint8Array([0, 0, 0, 255]), { Type: "XObject", Subtype: "Image", Width: 1, Height: 1, ColorSpace: "DeviceCMYK", BitsPerComponent: 8, SMask: smask }),
+        );
+        pdfPage.pushOperators(...drawImage(pdfPage.node.newXObject("Image", k100), { ...lugar, xSkew: degrees(0), ySkew: degrees(0) }));
+        preto.width = 0;
+        preto.height = 0;
+      }
       // Libera a memória do canvas grande antes do próximo painel.
       canvas.width = 0;
       canvas.height = 0;
@@ -282,4 +351,76 @@ export async function buildPrintPdf(sheets: SheetJob[], opts: { title: string; v
   // Sem "object streams": RIPs e fluxos PDF/X mais antigos leem melhor a estrutura clássica.
   const bytes = await doc.save({ useObjectStreams: false });
   return new Blob([bytes as BlobPart], { type: "application/pdf" });
+}
+
+/**
+ * Imagem da arte no gabarito para as "Artes enviadas" de Meus pedidos (src/lib/artes-enviadas): as folhas, uma embaixo da
+ * outra e de pé como no editor, com a arte de cada painel e por cima a sangria (azul tracejado), o corte (linha cheia) e a
+ * área de segurança (laranja tracejado). JPEG leve; não vai para a produção.
+ */
+export async function buildGabaritoPreview(sheets: SheetJob[], opts: { variant: ArtVariant; label: string; maxSide?: number }): Promise<Blob> {
+  const maxSide = opts.maxSide ?? 1400;
+  const gap = 24;
+  const caption = 30;
+  const margin = 16;
+  const widest = Math.max(...sheets.map((s) => s.page.sheet.w));
+  const tallest = sheets.reduce((sum, s) => sum + s.page.sheet.h, 0);
+  // px por mm: a folha mais larga cabe em maxSide e a pilha toda em 2 × maxSide de altura.
+  const k = Math.min(maxSide / widest, (maxSide * 2 - sheets.length * (gap + caption)) / tallest);
+  const dpi = k * 25.4;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(widest * k + margin * 2));
+  canvas.height = Math.max(1, Math.round(tallest * k + sheets.length * (gap + caption) - gap + margin * 2));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas indisponível");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const cache = new Map<PieceJob, PieceCanvas>();
+  let top = margin;
+  for (const sheet of sheets) {
+    const { page } = sheet;
+    ctx.fillStyle = "#4a4a4a";
+    ctx.font = "600 20px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(page.label || "Gabarito", margin, top + caption / 2);
+    top += caption;
+    const ox = (canvas.width - page.sheet.w * k) / 2;
+    ctx.fillStyle = "#f1f1f1";
+    ctx.fillRect(ox, top, page.sheet.w * k, page.sheet.h * k);
+    for (const job of sheet.panels) {
+      const panel = await renderPanel(job, dpi, opts.variant, opts.label, true, cache);
+      ctx.drawImage(panel, ox + job.panel.bleed.x * k, top + job.panel.bleed.y * k, job.panel.bleed.w * k, job.panel.bleed.h * k);
+      panel.width = 0;
+      panel.height = 0;
+    }
+    // Guias por cima, no referencial da folha (mm).
+    ctx.save();
+    ctx.translate(ox, top);
+    ctx.scale(k, k);
+    const line = (color: string, width: number, dash: number[]) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width / k;
+      ctx.setLineDash(dash.map((d) => d / k));
+    };
+    for (const { panel } of sheet.panels) {
+      line("#38bdf8", 1.5, [6, 4]);
+      ctx.strokeRect(panel.bleed.x, panel.bleed.y, panel.bleed.w, panel.bleed.h);
+      line("#1a1a1a", 1.5, []);
+      if (panel.cut.d) ctx.stroke(new Path2D(panel.cut.d));
+      else ctx.strokeRect(panel.cut.x, panel.cut.y, panel.cut.w, panel.cut.h);
+      if (panel.safe) {
+        line("#f59e0b", 1.5, [6, 4]);
+        if (panel.safe.d) ctx.stroke(new Path2D(panel.safe.d));
+        else for (const part of panel.safe.parts ?? [panel.safe]) ctx.strokeRect(part.x, part.y, part.w, part.h);
+      }
+    }
+    ctx.restore();
+    top += page.sheet.h * k + gap;
+  }
+  for (const piece of cache.values()) releaseCanvases(piece);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+  canvas.width = 0;
+  canvas.height = 0;
+  if (!blob) throw new Error("não foi possível gerar a imagem do gabarito");
+  return blob;
 }

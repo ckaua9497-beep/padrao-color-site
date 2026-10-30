@@ -7,7 +7,7 @@ import { useFormAction } from "@/components/painel/useFormAction";
 import { Button } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import { PAYMENT_KINDS, PAYMENT_LABEL, type PaymentKind, type PaymentRates } from "@/lib/multiloja/core";
-import { listaFormas } from "@/lib/multiloja/pagamento-rotas";
+import { FORMAS_FORA, listaFormas } from "@/lib/multiloja/pagamento-rotas";
 
 /* Formulários do admin → Pagamentos: gateway de cada forma, taxas, credenciais da Efí, da Cielo e da Pagar.me. */
 
@@ -85,13 +85,21 @@ const fmt = (n: number) => (n ? n.toFixed(2).replace(".", ",") : "0");
 /** Opção do seletor "Quem cobra": `nota` explica por que ainda não dá para usar (sem credenciais, falta o Link…). */
 export type RotaOpcao = { value: string; label: string; nota?: string };
 
-/** Quem cobra cada forma (gateway ou Desligado), taxas e vencimento do boleto. */
+/** Quem cobra cada forma (gateway ou Desligado) e as taxas. O boleto fica fora (FORMAS_FORA): vai sempre desligado. */
 export function MeiosForm({ rotas, opcoes, avisos, taxas, boletoDias }: { rotas: Record<PaymentKind, string>; opcoes: Record<PaymentKind, RotaOpcao[]>; avisos: Partial<Record<PaymentKind, string>>; taxas: PaymentRates; boletoDias: number }) {
   const { state, submit, pending } = useFormAction(salvarMeios);
   const errors = state?.errors ?? {};
   return (
     <form onSubmit={submit} className="space-y-4" noValidate>
       <FormMessage state={state} />
+      {FORMAS_FORA.map((k) => (
+        <span key={k} hidden>
+          <input type="hidden" name={`rota_${k}`} value="desligado" />
+          <input type="hidden" name={`taxa_${k}_pct`} value={fmt(taxas[k].pct)} />
+          <input type="hidden" name={`taxa_${k}_fixo`} value={fmt(taxas[k].fixed)} />
+        </span>
+      ))}
+      <input type="hidden" name="boletoDias" value={String(boletoDias)} />
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[620px] text-left text-[15px]">
           <thead className="text-caption text-muted">
@@ -103,7 +111,7 @@ export function MeiosForm({ rotas, opcoes, avisos, taxas, boletoDias }: { rotas:
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {PAYMENT_KINDS.map((k) => (
+            {PAYMENT_KINDS.filter((k) => !FORMAS_FORA.includes(k)).map((k) => (
               <tr key={k}>
                 <td className="py-2 pr-4 align-top font-bold leading-10">{PAYMENT_LABEL[k]}</td>
                 <td className="py-2 pr-4 align-top">
@@ -133,8 +141,7 @@ export function MeiosForm({ rotas, opcoes, avisos, taxas, boletoDias }: { rotas:
           </tbody>
         </table>
       </div>
-      <Field className="max-w-48" label="Vencimento do boleto (dias)" name="boletoDias" inputMode="numeric" defaultValue={String(boletoDias)} error={errors.boletoDias} />
-      <p className="text-caption text-muted">Forma desligada não aparece no checkout. As taxas são descontadas da comissão do lojista (o cliente não paga a mais). O Pix tem o desconto de 5% do site.</p>
+      <p className="text-caption text-muted">A Padrão não trabalha com boleto: ele não aparece no checkout das lojas. Forma desligada não aparece no checkout. As taxas são descontadas da comissão do lojista (o cliente não paga a mais). O Pix tem o desconto de 5% do site.</p>
       <Button type="submit" size="sm" loading={pending}>
         Salvar formas e taxas
       </Button>

@@ -5,6 +5,7 @@ const UNAVAILABLE = "Não foi possível entrar agora. Tente de novo em instantes
 import { getCliente, login } from "@/lib/api/padrao";
 import type { ApiCliente } from "@/lib/api/types";
 import { normalizeLogin } from "@/lib/api/validation";
+import { saldoDaConta } from "@/lib/cliente";
 import { newSession, publicCustomer, saveSession } from "@/lib/session";
 
 /** POST /api/conta/login {usuario, senha} → POST /user/login + GET /cliente → cookie de sessão. */
@@ -55,5 +56,5 @@ export async function POST(request: Request) {
   limits.loginUser.reset(userKey);
   const session = newSession(token, cliente);
   await saveSession(session);
-  return json({ ok: true, customer: publicCustomer(session, cliente.conta_corrente?.saldo) });
+  return json({ ok: true, customer: publicCustomer(session, saldoDaConta(cliente.conta_corrente)) });
 }

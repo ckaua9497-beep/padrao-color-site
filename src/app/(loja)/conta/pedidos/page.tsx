@@ -9,14 +9,23 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button, buttonClass } from "@/components/ui/Button";
 import { ApiError } from "@/lib/api/client";
 import { getPedidos } from "@/lib/api/padrao";
-import type { ApiPedidos } from "@/lib/api/types";
+import type { ApiPedido } from "@/lib/api/types";
 import { isValidIsoDate } from "@/lib/api/validation";
+import { artesDoCliente } from "@/lib/artes-enviadas/repo";
+import { MINUTOS_PARA_CANCELAR, janelaDeCancelamento } from "@/lib/cancelamento";
+import { brasiliaClock, feriadosNacionais } from "@/lib/dias-uteis";
+import { feriados } from "@/lib/feriados";
 import { daCliente } from "@/lib/fila-pedidos/repo";
+import { MODALIDADES, MODALIDADE_LABEL, isModalidade, modalidadeDoPedido } from "@/lib/modalidade-pedido";
+import { STORE } from "@/lib/store";
 import { loginUrl, requireSession } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Meus pedidos", robots: { index: false, follow: false } };
 
 const PAGE_SIZE = 10;
+/** Filtro por modalidade: o GET /pedidos não filtra, então busca até estas páginas (as compras mais recentes) e separa. */
+const PAGINAS_DA_MODALIDADE = 5;
+const REGISTROS_DA_MODALIDADE = 50;
 
 type Search = Record<string, string | string[] | undefined>;
 
@@ -33,13 +42,29 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   let to = isValidIsoDate(one("ate")) ? one("ate") : "";
   if (from && to && from > to) [from, to] = [to, from];
   const page = Math.min(999, Math.max(1, Number.parseInt(one("pag"), 10) || 1));
-  const filtered = Boolean(number || from || to);
+  // Modalidade (System Color, Loja São João, Site): o `envio` de cada compra (modalidade-pedido.ts).
+  const pedida = one("modalidade");
+  const modalidade = isModalidade(pedida) ? pedida : null;
+  const filtered = Boolean(number || from || to || modalidade);
 
-  let result: ApiPedidos | null = null;
+  let result: { total: number; paginas: number; pedidos: ApiPedido[] } | null = null;
+  // A busca da modalidade parou no limite de páginas: há compras mais antigas fora dela.
+  let limitado = false;
   let failure: string | null = null;
   let expired = false;
+  const filtro = { pedido: number ? Number(number) : undefined, dataInicial: from || undefined, dataFinal: to || undefined };
   try {
-    result = await getPedidos({ pedido: number ? Number(number) : undefined, dataInicial: from || undefined, dataFinal: to || undefined, pag: page, reg: PAGE_SIZE }, session.token);
+    if (modalidade) {
+      const todas: ApiPedido[] = [];
+      for (let pag = 1; pag <= PAGINAS_DA_MODALIDADE; pag += 1) {
+        const parte = await getPedidos({ ...filtro, pag, reg: REGISTROS_DA_MODALIDADE }, session.token);
+        todas.push(...(parte?.pedidos ?? []));
+        if (pag >= (parte?.paginas ?? 1)) break;
+        limitado = pag === PAGINAS_DA_MODALIDADE;
+      }
+      const daModalidade = todas.filter((order) => modalidadeDoPedido(order.envio) === modalidade);
+      result = { total: daModalidade.length, paginas: Math.max(1, Math.ceil(daModalidade.length / PAGE_SIZE)), pedidos: daModalidade.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) };
+    } else result = await getPedidos({ ...filtro, pag: page, reg: PAGE_SIZE }, session.token);
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) expired = true;
     else failure = error instanceof ApiError && error.status === 406 ? error.message : "Não foi possível carregar seus pedidos agora. Tente de novo em instantes.";
@@ -47,14 +72,21 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   if (expired) redirect(loginUrl("/conta/pedidos", true));
   // Pedidos guardados na fila do site (a API não recebeu na hora). Sem o banco, a lista some.
   const naFila = filtered ? [] : await daCliente(session.id).catch(() => []);
+  // "Artes enviadas": o que o site guardou de cada pedido. Sem o banco, cada item mostra só o que a API tem.
+  const artes = await artesDoCliente(session.id).catch(() => null);
 
   const orders = result?.pedidos ?? [];
   const pages = Math.max(1, result?.paginas ?? 1);
+  // Reenvio de arte: a previsão que valeria se a arte chegasse agora (só busca os feriados quando há arte a reenviar).
+  const clock = brasiliaClock();
+  const resend = orders.some((order) => (order.itens ?? []).some((item) => item.situacao?.reenvia_arte === "Sim"));
+  const resendClock = { clock, holidays: resend ? await feriados() : feriadosNacionais(Number(clock.iso.slice(0, 4))) };
   const pageHref = (target: number) => {
     const query = new URLSearchParams();
     if (number) query.set("pedido", number);
     if (from) query.set("de", from);
     if (to) query.set("ate", to);
+    if (modalidade) query.set("modalidade", modalidade);
     if (target > 1) query.set("pag", String(target));
     const text = query.toString();
     return `/conta/pedidos${text ? `?${text}` : ""}`;
@@ -76,7 +108,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         </div>
         <PedidosNaFila entradas={naFila} />
 
-        <form method="get" action="/conta/pedidos" className="mt-6 grid gap-3 rounded-card border border-line-strong bg-white p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
+        <form method="get" action="/conta/pedidos" className="mt-6 grid gap-3 rounded-card border border-line-strong bg-white p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto]">
           <label className="text-caption font-semibold">
             Número do pedido
             <input name="pedido" inputMode="numeric" pattern="[0-9]*" defaultValue={number} placeholder="Ex.: 12345" className={`mt-1 ${INPUT}`} />
@@ -88,6 +120,17 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
           <label className="text-caption font-semibold">
             Até
             <input type="date" name="ate" defaultValue={to} className={`mt-1 ${INPUT}`} />
+          </label>
+          <label className="text-caption font-semibold">
+            Modalidade
+            <select name="modalidade" defaultValue={modalidade ?? ""} className={`mt-1 ${INPUT}`}>
+              <option value="">Todas</option>
+              {MODALIDADES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </label>
           <div className="flex items-end gap-2">
             <button type="submit" className={buttonClass({ variant: "dark", size: "sm" })}>
@@ -119,7 +162,29 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
               </Button>
             </div>
           ) : (
-            orders.map((order) => <OrderCard key={order.compra} order={order} />)
+            <>
+              {limitado && modalidade && (
+                <p className="text-caption text-muted">
+                  Compras de {MODALIDADE_LABEL[modalidade]} entre as {PAGINAS_DA_MODALIDADE * REGISTROS_DA_MODALIDADE} mais recentes. Para as mais antigas, filtre também pelo período.
+                </p>
+              )}
+              <p className="text-caption text-muted">
+                Você pode cancelar uma compra, ou só um item dela, até {MINUTOS_PARA_CANCELAR} minutos depois de finalizar. Depois disso, fale com o{" "}
+                <a href={STORE.whatsapp} target="_blank" rel="noreferrer" className="font-semibold text-ink underline underline-offset-2">
+                  atendimento
+                </a>
+                .
+              </p>
+              {orders.map((order) => (
+                <OrderCard
+                  key={order.compra}
+                  order={order}
+                  janela={janelaDeCancelamento(order)}
+                  resendClock={resendClock}
+                  artes={{ itens: artes?.compras.get(String(order.compra)) ?? [], reenvios: artes?.reenvios ?? new Map() }}
+                />
+              ))}
+            </>
           )}
         </div>
 

@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Variation } from "./catalog";
+import type { RotaDoCliente } from "./cliente";
 import {
-  addBusinessDays,
-  brasiliaClock,
   bundleTitle,
   buildOrderPayload,
-  nationalHolidays,
   orderForecast,
+  paymentProblem,
+  SEM_ENDERECO,
   extractOrderNumber,
   isLineError,
   itemJobName,
@@ -159,8 +159,8 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
   ];
   const cards = line(item({ files }), cardPrices);
   const banner = line(item({ key: "b", name: "Banner", groupId: 35, variationId: 35, widthCm: 100, heightCm: 80, quantity: 1, options: {}, artName: null, bundle: { id: "festa-1", name: "Kit Aniversário" } }), bannerPrices);
-  const delivery = orderDelivery({ kind: "retirada" }, null);
-  assert.ok(delivery);
+  const delivery = orderDelivery({ kind: "retirada", loja: 1 }, { registered: null, rota: { tipo: "transportadora" } });
+  assert.ok(typeof delivery !== "string");
   const facts = (l: PricedLine) =>
     l.groupId === 248
       ? { image: "https://img.padraocolor.com.br/cartao.webp", categoryId: 3, packaging: [0.5, 10, 5, 12, 2] as const, attachments: ["Impressão Frente", "Impressão Verso"] }
@@ -170,13 +170,16 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
   assert.equal(payload.data, "09/10/2026");
   assert.equal(payload.hora, "08:31:49");
   assert.equal(payload.previsao, "15/10/2026", "maior prazo (3 d.u.) a partir de sexta, sem o feriado de 12/10");
+  const posFeriado = buildOrderPayload({ customerId: 575, lines: [cards, banner], method: "pix", delivery, facts, holidays: new Set(["2026-10-12", "2026-10-13"]), now: new Date("2026-10-09T11:31:49Z") });
+  assert.equal(posFeriado.previsao, "16/10/2026", "os feriados da API entram no prazo");
   assert.equal(payload.idCliente, 575);
   assert.equal(payload.tipo_compra, 7, "inteiro: a API recusa texto em tipo_compra");
   assert.equal(payload.envio, "Site", "o canal vai em envio, como no GET /pedidos");
   assert.equal(payload.nome_trabalho, "Padaria Pão Quente + 1 item");
   assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 180.38, status: 0, forma: "pix", parcelas: 1 });
   assert.equal(payload.precoTotal, 180.38, "130,38 + 50 (banner de 0,8 m² cobra o mínimo de 1 m²), sem desconto no PIX");
-  assert.deepEqual(payload.entrega, { tipo: "Retirada", endereco: null });
+  assert.deepEqual(payload.entrega, { tipo: "Retirada", endereco: null, loja: { id: 1, nome: "Loja Alcântara - RJ" }, frete: 0 });
+  assert.equal(payload.frete, 0, "retirada nunca cobra frete");
   assert.deepEqual(payload.produtos[0], {
     id: 22,
     groupId: 248,
@@ -227,6 +230,33 @@ test("tipo_compra do ambiente: só inteiro positivo", () => {
   for (const valor of [undefined, "", "Site", "0", "-1", "1.5", "2a", "1e3"]) assert.equal(tipoCompraDe(valor), null, String(valor));
 });
 
+test("créditos Padrão Color no pedido: parte do total ou o pedido inteiro", () => {
+  const cards = line(item(), cardPrices);
+  const delivery = orderDelivery({ kind: "retirada", loja: 1 }, { registered: null, rota: { tipo: "transportadora" } });
+  assert.ok(typeof delivery !== "string");
+  const sem = buildOrderPayload({ customerId: 575, lines: [cards], method: "pix", delivery });
+  assert.equal(sem.credito_usado, 0);
+  assert.deepEqual(sem.pagamento, { tipo: "PIX", valor: 130.38, status: 0, forma: "pix", parcelas: 1 });
+
+  const parte = buildOrderPayload({ customerId: 575, lines: [cards], method: "cartao", delivery, credito: 100 });
+  assert.equal(parte.credito_usado, 100);
+  assert.equal(parte.precoTotal, 130.38, "o total não muda: o crédito é forma de pagamento");
+  assert.deepEqual(parte.pagamento, { tipo: "Cartão de Crédito", valor: 30.38, status: 0, forma: "cartao", parcelas: 1, credito: 100 });
+
+  const tudo = buildOrderPayload({ customerId: 575, lines: [cards], method: "pix", delivery, credito: 500 });
+  assert.equal(tudo.credito_usado, 130.38, "nunca mais que o total");
+  assert.deepEqual(tudo.pagamento, { tipo: "Crédito", valor: 0, status: 0, forma: "credito", parcelas: 1, credito: 130.38 });
+});
+
+test("entrada do checkout: usarCredito só com true", () => {
+  const base = { items: [{ key: "a", slug: "248-cartao-de-visita", name: "Cartão", groupId: 248, variationId: 22, quantity: 1, options: {}, artName: "x.pdf", unitPrice: 65.19 }], payment: "pix", delivery: { kind: "retirada", loja: 1 }, expectedTotal: 65.19 };
+  const com = parseOrderRequest({ ...base, usarCredito: true });
+  const sem = parseOrderRequest({ ...base, usarCredito: "sim" });
+  assert.ok(com.ok && sem.ok);
+  assert.equal(com.ok && com.value.usarCredito, true);
+  assert.equal(sem.ok && sem.value.usarCredito, undefined);
+});
+
 test("arquivos da arte no pedido: só os da pasta pública do Bunny", () => {
   const raw = {
     items: [
@@ -255,15 +285,17 @@ test("arquivos da arte no pedido: só os da pasta pública do Bunny", () => {
   assert.deepEqual(without.value.items[0].files, [], "sem Bunny configurado, nenhum link entra");
 });
 
-test("data de Brasília e previsão em dias úteis (fim de semana e feriado nacional)", () => {
-  assert.deepEqual(brasiliaClock(new Date("2026-10-09T02:15:00Z")), { iso: "2026-10-08", data: "08/10/2026", hora: "23:15:00" });
-  const holidays = new Set(nationalHolidays(2026));
-  assert.ok(holidays.has("2026-10-12") && holidays.has("2026-04-03"), "N. Sra. Aparecida e Sexta-feira Santa");
-  assert.equal(addBusinessDays("2026-10-09", 1, holidays), "2026-10-13", "o exemplo da Padrão: sexta + 1 dia útil, com o feriado na segunda");
-  assert.equal(addBusinessDays("2026-10-09", 0, holidays), "2026-10-09");
-  assert.equal(orderForecast("2026-12-24", [2, null, 1]), "29/12/2026", "Natal na sexta e o fim de semana ficam de fora");
-  assert.equal(orderForecast("2026-12-30", [3]), "05/01/2027", "virada do ano com o feriado de 1º de janeiro");
-  assert.equal(orderForecast("2026-10-09", [null]), null);
+test("previsão do pedido: maior prazo em dias úteis, contando de hoje só até as 18h", () => {
+  const manha = (iso: string) => ({ iso, hora: "10:00:00" });
+  assert.equal(orderForecast(manha("2026-12-24"), [2, null, 1]), "29/12/2026", "Natal na sexta e o fim de semana ficam de fora");
+  assert.equal(orderForecast(manha("2026-12-30"), [3]), "05/01/2027", "virada do ano com o feriado de 1º de janeiro");
+  assert.equal(orderForecast(manha("2026-10-09"), [null]), null);
+  assert.equal(orderForecast({ iso: "2026-10-09", hora: "17:59:59" }, [1]), "13/10/2026", "sexta antes das 18h + 1 d.u., com o feriado na segunda");
+  assert.equal(orderForecast({ iso: "2026-10-09", hora: "18:00:00" }, [1]), "14/10/2026", "sexta às 18h conta como terça (12/10 é feriado)");
+  assert.equal(orderForecast(manha("2026-10-10"), [1]), "14/10/2026", "sábado conta como o próximo dia útil");
+  const semFeriado = new Set<string>();
+  assert.equal(orderForecast({ iso: "2026-10-09", hora: "18:30:00" }, [1], semFeriado), "13/10/2026", "a lista da API manda: sem 12/10 nela, segunda é dia útil");
+  assert.equal(orderForecast(manha("2026-10-13"), [2], new Set(["2026-10-14"])), "16/10/2026", "dia cadastrado na lista (mesmo sem ser feriado) não conta");
 });
 
 test("kit e festa: título do grupo e nome do trabalho da compra", () => {
@@ -274,7 +306,7 @@ test("kit e festa: título do grupo e nome do trabalho da compra", () => {
   const b = line(item({ key: "b", bundle: party, options: { Festa: "Aniversário" } }), cardPrices);
   assert.equal(orderJobName([a, b]), "Crie Sua Festa — Aniversário", "tudo do mesmo kit/festa");
   assert.equal(orderJobName([a, line(item({ key: "c" }), cardPrices)]), "Ana 5 anos + 1 item");
-  const payload = buildOrderPayload({ customerId: 1, lines: [a], method: "boleto", delivery: { tipo: "Retirada", endereco: null } });
+  const payload = buildOrderPayload({ customerId: 1, lines: [a], method: "cartao", delivery: { tipo: "Retirada", endereco: null } });
   assert.deepEqual(payload.produtos[0].kit, { id: "festa-aniversario", nome: "Crie Sua Festa — Aniversário" });
   assert.equal(payload.produtos[0].nome_trabalho, "Ana 5 anos");
   assert.match(payload.produtos[0].desc_trabalho, /Festa: Aniversário/);
@@ -315,12 +347,58 @@ test("faixa da variação vale no lugar da do produto (Caderno \"De 11 até 100\
   assert.ok(isLineError(priceLine(item({ groupId: 197, variationId: 1, quantity: 25 }), notebooks)), "faixa de 1 a 10 não leva 25");
 });
 
-test("entrega: endereço do cadastro só quando completo", () => {
-  const address = { cep: "25520000", logradouro: "Rua Nicolau Cheven", numero: "255", complemento: "", bairro: "Centro", cidade: "São João de Meriti", estado: "RJ" };
-  assert.deepEqual(orderDelivery({ kind: "cadastro" }, address), { tipo: "Entrega", endereco: address });
-  assert.equal(orderDelivery({ kind: "cadastro" }, { ...address, cep: "" }), null);
-  assert.equal(orderDelivery({ kind: "cadastro" }, null), null);
-  assert.deepEqual(orderDelivery({ kind: "outro", address }, null), { tipo: "Entrega", endereco: address });
+const ENDERECO = { cep: "25520000", logradouro: "Rua Nicolau Cheven", numero: "255", complemento: "", bairro: "Centro", cidade: "São João de Meriti", estado: "RJ" };
+const VERDE: RotaDoCliente = { tipo: "rota", nome: "Rota Verde", cor: "#2e9e44", taxa: 17, cobradaNoPedido: true };
+
+test("Delivery Padrão: no endereço do cadastro, pela rota, com a taxa como frete (sem pagamento na retirada)", () => {
+  assert.deepEqual(orderDelivery({ kind: "rota" }, { registered: ENDERECO, rota: VERDE }), {
+    tipo: "Delivery Padrão",
+    endereco: ENDERECO,
+    rota: { nome: "Rota Verde", taxa: 17, cobrada: true },
+    frete: 17,
+  });
+  const naEntrega = orderDelivery({ kind: "rota" }, { registered: ENDERECO, rota: { ...VERDE, cobradaNoPedido: false } });
+  assert.equal(typeof naEntrega !== "string" && naEntrega.frete, 0, "pagamento na retirada liberado: a taxa não entra no pedido");
+  assert.match(orderDelivery({ kind: "rota" }, { registered: ENDERECO, rota: { tipo: "transportadora" } }) as string, /não tem rota/);
+  assert.equal(orderDelivery({ kind: "rota" }, { registered: { ...ENDERECO, cep: "" }, rota: VERDE }), SEM_ENDERECO);
+});
+
+test("retirada: loja escolhida e sem frete; pedido antigo sem loja vai para São João de Meriti", () => {
+  assert.deepEqual(orderDelivery({ kind: "retirada", loja: 6 }, { registered: null, rota: VERDE }), { tipo: "Retirada", endereco: null, loja: { id: 6, nome: "Loja Niterói" }, frete: 0 });
+  const antiga = orderDelivery({ kind: "retirada" }, { registered: null, rota: VERDE });
+  assert.equal(typeof antiga !== "string" && antiga.loja?.nome, "Loja São João");
+  assert.equal(orderDelivery({ kind: "retirada", loja: 99 }, { registered: null, rota: VERDE }), "Escolha a loja de retirada.");
+});
+
+test("transportadora: cobra o serviço cotado agora; sem cotação, frete combinado", () => {
+  const sedex = { id: 2, preco: 10.16, nome: "Correios SEDEX", prazo: "1 a 3 dias úteis" };
+  assert.deepEqual(orderDelivery({ kind: "transportadora", address: null, servico: 2 }, { registered: ENDERECO, rota: VERDE, transportadora: sedex }), {
+    tipo: "Transportadora",
+    endereco: ENDERECO,
+    transportadora: { servico: 2, nome: "Correios SEDEX", prazo: "1 a 3 dias úteis" },
+    frete: 10.16,
+  });
+  assert.match(orderDelivery({ kind: "transportadora", address: null, servico: 2 }, { registered: ENDERECO, rota: VERDE, transportadora: null }) as string, /não está mais disponível/);
+  const combinado = orderDelivery({ kind: "transportadora", address: { ...ENDERECO, cep: "01001000" }, servico: null }, { registered: null, rota: { tipo: "transportadora" } });
+  assert.deepEqual(combinado, { tipo: "Transportadora", endereco: { ...ENDERECO, cep: "01001000" }, transportadora: null, frete: 0 });
+  assert.equal(orderDelivery({ kind: "transportadora", address: null, servico: null }, { registered: null, rota: VERDE }), SEM_ENDERECO);
+});
+
+test("frete entra no total do pedido e no pagamento", () => {
+  const cards = line(item(), cardPrices);
+  const payload = buildOrderPayload({ customerId: 1, lines: [cards], method: "pix", delivery: { tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "Rota Verde", taxa: 17, cobrada: true }, frete: 17 } });
+  assert.equal(payload.frete, 17);
+  assert.equal(payload.precoTotal, Math.round((cards.total + 17) * 100) / 100);
+  assert.equal(payload.pagamento.valor, payload.precoTotal);
+});
+
+test("pagar na retirada: só com a liberação, no Delivery Padrão ou numa loja própria", () => {
+  assert.equal(paymentProblem("retirada", { kind: "rota" }, true), null);
+  assert.equal(paymentProblem("retirada", { kind: "retirada", loja: 1 }, true), null, "loja própria");
+  assert.match(paymentProblem("retirada", { kind: "retirada", loja: 7 }, true) ?? "", /não vale/, "Serra-ES é ponto parceiro");
+  assert.match(paymentProblem("retirada", { kind: "transportadora", address: null, servico: 1 }, true) ?? "", /não vale/);
+  assert.match(paymentProblem("retirada", { kind: "rota" }, false) ?? "", /não vale/, "sem a liberação no cadastro");
+  assert.equal(paymentProblem("pix", { kind: "retirada", loja: 7 }, false), null);
 });
 
 test("entrada do checkout: valida e limpa o que vem do navegador", () => {
@@ -342,6 +420,20 @@ test("entrada do checkout: valida e limpa o que vem do navegador", () => {
   assert.equal(parseOrderRequest({ ...body, items: [] }).ok, false);
   assert.equal(parseOrderRequest({ ...body, payment: "cheque" }).ok, false);
   assert.equal(parseOrderRequest({ ...body, delivery: { kind: "outro", address: { cep: "1" } } }).ok, false);
+  // Entrega nova: rota, loja de retirada e transportadora (endereço do cadastro = null, serviço da cotação).
+  const de = (delivery: unknown) => {
+    const r = parseOrderRequest({ ...body, delivery });
+    return r.ok ? r.value.delivery : null;
+  };
+  assert.deepEqual(de({ kind: "rota" }), { kind: "rota" });
+  assert.deepEqual(de({ kind: "retirada", loja: 7 }), { kind: "retirada", loja: 7 });
+  assert.deepEqual(de({ kind: "retirada" }), { kind: "retirada", loja: 3 }, "sem loja: São João de Meriti");
+  assert.equal(de({ kind: "retirada", loja: 42 }), null);
+  assert.deepEqual(de({ kind: "transportadora", address: null, servico: 2 }), { kind: "transportadora", address: null, servico: 2 });
+  assert.deepEqual(de({ kind: "transportadora", address: null, servico: null }), { kind: "transportadora", address: null, servico: null });
+  assert.equal(de({ kind: "transportadora", address: { cep: "1" }, servico: 2 }), null, "outro endereço incompleto");
+  assert.equal(parseOrderRequest({ ...body, payment: "boleto" }).ok, false, "sem boleto");
+  assert.equal(parseOrderRequest({ ...body, payment: "retirada" }).ok, true);
   assert.equal(parseOrderRequest({ ...body, items: [{ ...item(), quantity: 0 }] }).ok, false);
   assert.equal(parseOrderRequest({ ...body, items: [{ ...item(), quantity: 1500 }] }).ok, true, "vestuário em grade passa de mil peças");
   assert.equal(parseOrderRequest({ ...body, items: [{ ...item(), quantity: 2.5 }] }).ok, false);

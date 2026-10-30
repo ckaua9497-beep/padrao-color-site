@@ -43,6 +43,11 @@ export type CartItem = {
   printFile?: { id: string; name: string } | null;
   /** Arquivos da arte que o cliente enviou (frente e verso), guardados no navegador (IndexedDB) por id. */
   artFiles?: CartArtFile[] | null;
+  /**
+   * Imagem da arte no gabarito (IndexedDB, por id): sobe no checkout só para as "Artes enviadas" de Meus pedidos, sem ir
+   * para a produção.
+   */
+  previa?: { id: string; name: string } | null;
   /** Arquivos que já subiram para o Bunny no checkout (id do IndexedDB → URL pública): não sobem de novo. */
   uploaded?: Record<string, { url: string; nome: string }>;
   /** Acabamentos extras escolhidos; o preço é recalculado pelo catálogo (no carrinho e no servidor). */
@@ -141,9 +146,14 @@ export function itemArtFiles(item: Pick<CartItem, "printFile" | "artFiles">): { 
   return [...(item.printFile ? [{ id: item.printFile.id, name: item.printFile.name, kind: "pdf" as const }] : []), ...(item.artFiles ?? [])];
 }
 
-/** Ids dos arquivos guardados das linhas do carrinho (PDF no gabarito e arquivos enviados; o resto sai do IndexedDB). */
+/** Tudo o que o item guarda no navegador e sobe no checkout: os arquivos da arte e a imagem no gabarito. */
+export function itemStoredFiles(item: Pick<CartItem, "printFile" | "artFiles" | "previa">): { id: string; name: string }[] {
+  return [...itemArtFiles(item), ...(item.previa ? [item.previa] : [])];
+}
+
+/** Ids dos arquivos guardados das linhas do carrinho (PDF no gabarito, arquivos enviados e prévia; o resto sai do IndexedDB). */
 function printFileIds(list: CartItem[]): string[] {
-  return list.flatMap((item) => itemArtFiles(item).map((file) => file.id));
+  return list.flatMap((item) => itemStoredFiles(item).map((file) => file.id));
 }
 
 function subscribe(listener: () => void) {
@@ -238,6 +248,7 @@ export function toOrderItem(item: CartItem, unitPrice = item.unitPrice): OrderIt
     bundle: item.bundle ?? null,
     unitPrice,
     files: uploadedFilesOf(item),
+    ...(item.previa && item.uploaded?.[item.previa.id] ? { previa: item.uploaded[item.previa.id] } : {}),
     ...(item.acabamentos?.length ? { acabamentos: item.acabamentos } : {}),
     ...(item.termosArte ? { termosArte: item.termosArte } : {}),
     ...(item.criacaoArte ? { criacaoArte: true } : {}),
@@ -337,7 +348,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (!ids.length) return;
     write(
       read().map((item) => {
-        const mine = itemArtFiles(item).filter((file) => files[file.id]);
+        const mine = itemStoredFiles(item).filter((file) => files[file.id]);
         if (!mine.length) return item;
         return { ...item, uploaded: { ...item.uploaded, ...Object.fromEntries(mine.map((file) => [file.id, files[file.id]])) } };
       }),

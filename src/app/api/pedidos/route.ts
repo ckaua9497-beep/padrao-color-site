@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { ordersEnabled } from "@/lib/api/checkout";
 import { apiFailure, fail, json, limits, overLimit, readJsonBody, SESSION_EXPIRED, sessionOr401 } from "@/lib/api/guard";
+import { artesDosItens } from "@/lib/artes-enviadas/regras";
+import { guardarArtesDoPedido } from "@/lib/artes-enviadas/repo";
 import { getProduct } from "@/lib/catalog";
 import { enviarPedido, pastasDaArte, prepararPedido, selarToken, textoDoErro, type Quote } from "@/lib/fila-pedidos/processar";
 import { esperaMinutos } from "@/lib/fila-pedidos/regras";
@@ -24,7 +26,18 @@ import { isTrackingId } from "@/lib/multiloja/eventos";
  *    o pedido e os arquivos ficam guardados na fila do site (src/lib/fila-pedidos) e o cliente recebe um protocolo
  *    (202). Sem conexão, o servidor reenvia sozinho; recusado ou sem confirmação, a equipe confere no admin antes
  *    (evita pedido em dobro). Sem o código de tipo_compra (PADRAO_TIPO_COMPRA) o POST nem sai e o pedido vai conferir.
+ * 5. Pedido criado ou guardado: o que o cliente mandou em cada item (a imagem no gabarito e os arquivos) fica no banco
+ *    para as "Artes enviadas" de Meus pedidos (src/lib/artes-enviadas). Falha aqui não muda a resposta.
  */
+
+/** "Artes enviadas": grava sem nunca derrubar o pedido (sem o banco, Meus pedidos mostra só o que a API tem). */
+async function guardarArtes(session: Session, pedido: OrderRequest, alvo: { compra: number | null } | { protocolo: string }) {
+  try {
+    await guardarArtesDoPedido({ clienteId: session.id, ...alvo, itens: artesDosItens(pedido.items) });
+  } catch (error) {
+    console.error("[pedidos] artes enviadas:", error instanceof Error ? error.message : "erro desconhecido");
+  }
+}
 
 const DUPLICATE_WINDOW_MS = 2 * 60_000;
 const recentOrders = new Map<string, { at: number; order: number | null } | { at: number; pending: true }>();
@@ -49,6 +62,7 @@ async function guardar(session: Session, pedido: OrderRequest, { etapa, motivo, 
       erro: textoDoErro(erro),
       esperaMin: esperaMinutos(1),
     });
+    await guardarArtes(session, pedido, { protocolo: entrada.protocolo });
     return json({ mode: "queued", protocolo: entrada.protocolo, etapa, quote }, 202);
   } catch (error) {
     console.error("[pedidos] fila:", error instanceof Error ? error.message : "erro desconhecido");
@@ -80,7 +94,7 @@ export async function POST(request: Request) {
   }
   if (preparo.tipo === "itens") return fail(422, "Alguns itens do carrinho precisam de atenção.", { items: preparo.items });
   if (preparo.tipo === "precos") return fail(409, "Os preços foram atualizados para a sua conta. Confira o novo total antes de confirmar.", { quote: preparo.quote });
-  if (preparo.tipo === "endereco") return fail(400, "Seu cadastro não tem endereço de entrega completo. Informe outro endereço ou escolha a retirada.");
+  if (preparo.tipo === "entrega") return fail(400, preparo.erro);
   if (preparo.tipo === "falha") {
     // A API caiu antes do pedido (cliente ou preços): guarda e reenvia quando ela voltar.
     if (preparo.classe === "sem-conexao") {
@@ -110,6 +124,7 @@ export async function POST(request: Request) {
   const envio = await enviarPedido(payload, session.token);
   if (envio.tipo === "criado") {
     rememberOrder(key, { order: envio.numero });
+    await guardarArtes(session, pedido, { compra: envio.numero });
     await trackOrder(request, envio.numero ? `PC-${envio.numero}` : `PC-${Date.now().toString(36)}`, total, lines);
     return json({ mode: "order", order: envio.numero, quote });
   }

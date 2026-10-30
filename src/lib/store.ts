@@ -5,7 +5,10 @@ export const STORE = {
   phone: "(21) 3668-1550",
   phoneHref: "tel:+552136681550",
   email: "sac@padraocolor.com.br",
-  whatsapp: "https://api.whatsapp.com/send?phone=5521971148565",
+  /** WhatsApp do atendimento, (21) 97246-3737 desde 26/10/2026. */
+  whatsapp: "https://api.whatsapp.com/send?phone=5521972463737",
+  /** O mesmo WhatsApp com a etiqueta do setor de tratamento de arquivos (problema no pedido ou na arte). */
+  whatsappTratamento: "https://wa.me/5521972463737?text=%23PROBLEMANOPEDIDO",
   address: "Rua Nicolau Cheven, Nº 255 – São João de Meriti, RJ",
   hours: "Seg a sex, 8h às 18h",
   legal: "APEL GRÁFICA E EDITORA LTDA · CNPJ 14.572.530/0001-19",
