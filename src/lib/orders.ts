@@ -26,6 +26,11 @@ import type { OpcaoFrete } from "./frete";
  * - arte.tipo = 1 com a arte do cliente (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda
  *   depois). Criação de arte pela equipe (preço da variação, `criacao_arte`): arte.tipo = 2 e arte.preco = o preço dela,
  *   somado ao total do item e do pedido; o pedido do cliente vai em desc_trabalho e as referências em anexos.
+ * - arte.web2print = "SIM" quando a arte do item foi montada no editor do site (Web to Print: o item leva o PDF que o site
+ *   gera, no gabarito ou na área da arte), "NAO" nos outros casos (arquivo pronto do cliente, criação pela equipe, produto
+ *   sem arquivo). Pedido da Padrão de 03/11/2026 ("colocar um identificador via API de que a arte foi produzida via Web to
+ *   Print"); o nome e os valores são os do `customizacao.web2print` do GET /produtos, a confirmar. A descrição do
+ *   trabalho também diz "Arte feita no Web to Print do site".
  * - "Nome da arte" vira o nome do trabalho do item e "Observação" vai em descricao.
  * - anexos: os arquivos do Bunny (art-files.ts), com o tipo de anexo que a variação aceita (customizacao.ts); a
  *   variação sem personalização ou de neon pronto vai sem anexos.
@@ -423,7 +428,8 @@ export type ProductFacts = {
 
 export type OrderPackage = { peso: number; altura: number; largura: number; comprimento: number };
 
-export type OrderArt = { tipo: number; preco: number; anexos: ArtAttachment[] };
+/** web2print: "SIM" = arte montada no editor do site (Web to Print), como o `customizacao.web2print` do GET /produtos. */
+export type OrderArt = { tipo: number; preco: number; web2print: "SIM" | "NAO"; anexos: ArtAttachment[] };
 
 export type OrderProduct = {
   /** Produto da API (a variação escolhida). */
@@ -493,9 +499,17 @@ export const ARTE_CRIACAO = 2;
 /** Rótulo limpo da opção ("02 - Formato:" → "Formato"). */
 const optionLabel = (key: string) => cleanOptionLabel(key).replace(/:$/, "").trim();
 
+/**
+ * A arte do item foi montada no editor do site (Web to Print)? É quando ele leva o PDF que o site gera (no gabarito ou na
+ * área da arte); arquivo pronto do cliente, criação pela equipe e produto sem arquivo não contam.
+ */
+export function artePeloWebToPrint(line: Pick<PricedLine, "input" | "criacao">, facts: Pick<ProductFacts, "semArquivo"> = NO_FACTS): boolean {
+  return !facts.semArquivo && !(line.criacao > 0) && (line.input.files ?? []).some((file) => file.kind === "pdf");
+}
+
 /** O que o item leva além das opções da variação: a linha da arte e as opções do site (texto, kit, tamanhos…). */
-function workDescription(line: PricedLine, variationLabels: Set<string>): string {
-  const art = line.input.artName ? `Arte: ${line.input.artName}` : "Arte: enviar depois";
+function workDescription(line: PricedLine, variationLabels: Set<string>, w2p: boolean): string {
+  const art = `${line.input.artName ? `Arte: ${line.input.artName}` : "Arte: enviar depois"}${w2p ? " · Arte feita no Web to Print do site" : ""}`;
   // Os acabamentos vêm da cotação do servidor (a linha "Acabamentos" do carrinho é só exibição).
   // A observação vai em descricao (não repete aqui).
   const extras = Object.entries(line.input.options)
@@ -510,6 +524,7 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
   const variations = Object.fromEntries(Object.entries(line.variation.v).map(([key, value]) => [optionLabel(key), value]));
   const job = itemJobName(line.input);
   const box = facts.packaging;
+  const w2p = artePeloWebToPrint(line, facts);
   return {
     id: line.variation.id,
     groupId: line.groupId,
@@ -524,13 +539,14 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     descricao: clip(line.input.options["Observação"] ?? "", 500),
     nomeTrabalho: job,
     nome_trabalho: job,
-    desc_trabalho: workDescription(line, new Set(Object.keys(variations))),
+    desc_trabalho: workDescription(line, new Set(Object.keys(variations)), w2p),
     tipoProducao: line.express ? "expresso" : "economico",
     productionTime: line.leadDays,
     package: box ? { peso: box[0], altura: box[2], largura: box[1], comprimento: box[3] } : null,
     arte: {
       tipo: line.criacao > 0 ? ARTE_CRIACAO : ARTE_DO_CLIENTE,
       preco: round2(line.criacao),
+      web2print: w2p ? "SIM" : "NAO",
       anexos: orderAttachments(line.input.files ?? [], facts.attachments, { semArquivo: facts.semArquivo }),
     },
     tratamentoArquivo: { tipo: "Padrão", preco: 0 },

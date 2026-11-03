@@ -100,10 +100,16 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   `groupId`, `groupCategoryId`, `productName`, `productImage`, `productType`, `quantidade` (lotes), `price` (um lote),
   `precoTotal`, `variations` (opções da variação), `package` (embalagem da variação), `tipoProducao`, `productionTime`,
   `nomeTrabalho`/`nome_trabalho`, `desc_trabalho` (a linha da arte e o que o site acrescenta: texto, kit, tamanhos, medida),
-  `arte {tipo, preco, anexos}`, `tratamentoArquivo` e `precoTotalAcabamentos`; no envelope, `data`, `hora` (Brasília), `previsao`
+  `arte {tipo, preco, web2print, anexos}`, `tratamentoArquivo` e `precoTotalAcabamentos`; no envelope, `data`, `hora` (Brasília), `previsao`
   (o maior prazo em dias úteis, sem fim de semana nem os feriados do `GET /feriados`, contando de hoje só até as 18h: ver
   "Prazo de produção e feriados"), `idCliente`, `pagamento {tipo, valor, status}`,
   `entrega`, `frete`, `tipo_compra`, `envio`, `nome_trabalho` e `precoTotal`. As premissas ainda abertas estão no comentário do arquivo.
+- **Arte feita no Web to Print** (pedido da Padrão de 03/11/2026, aba "Melhorias"): cada produto do pedido leva
+  `arte.web2print` "SIM" quando a arte foi montada no editor do site (o item leva o PDF que o site gera, `kind: "pdf"`, no
+  gabarito ou na área da arte) e "NAO" com arquivo pronto do cliente, criação pela equipe ou produto sem arquivo
+  (`artePeloWebToPrint`); o `desc_trabalho` também diz "Arte feita no Web to Print do site". Nome e valores copiados do
+  `customizacao.web2print` do `GET /produtos`, a confirmar com a Padrão. Os pedidos da multiloja levam a arte que o comprador
+  envia, então vão com "NAO".
 - **`tipo_compra` e `envio` (teste na API real de 29/10/2026).** `tipo_compra` é inteiro: com o texto "Site" a API aponta o campo.
   O código vem de `PADRAO_TIPO_COMPRA` e, sem ele, o POST nem sai. "Site" é o canal e vai em `envio`, como nos pedidos do
   `GET /pedidos`. No mesmo teste, o envelope sem produtos passou (200) e qualquer linha de produto, mesmo o cartão 22 no preço ao
@@ -505,7 +511,13 @@ O site conhece as medidas de todos os gabaritos oficiais (243 produtos, 228 arqu
     imagem de 1 pixel CMYK 0/0/0/100 com a máscara suave do texto (SMask). Fora: estampa DTF (PNG transparente), neon, peça lisa e
     processos de um tom só (laser, talhamento, P&B). Conferido com PyMuPDF: a letra sai em C0 M0 Y0 K100;
   - **sem "fantasma" na lateral**: na área inteira o modelo do estilo usa a largura exata da área (fracionária com a sangria em
-    volta). Antes ela era arredondada e recortada, a última coluna saía meio coberta e a sangria esticada copiava uma faixa clara.
+    volta). Antes ela era arredondada e recortada, a última coluna saía meio coberta e a sangria esticada copiava uma faixa clara;
+  - **produto sem gabarito** (41 produtos personalizáveis em 03/11/2026: lonas, adesivos e impressões por m², papel de parede,
+    filme backlight…): a arte montada no site sai num PDF da área de arte do mockup, no tamanho escolhido e sem sangria
+    (`areaSheets` em `gabarito/jobs.ts`, mesmo gerador, com o preto em K100), mais a prévia para "Meus pedidos", e a linha do
+    carrinho ganha "Arquivo de impressão: PDF da arte em 60 × 90 cm, sem sangria". Antes não saía arquivo nenhum: a arte só de
+    texto chegava à Padrão sem nada para imprimir. Arte sem fundo (corte especial, quadro de LED, estampa) vai com
+    transparência; o neon continua sem arquivo (sai do vetor).
 - **QA:** `/design-system/gabaritos` lista todos os produtos com as medidas, o mapeamento e as pendências, e desenha as folhas
   de cada um. `/gabaritos` mostra a medida de cada gabarito ao lado do download.
 
@@ -830,7 +842,9 @@ O caminho de um produto até a tela:
 As placas seguem o gabarito oficial e a foto do produto (revisão da Padrão de 29/10/2026): lado a lado, da mesma largura,
 centradas na altura e mais baixas para as pontas, com vão entre elas. 1,0 × 1,0 m: 3 placas de 33 cm (75/100/75 cm de
 altura); 1,5 × 1,0 m: 5 de 30 cm (55/75/100/75/55); 2,0 × 1,0 m: 5 de 40 cm (60/80/100/80/60). Vão de 2,3 cm (3 placas) ou
-3 cm (5 placas). A arte é uma só, sobre o conjunto com os vãos (`MosaicPanel` em `models/rigid.tsx`).
+3 cm (5 placas). A arte é uma só, sobre o conjunto com os vãos (`MosaicPanel` em `models/rigid.tsx`). No estúdio as placas
+ficam soltas, sem parede atrás: a parede de tamanho fixo, vista de costas no giro automático, parecia uma placa só (conferido
+no site no ar em 03/11/2026). No ambiente, a parede é a da sala.
 
 ### Fachadas (`/fachadas`)
 

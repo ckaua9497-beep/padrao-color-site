@@ -1,7 +1,7 @@
 import { hasArtContent, sourceOf, sourceSizeOf, withPlacement, type ArtRender, type ArtSettings } from "@/components/mockup/art";
 import type { MockupKind } from "@/lib/mockup-kinds";
 import { DPI_MARGIN, coverLoss, dpiTargets, hexOf, type FitMode } from "@/lib/image-prep";
-import { autoPlacementFor, containBox, coverBox, folhaDeVerniz, pieceFrame, pieceKey, piecesOf, placementFromBox, placementFromVisual, safeBoxOf, type Box, type PanelRef, type Piece, type TemplatePage } from "@/lib/templates";
+import { autoPlacementFor, containBox, coverBox, folhaDeVerniz, pieceFrame, pieceKey, piecesOf, placementFromBox, placementFromVisual, safeBoxOf, type Box, type PanelRef, type Piece, type TemplatePage, type TemplatePanel } from "@/lib/templates";
 import { superficieDaPeca } from "@/lib/superficies";
 import { backgroundTouched, restoreBackground } from "../auto-fit";
 import type { PanelJob, PieceJob, SheetJob } from "./print-file";
@@ -212,8 +212,39 @@ export function printSheets(g: Gabarito, art: ArtSettings, pages: TemplatePage[]
   return sheets;
 }
 
-/** Nome do arquivo de impressão: arte-no-gabarito-<produto>.pdf */
-export function printFileName(slug: string): string {
+/**
+ * Produto sem gabarito oficial (lonas, adesivos e impressões por m², papel de parede…): a arte montada no site vai para
+ * a produção num PDF da área de arte do mockup, no tamanho escolhido e sem sangria (não há regra de sangria sem
+ * gabarito). Antes não saía arquivo nenhum e a arte só de texto chegava à Padrão sem nada para imprimir (varredura de
+ * 03/11/2026). Uma folha para a frente e outra para o verso com arte própria (lona dupla face).
+ */
+export function areaSheets(art: ArtSettings, area: { w: number; h: number }, opts: { aspect: number; kind: MockupKind; transparent: boolean; back: boolean }): SheetJob[] {
+  const w = area.w * 10;
+  const h = area.h * 10;
+  if (!(w > 0 && h > 0)) return [];
+  const clear = (a: ArtSettings): ArtSettings => (opts.transparent && a.src ? { ...a, background: "rgba(0,0,0,0)" } : a);
+  const fill = opts.transparent ? "rgba(0,0,0,0)" : art.background || "#ffffff";
+  const sheet = (id: string, label: string, side: "front" | "back", a: ArtSettings): SheetJob => {
+    const box = { x: 0, y: 0, w, h };
+    const panel: TemplatePanel = {
+      name: label,
+      side,
+      bleed: box,
+      implicitBleed: true,
+      cut: { ...box, shape: "rect" },
+      safe: null,
+      metrics: { finalMm: { w, h }, bleedMm: { top: 0, right: 0, bottom: 0, left: 0 }, safeMm: null },
+    };
+    const render: ArtRender = { ...clear(a), back: null, faces: null, kind: opts.kind, sample: false, ledColors: a.ledColors ?? undefined };
+    return { page: { id, label, sheet: { w, h }, panels: [panel], side }, panels: [{ panel, fill, pieces: [{ panel, at: box, rotate: 0, art: render, frame: "fit", aspect: opts.aspect, mode: "cover" }] }] };
+  };
+  const sheets = [sheet("area-frente", "Frente", "front", art)];
+  if (opts.back && art.back && hasArtContent(art.back)) sheets.push(sheet("area-verso", "Verso", "back", art.back));
+  return sheets;
+}
+
+/** Nome do arquivo de impressão: arte-no-gabarito-<produto>.pdf (sem gabarito: arte-<produto>.pdf). */
+export function printFileName(slug: string, gabarito = true): string {
   const clean = slug.replace(/^\d+-/, "").replace(/-{2,}/g, "-").slice(0, 60) || "arte";
-  return `arte-no-gabarito-${clean}.pdf`;
+  return `${gabarito ? "arte-no-gabarito" : "arte"}-${clean}.pdf`;
 }

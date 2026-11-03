@@ -72,7 +72,7 @@ import NeonSizeStep from "./NeonSizeStep";
 import { EnvioRapidoDialog } from "./EnvioRapidoDialog";
 import { uploadProblem } from "@/lib/art-files";
 import TemplateDownload from "./TemplateDownload";
-import { fitToTemplate, madeForTemplate, needsRefit, printFileName, printSheets, type Gabarito, type GabaritoSide } from "./gabarito/jobs";
+import { areaSheets, fitToTemplate, madeForTemplate, needsRefit, printFileName, printSheets, type Gabarito, type GabaritoSide } from "./gabarito/jobs";
 import { FotoProduto } from "@/components/FotoProduto";
 
 export type ClientProduct = {
@@ -657,17 +657,22 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
     const withPdf = ownArt && !frontCovered;
     // A frente pronta que o site consegue ler (imagem, PDF) também ganha a imagem no gabarito.
     const withPreview = withPdf || (frontCovered && Boolean(art.src));
-    if (gabarito && !artLater && !creationOn && withPreview) {
+    // Sem gabarito oficial, a área de arte do mockup no tamanho escolhido (areaSheets); o neon sai do vetor, sem arquivo.
+    const areaCm = !gabarito && family !== "neon" ? fitArea.cm : null;
+    const areaTexto = areaCm ? `${fmtCm(areaCm.w)} × ${fmtCm(areaCm.h)} cm, sem sangria` : "";
+    // Arte sem fundo (estampa, corte no desenho, LED): o arquivo leva a transparência, senão o JPEG sairia com fundo preto.
+    const arquivoSemFundo = gabarito ? gabarito.transparent : transparentBase || renderArt.background === "rgba(0,0,0,0)";
+    if ((gabarito || areaCm) && !artLater && !creationOn && withPreview) {
       try {
         const [{ buildPrintPdf, buildGabaritoPreview }, { savePrintFile }] = await Promise.all([import("./gabarito/print-file"), import("./gabarito/print-store")]);
-        const sheets = printSheets(gabarito, renderArt);
+        const sheets = gabarito ? printSheets(gabarito, renderArt) : areaSheets(renderArt, areaCm!, { aspect: fitArea.aspect, kind: spec.kind, transparent: arquivoSemFundo, back: verso });
         const variant = family === "neon" ? "neon" : "front";
-        const summary = frontFacts ? `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` : "";
-        if (withPdf) {
+        const summary = frontFacts ? `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` : areaTexto;
+        if (withPdf && sheets.length) {
           try {
-            const blob = await buildPrintPdf(sheets, { title: `${product.name} — arte no gabarito`, variant, label: product.name, transparent: gabarito.transparent });
+            const blob = await buildPrintPdf(sheets, { title: `${product.name} — ${gabarito ? "arte no gabarito" : "arte"}`, variant, label: product.name, transparent: arquivoSemFundo });
             const id = crypto.randomUUID();
-            const name = printFileName(product.slug);
+            const name = printFileName(product.slug, Boolean(gabarito));
             if (await savePrintFile(id, blob, { name, product: product.name, pages: sheets.length, summary })) printFile = { id, name };
           } catch {
             printFile = null;
@@ -755,6 +760,8 @@ export default function ProductExperience({ product, pix = false, allowArtLater 
         ...(vernizAuto.length && !semArte && !artLater ? { "Verniz localizado": autoVerniz.length ? `${vernizResumo(art.varnish)} · máscara automática` : vernizResumo(art.varnish) } : {}),
         // Só a medida do gabarito: o PDF fica no navegador do cliente (não vai junto do pedido).
         ...(printFile && frontFacts ? { Gabarito: `${frontFacts.final}${frontFacts.bleed ? ` · sangria ${frontFacts.bleed}` : ""}` } : {}),
+        // Sem gabarito: a produção fica sabendo que o PDF é a área da arte, sem sangria.
+        ...(printFile && !gabarito && areaCm ? { "Arquivo de impressão": `PDF da arte em ${areaTexto}` } : {}),
       },
       // Mesmo contrato do pedido (lib/orders.ts): quantity = lotes da variação (q unidades cada), unitPrice = preço de um lote.
       // Medida livre: 1 peça por lote, já com a área. Vestuário: quantity = total de peças; a divisão vai em "Tamanhos".

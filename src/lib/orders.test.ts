@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Variation } from "./catalog";
 import type { RotaDoCliente } from "./cliente";
 import {
+  artePeloWebToPrint,
   bundleTitle,
   buildOrderPayload,
   orderForecast,
@@ -140,6 +141,26 @@ test("criação de arte: o preço da variação entra uma vez no item e vai em a
   assert.equal(line(item(), prices).criacao, 0);
 });
 
+test("arte.web2print: SIM só com o PDF que o editor do site gera (pedido da Padrão de 03/11/2026)", () => {
+  const cdn = "https://padrao-color.b-cdn.net/uploads-clientes/";
+  const pdf = { url: `${cdn}artecartao1791545356600.pdf`, nome: "artecartao1791545356600.pdf", kind: "pdf" as const };
+  const pronto = { url: `${cdn}cartao1791545356518.pdf`, nome: "cartao1791545356518.pdf", kind: "extra" as const, tipo: "Arquivo Único" };
+  const delivery = { tipo: "Retirada" as const, endereco: null };
+  const arte = (files: (typeof pdf | typeof pronto)[], extra: Partial<OrderItemInput> = {}, prices: LinePrices = cardPrices) =>
+    buildOrderPayload({ customerId: 1, lines: [line(item({ files, ...extra }), prices)], method: "pix", delivery }).produtos[0];
+  const editor = arte([pdf]);
+  assert.equal(editor.arte.web2print, "SIM");
+  assert.match(editor.desc_trabalho, /^Arte: .* · Arte feita no Web to Print do site/);
+  const arquivo = arte([pronto]);
+  assert.equal(arquivo.arte.web2print, "NAO", "arquivo pronto do cliente não é Web to Print");
+  assert.doesNotMatch(arquivo.desc_trabalho, /Web to Print/);
+  assert.equal(arte([]).arte.web2print, "NAO");
+  // Criação de arte pela equipe: a arte não sai do editor, mesmo com um PDF de referência.
+  assert.equal(arte([pdf], { criacaoArte: true }, { ...cardPrices, criacao: { "22": 44.9 } }).arte.web2print, "NAO");
+  // Produto sem arquivo (sem personalização, neon pronto): nada vai no pedido.
+  assert.equal(artePeloWebToPrint(line(item({ files: [pdf] }), cardPrices), { semArquivo: true }), false);
+});
+
 test("nome do trabalho: texto da arte ou nome do produto, com a contagem de itens", () => {
   assert.equal(itemJobName(item()), "Padaria Pão Quente");
   assert.equal(itemJobName(item({ options: {} })), "Cartão de Visita");
@@ -194,13 +215,14 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
     descricao: "",
     nomeTrabalho: "Padaria Pão Quente",
     nome_trabalho: "Padaria Pão Quente",
-    desc_trabalho: "Arte: cartao.pdf · Texto da arte: Padaria Pão Quente",
+    desc_trabalho: "Arte: cartao.pdf · Arte feita no Web to Print do site · Texto da arte: Padaria Pão Quente",
     tipoProducao: "economico",
     productionTime: 3,
     package: { peso: 0.5, altura: 5, largura: 10, comprimento: 12 },
     arte: {
       tipo: 1,
       preco: 0,
+      web2print: "SIM",
       anexos: [
         { url: `${CDN}cartaogabarito1791545356600.pdf`, nome: "cartaogabarito1791545356600.pdf", tipoArquivo: "Impressão Frente" },
         { url: `${CDN}cartao1791545356518.pdf`, nome: "cartao1791545356518.pdf", tipoArquivo: "Impressão Frente" },
@@ -216,7 +238,7 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
   assert.equal(second.altura, 80);
   assert.equal(second.area, 0.8);
   assert.equal(second.package, null);
-  assert.deepEqual(second.arte, { tipo: 1, preco: 0, anexos: [] });
+  assert.deepEqual(second.arte, { tipo: 1, preco: 0, web2print: "NAO", anexos: [] });
   assert.equal(second.desc_trabalho, "Arte: enviar depois");
   assert.deepEqual(second.kit, { id: "festa-1", nome: "Kit Aniversário" });
 

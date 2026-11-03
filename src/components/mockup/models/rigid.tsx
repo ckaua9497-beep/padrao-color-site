@@ -793,8 +793,10 @@ function WallPanel({ spec, art, label, showDims }: ModelProps) {
 
 /**
  * Quadro mosaico: placas lado a lado como no gabarito e na foto do produto (src/lib/mosaico.ts: 3 ou 5 placas, mais
- * baixas para as pontas, centradas na altura, com vão), coladas (fita VHB) numa parede. A arte é uma só e atravessa
- * todas: a textura cobre o conjunto, vãos incluídos, e cada placa mostra a parte dela.
+ * baixas para as pontas, centradas na altura, com vão). A arte é uma só e atravessa todas: a textura cobre o conjunto,
+ * vãos incluídos, e cada placa mostra a parte dela. No estúdio as placas ficam soltas, sem parede atrás: uma parede
+ * de tamanho fixo, vista de costas no giro, parecia uma placa só (revisão da Padrão de 29/10/2026, conferida no ar em
+ * 03/11). No ambiente, a parede é a da sala.
  */
 function MosaicPanel({ spec, art, label, showDims }: ModelProps) {
   const mosaico = useMemo(() => placasDoMosaico(spec.widthCm, spec.heightCm), [spec.widthCm, spec.heightCm]);
@@ -811,19 +813,10 @@ function MosaicPanel({ spec, art, label, showDims }: ModelProps) {
     return { body: extrudeBody(shapes, d, b), face: printFace(shapes, w, h) };
   }, [mosaico, scale, w, h, d, b, r]);
   usePlateCleanup(plate);
-  const margin = Math.max(w, h) * 0.09;
-  const wallD = 0.06;
-  const spacer = Math.max(0.3 * scale, 0.008);
   const [lw, lh] = sizeLabels(spec);
   const { room } = useSceneMode();
   return (
     <group rotation={room ? FLAT_POSE : [0, 0.28, 0]} userData={{ unitsPerCm: scale }}>
-      {/* Parede pintada: dá contexto às frestas entre as placas (no ambiente, a parede é a da sala). */}
-      {!room && (
-        <SoftBox size={[w + margin * 2, h + margin * 2, wallD]} radius={0.01} bevel={0.006} position={[0, 0, -d / 2 - spacer - wallD / 2]}>
-          <meshStandardMaterial color="#e6e2da" roughness={0.96} />
-        </SoftBox>
-      )}
       <PanelPlate plate={plate} look={look} d={d} map={front} spec={spec} />
       {showDims && <Dimensions w={w} h={h} z={d / 2 + 0.01} labelW={lw} labelH={lh} />}
     </group>
