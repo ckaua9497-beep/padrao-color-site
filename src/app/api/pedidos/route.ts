@@ -8,7 +8,7 @@ import { enviarPedido, pastasDaArte, prepararPedido, selarToken, textoDoErro, ty
 import { esperaMinutos } from "@/lib/fila-pedidos/regras";
 import { enfileirar } from "@/lib/fila-pedidos/repo";
 import { ApiError } from "@/lib/api/client";
-import { missingArt, missingTerms, parseOrderRequest, SEM_TIPO_COMPRA, type LineError, type OrderPayload, type OrderRequest, type PricedLine } from "@/lib/orders";
+import { missingArt, missingTerms, parseOrderRequest, type LineError, type OrderPayload, type OrderRequest, type PricedLine } from "@/lib/orders";
 import { clearSession, type Session } from "@/lib/session";
 import { recordOrderEvent } from "@/lib/multiloja/analytics";
 import { isTrackingId } from "@/lib/multiloja/eventos";
@@ -25,7 +25,7 @@ import { isTrackingId } from "@/lib/multiloja/eventos";
  * 4. Sem conexão com a API (no cliente, nos preços ou no gerarpedido), recusa do gerarpedido ou sem confirmação dele:
  *    o pedido e os arquivos ficam guardados na fila do site (src/lib/fila-pedidos) e o cliente recebe um protocolo
  *    (202). Sem conexão, o servidor reenvia sozinho; recusado ou sem confirmação, a equipe confere no admin antes
- *    (evita pedido em dobro). Sem o código de tipo_compra (PADRAO_TIPO_COMPRA) o POST nem sai e o pedido vai conferir.
+ *    (evita pedido em dobro).
  * 5. Pedido criado ou guardado: o que o cliente mandou em cada item (a imagem no gabarito e os arquivos) fica no banco
  *    para as "Artes enviadas" de Meus pedidos (src/lib/artes-enviadas). Falha aqui não muda a resposta.
  */
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
     await trackOrder(request, envio.numero ? `PC-${envio.numero}` : `PC-${Date.now().toString(36)}`, total, lines);
     return json({ mode: "order", order: envio.numero, quote });
   }
-  // Recusa (4xx, ou o site sem o código de tipo_compra): nada foi criado. A sessão vencida volta para o login; o resto
+  // Recusa (4xx): nada foi criado. A sessão vencida volta para o login; o resto
   // passou por todas as conferências do site (arte, termos, preço, endereço) e a API só responde "Não foi possível
   // gerar o Pedido!", então o cliente não tem o que corrigir: o pedido fica na fila para a equipe conferir e reenviar.
   if (envio.classe === "recusado") {
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
     console.error("[pedidos] gerarpedido recusado:", textoDoErro(envio.erro));
     const queued = await guardar(session, pedido, {
       etapa: "conferir",
-      motivo: payload.tipo_compra === null ? SEM_TIPO_COMPRA : "a API da Padrão recusou o pedido",
+      motivo: "a API da Padrão recusou o pedido",
       payload,
       quote,
       erro: envio.erro,

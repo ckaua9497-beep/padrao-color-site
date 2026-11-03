@@ -9,7 +9,7 @@ import type { RotaDoCliente } from "@/lib/cliente";
 import { LOJAS_RETIRADA, MODO_ENTREGA, type ModoEntrega } from "@/lib/entrega";
 import { formatBRL } from "@/lib/format";
 import type { OpcaoEntrega } from "@/lib/frete-pedido";
-import type { DeliveryAddress, OrderDelivery } from "@/lib/orders";
+import type { DeliveryAddress, EntregaDoPedido } from "@/lib/orders";
 
 /*
  * Passo "Entrega" do checkout, como no site antigo da Padrão (entrega.ts): à esquerda Delivery Padrão, retirada numa das
@@ -48,8 +48,9 @@ export function addressText(address: DeliveryAddress): string {
   return [street, address.bairro, `${address.cidade}/${address.estado}`, address.cep ? `CEP ${formatCep(address.cep)}` : ""].filter(Boolean).join(" · ");
 }
 
-/** A entrega do pedido em uma linha (simulação do checkout). */
-export function entregaTexto(entrega: OrderDelivery): string {
+/** A entrega do pedido em uma linha (simulação do checkout). Retirada como no exemplo da Padrão: o código e o nome da loja. */
+export function entregaTexto(entrega: EntregaDoPedido): string {
+  if (!("tipo" in entrega)) return `Retirada · ${entrega.nome} · código da loja ${entrega.id ?? "a confirmar com a Padrão"} · sem frete`;
   const partes: string[] = [entrega.tipo];
   if (entrega.rota) partes.push(entrega.rota.nome);
   if (entrega.loja) partes.push(entrega.loja.nome);

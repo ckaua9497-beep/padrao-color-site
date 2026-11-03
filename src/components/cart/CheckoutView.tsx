@@ -21,7 +21,9 @@ import { formatBRL } from "@/lib/format";
 import {
   addressProblem,
   orderTotal,
+  PAGAMENTO_CREDITO,
   PAYMENT_METHODS,
+  totalDoPedido,
   type DeliveryAddress,
   type DeliveryChoice,
   type LineError,
@@ -207,14 +209,6 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
             <dd className="font-semibold">{payload.idCliente}</dd>
           </div>
           <div>
-            <dt className="text-caption text-muted">tipo_compra</dt>
-            <dd className="font-semibold">{payload.tipo_compra ?? "sem código (PADRAO_TIPO_COMPRA)"}</dd>
-          </div>
-          <div>
-            <dt className="text-caption text-muted">envio</dt>
-            <dd className="font-semibold">{payload.envio}</dd>
-          </div>
-          <div>
             <dt className="text-caption text-muted">data e hora</dt>
             <dd className="font-semibold">
               {payload.data} · {payload.hora}
@@ -223,10 +217,6 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
           <div>
             <dt className="text-caption text-muted">previsao</dt>
             <dd className="font-semibold">{payload.previsao ?? "—"}</dd>
-          </div>
-          <div className="sm:col-span-2 lg:col-span-4">
-            <dt className="text-caption text-muted">nome_trabalho</dt>
-            <dd className="font-semibold">{payload.nome_trabalho}</dd>
           </div>
         </dl>
         <div className="mt-6 overflow-x-auto">
@@ -250,8 +240,7 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
                       {[
                         product.nome_trabalho !== product.productName ? product.nome_trabalho : "",
                         `${product.tipoProducao}${product.productionTime ? ` · ${product.productionTime} d.u.` : ""}`,
-                        product.largura ? `${product.largura}×${product.altura} cm (${product.area} m²)` : "",
-                        product.kit?.nome ?? "",
+                        product.arte.web2print === "SIM" ? "Web to Print" : "",
                       ]
                         .filter(Boolean)
                         .join(" · ")}
@@ -276,7 +265,6 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
                   </td>
                   <td className="py-2.5 pr-3 align-top">
                     {product.quantidade.toLocaleString("pt-BR")}
-                    {product.unidades !== product.quantidade && <span className="block text-caption text-muted">{product.unidades.toLocaleString("pt-BR")} un.</span>}
                   </td>
                   <td className="py-2.5 pr-3 align-top">{formatBRL(product.price)}</td>
                   <td className="py-2.5 align-top font-semibold">{formatBRL(product.precoTotal)}</td>
@@ -289,8 +277,8 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
           <div>
             <dt className="text-caption text-muted">pagamento</dt>
             <dd className="font-semibold">
-              {payload.pagamento.tipo}
-              {payload.credito_usado > 0 && payload.pagamento.forma !== "credito" ? ` · ${formatBRL(payload.pagamento.valor)} + ${formatBRL(payload.credito_usado)} em créditos` : ""}
+              {payload.pagamento.tipo} · {formatBRL(payload.pagamento.valor)}
+              {payload.credito_usado && payload.pagamento.tipo !== PAGAMENTO_CREDITO.apiType ? ` + ${formatBRL(payload.credito_usado)} em créditos (credito_usado)` : ""}
             </dd>
           </div>
           <div>
@@ -298,8 +286,8 @@ function SimulationResult({ payload, files, onBack }: { payload: OrderPayload; f
             <dd className="font-semibold">{entregaTexto(payload.entrega)}</dd>
           </div>
           <div>
-            <dt className="text-caption text-muted">precoTotal</dt>
-            <dd className="text-lg font-black">{formatBRL(payload.precoTotal)}</dd>
+            <dt className="text-caption text-muted">total (itens e frete)</dt>
+            <dd className="text-lg font-black">{formatBRL(totalDoPedido(payload))}</dd>
           </div>
         </dl>
         <PrintFiles files={files} className="mt-6 ring-1 ring-line" />

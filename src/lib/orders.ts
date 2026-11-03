@@ -13,15 +13,18 @@ import type { OpcaoFrete } from "./frete";
 /*
  * Pedido do site para a API (POST /gerarpedido) — mapeamento explícito, tipado e isolado.
  *
- * O PDF só mostra o envelope {idCliente, produtos, pagamento, tipo_compra, nome_trabalho, precoTotal} e remete a um
- * "contrato de pedido fornecido para a integração". Os produtos seguem o exemplo de pedido que a Padrão mandou
- * (pedido do site atual): id (variação), groupId, groupCategoryId, productName, productImage, productType,
- * quantidade (lotes), price (um lote), precoTotal, variations (as opções da variação, com o rótulo limpo), package
- * (embalagem da variação), tipoProducao ("expresso"/"economico"), productionTime (dias úteis), nomeTrabalho,
- * nome_trabalho, descricao, desc_trabalho, arte {tipo, preco, anexos[{url, nome, tipoArquivo}]}, tratamentoArquivo
- * e precoTotalAcabamentos. No envelope: data e hora (Brasília), previsao (o maior prazo em dias úteis, sem fim de
- * semana nem os feriados do GET /feriados, contando de hoje só até as 18h: dias-uteis.ts), idCliente, pagamento
- * {tipo, valor, status} e entrega.
+ * Formato do exemplo de pedido aceito que a Padrão mandou (pedido do site atual, 09/10/2026; alinhado em 03/11/2026 a
+ * pedido do usuário, `../retornos-api/exemplo-pedido-padrao-09-10.json`). O PDF mostra outro envelope ({idCliente,
+ * produtos, pagamento, tipo_compra, nome_trabalho, precoTotal}), mas o pedido aceito não tem tipo_compra, nome_trabalho
+ * nem precoTotal, e eles saíram.
+ * - Envelope: data e hora (Brasília), entrega, previsao (o maior prazo em dias úteis, sem fim de semana nem os feriados
+ *   do GET /feriados, contando de hoje só até as 18h: dias-uteis.ts), produtos, idCliente e pagamento {tipo, valor, status}.
+ * - Produto: id (variação), arte {tipo, preco, anexos[{url, nome, tipoArquivo}]}, price (um lote), groupId, package
+ *   (embalagem da variação), descricao, precoTotal, quantidade (lotes), variations (as opções da variação, com o rótulo
+ *   limpo), productName, productType, nomeTrabalho, productImage, tipoProducao ("expresso"/"economico"), desc_trabalho,
+ *   nome_trabalho, productionTime (dias úteis), groupCategoryId, tratamentoArquivo e precoTotalAcabamentos.
+ * - Fora do exemplo, só onde ele não cobre o caso: `arte.web2print` (pedido da Padrão de 03/11/2026), `credito_usado`
+ *   no envelope quando a compra usa créditos, e a entrega com endereço (o exemplo só tem a retirada na loja).
  * Premissas a confirmar com a Padrão (trocar aqui):
  * - arte.tipo = 1 com a arte do cliente (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda
  *   depois). Criação de arte pela equipe (preço da variação, `criacao_arte`): arte.tipo = 2 e arte.preco = o preço dela,
@@ -37,25 +40,23 @@ import type { OpcaoFrete } from "./frete";
  * - tipoProducao "economico" no prazo normal (o exemplo só mostra "expresso"); productType 0; tratamentoArquivo
  *   "Padrão" (o site não vende esse serviço).
  * - Acabamentos extras (acabamentos.ts): o valor vai em precoTotalAcabamentos e a lista em desc_trabalho
- *   ("Acabamentos: Serrilha (2×)…"); precoTotal do item = price × quantidade (só o produto) e o precoTotal do
- *   envelope soma os dois. O prazo dos acabamentos entra em productionTime e na previsão.
- * - entrega (entrega.ts): {tipo: "Delivery Padrão" | "Retirada" | "Transportadora", endereco, rota {nome, taxa, cobrada},
- *   loja {id, nome} (ids do site oficial), transportadora {servico, nome, prazo}, frete}. O frete (taxa da rota cobrada ou
- *   transportadora) vai em `frete` no envelope e entra no precoTotal e no pagamento.valor; retirada nunca cobra frete.
- * - pagamento "retirada": tipo "Pagamento na Retirada" (nome a confirmar), só com a liberação no cadastro, no Delivery
- *   Padrão ou numa loja própria. Sem boleto (a Padrão não trabalha com boleto, 26/10/2026).
- * - Extras do site que o exemplo não tem: unidades (lotes × unidades do lote), largura/altura/area (m²) e kit.
+ *   ("Acabamentos: Serrilha (2×)…"); precoTotal do item = price × quantidade (só o produto). O prazo dos acabamentos
+ *   entra em productionTime e na previsão.
+ * - entrega (entregaDoPedido): na retirada, como no exemplo, {id: código da loja no sistema da Padrão, nome} ("J" =
+ *   Loja São João; os outros códigos ainda não vieram e vão null, com o nome). Com endereço, o formato do site:
+ *   {tipo: "Delivery Padrão" | "Transportadora" | "Entrega", endereco, rota {nome, taxa, cobrada}, transportadora
+ *   {servico, nome, prazo}, frete}; o frete (taxa da rota cobrada ou transportadora) entra no pagamento.valor.
+ * - pagamento "retirada": tipo "Pagamento na Retirada" (como no exemplo), só com a liberação no cadastro, no Delivery
+ *   Padrão ou numa loja própria. Pix e cartão: "PIX" e "Cartão de Crédito" (nomes a confirmar). Sem boleto (a Padrão
+ *   não trabalha com boleto, 26/10/2026). status 0 = aguardando.
+ * - pagamento.valor = o que é pago na forma de pagamento.tipo: no exemplo, o total do pedido. Créditos Padrão Color
+ *   (creditos.ts, revisão da Padrão de 29/10/2026): a parte paga com eles vai em `credito_usado` (o nome do GET /pedidos),
+ *   e pagamento.valor fica com o resto; pago todo com créditos, pagamento.tipo = "Crédito" e valor = os créditos.
+ * - Sem tipo_compra nem envio: o exemplo não tem, e os pedidos do site antigo aparecem com envio "Site" no GET /pedidos.
  * - Medida livre (m²): quantidade = peças, price = total ÷ peças e precoTotal = total do item, porque o mínimo de 1 m²
- *   vale no item inteiro (revisão da Padrão de 25/10/2026); `area` é a área cobrada de uma peça.
- * - pagamento.status 0 = aguardando; forma e parcelas vão junto.
- * - Créditos Padrão Color (creditos.ts, revisão da Padrão de 29/10/2026): o crédito usado vai em `credito_usado` (como no
- *   GET /pedidos) e em pagamento.credito; pagamento.valor é o que falta pagar na forma escolhida. Pago todo em crédito,
- *   pagamento.tipo = "Crédito" e forma "credito".
- * - tipo_compra é um inteiro (a API recusa texto nesse campo; teste de 29/10/2026): o código da Padrão para a compra
- *   pelo site, em PADRAO_TIPO_COMPRA (a Padrão ainda não informou). Sem ele, o pedido não sai (fila-pedidos: a equipe
- *   confere). "Site" é o canal e vai em envio, como nos pedidos que o GET /pedidos devolve.
- * - nome_trabalho = texto da arte do primeiro item (ou o nome) + "+ N itens"; precoTotal = soma dos itens no preço do
- *   cliente (balcão ou revenda). Sem desconto no PIX (revisão da Padrão de 25/10/2026).
+ *   vale no item inteiro (revisão da Padrão de 25/10/2026); a medida vai em desc_trabalho. O kit também.
+ * - Total do pedido (totalDoPedido): a soma dos itens (produto, acabamentos e criação de arte) mais o frete, no preço
+ *   do cliente (balcão ou revenda); = pagamento.valor + credito_usado. Sem desconto no PIX (revisão de 25/10/2026).
  * O servidor recalcula tudo a partir da variação: o preço que vem do navegador só serve para comparar.
  */
 
@@ -67,19 +68,6 @@ export const PAYMENT_METHODS: Record<PaymentMethod, { label: string; hint: strin
   cartao: { label: "Cartão de crédito", hint: "Pagamento com cartão de crédito", apiType: "Cartão de Crédito" },
   retirada: { label: "Pagar na retirada", hint: "Liberado no seu cadastro: você paga ao receber ou retirar o pedido", apiType: "Pagamento na Retirada" },
 };
-
-/** Canal do pedido (`envio` no GET /pedidos): o site. */
-export const CANAL_DO_PEDIDO = "Site";
-
-/** Código de tipo_compra vindo do ambiente (PADRAO_TIPO_COMPRA…): inteiro positivo; null quando falta ou é inválido. */
-export function tipoCompraDe(valor: string | undefined): number | null {
-  const texto = valor?.trim() ?? "";
-  if (!/^\d{1,9}$/.test(texto)) return null;
-  const n = Number(texto);
-  return n > 0 ? n : null;
-}
-
-export const SEM_TIPO_COMPRA = "Falta o código de tipo_compra da Padrão (PADRAO_TIPO_COMPRA): o pedido não foi enviado.";
 
 /** Pedido pago todo com os créditos da conta corrente (creditos.ts). */
 export const PAGAMENTO_CREDITO = { label: "Créditos Padrão Color", apiType: "Crédito" } as const;
@@ -294,16 +282,6 @@ export function itemJobName(input: Pick<OrderItemInput, "name" | "options">): st
   return clip(text || input.name, 60);
 }
 
-/** Nome do trabalho da compra: o kit/festa quando tudo vem de um só; senão o primeiro item + "+ N itens". */
-export function orderJobName(lines: { input: Pick<OrderItemInput, "name" | "options" | "bundle"> }[]): string {
-  if (lines.length === 0) return "";
-  const first = lines[0].input;
-  if (first.bundle && lines.every((line) => line.input.bundle?.id === first.bundle?.id)) return clip(bundleTitle(first.bundle, first.options), 60);
-  const rest = lines.length - 1;
-  const suffix = rest > 0 ? ` + ${rest} ${rest === 1 ? "item" : "itens"}` : "";
-  return clip(itemJobName(lines[0].input), 60 - suffix.length) + suffix;
-}
-
 // ---------------------------------------------------------------------------------- entrega
 
 export type DeliveryAddress = { cep: string; logradouro: string; numero: string; complemento: string; bairro: string; cidade: string; estado: string };
@@ -458,37 +436,42 @@ export type OrderProduct = {
   arte: OrderArt;
   tratamentoArquivo: { tipo: string; preco: number };
   precoTotalAcabamentos: number;
-  /** Unidades (lotes × unidades do lote). */
-  unidades: number;
-  /** Medida livre, em cm, e área cobrada em m². */
-  largura?: number;
-  altura?: number;
-  area?: number;
-  /** Kit/festa que trouxe o item: id do site e título ("Crie Sua Festa — Aniversário"). */
-  kit: { id: string; nome: string } | null;
 };
 
-/** valor = o que falta pagar na forma; credito = a parte paga com os créditos da conta (só quando há). */
-export type OrderPayment = { tipo: string; valor: number; status: number; forma: PaymentMethod | "credito"; parcelas: number; credito?: number };
+/** Como no exemplo da Padrão: valor = o que é pago na forma `tipo` (sem créditos, o total do pedido). */
+export type OrderPayment = { tipo: string; valor: number; status: number };
 
+/** Retirada como no exemplo ({id: "J", nome: "Loja São João"}; id null = código ainda não informado); com endereço, a do site. */
+export type EntregaDoPedido = { id: string | null; nome: string } | OrderDelivery;
+
+/** O pedido no formato do exemplo aceito (cabeçalho do arquivo). */
 export type OrderPayload = {
   data: string;
   hora: string;
+  entrega: EntregaDoPedido;
   previsao: string | null;
-  idCliente: number;
   produtos: OrderProduct[];
+  idCliente: number;
   pagamento: OrderPayment;
-  entrega: OrderDelivery;
-  /** Frete cobrado no pedido (taxa da rota ou transportadora); já somado em precoTotal. */
-  frete: number;
-  /** Créditos Padrão Color usados na compra (já dentro de precoTotal; 0 sem crédito). */
-  credito_usado: number;
-  /** Código da Padrão (inteiro); null = não configurado, e o pedido não é enviado. */
-  tipo_compra: number | null;
-  envio: string;
-  nome_trabalho: string;
-  precoTotal: number;
+  /** Só quando a compra usa créditos Padrão Color: a parte paga com eles (o resto em pagamento.valor). */
+  credito_usado?: number;
 };
+
+/** Entrega do pedido: na retirada, o código e o nome da loja, como no exemplo; com endereço, como o site calculou. */
+export function entregaDoPedido(delivery: OrderDelivery): EntregaDoPedido {
+  if (delivery.tipo !== "Retirada") return delivery;
+  const loja = lojaRetirada(delivery.loja?.id ?? LOJA_PADRAO);
+  return { id: loja?.codigo ?? null, nome: loja?.nome ?? delivery.loja?.nome ?? "" };
+}
+
+/** Frete do pedido: só a entrega com endereço tem (a retirada nunca cobra). */
+export const freteDoPedido = (entrega: EntregaDoPedido): number => ("frete" in entrega ? round2(entrega.frete ?? 0) : 0);
+
+/** Total do pedido: os itens (produto, acabamentos e criação de arte) mais o frete; = pagamento.valor + credito_usado. */
+export function totalDoPedido(payload: Pick<OrderPayload, "produtos" | "entrega">): number {
+  const itens = payload.produtos.reduce((soma, p) => soma + Math.round((p.precoTotal + p.precoTotalAcabamentos + p.arte.preco) * 100), 0) / 100;
+  return round2(itens + freteDoPedido(payload.entrega));
+}
 
 const NO_FACTS: ProductFacts = { image: "", categoryId: null, packaging: null, attachments: [] };
 
@@ -515,10 +498,16 @@ function workDescription(line: PricedLine, variationLabels: Set<string>, w2p: bo
   const extras = Object.entries(line.input.options)
     .filter(([key]) => !variationLabels.has(optionLabel(key)) && optionLabel(key) !== "Acabamentos" && optionLabel(key) !== "Observação")
     .map(([key, value]) => `${key}: ${value}`);
+  // Medida livre e kit: o exemplo da Padrão não tem campo para eles (saíram largura/altura/area e kit do produto).
+  const medida = line.size && !extras.some((extra) => extra.startsWith("Medida:")) ? [`Medida: ${cm(line.size.widthCm)} × ${cm(line.size.heightCm)} cm`] : [];
+  const kit = line.input.bundle ? [`Kit: ${bundleTitle(line.input.bundle, line.input.options)}`] : [];
   const finishing = line.acabamentos.itens.length ? [`Acabamentos: ${resumoAcabamentos(line.acabamentos.itens)}`] : [];
   const termos = line.input.termosArte ? [`Termos de envio de arte: ${textoDoAceite(line.input.termosArte)}`] : [];
-  return clip([art, ...extras, ...finishing, ...termos].join(" · "), 1000);
+  return clip([art, ...kit, ...extras, ...medida, ...finishing, ...termos].join(" · "), 1000);
 }
+
+/** Número com vírgula, como nas opções do carrinho ("0,54"). */
+const cm = (value: number) => String(Math.round(value * 100) / 100).replace(".", ",");
 
 export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS): OrderProduct {
   const variations = Object.fromEntries(Object.entries(line.variation.v).map(([key, value]) => [optionLabel(key), value]));
@@ -551,9 +540,6 @@ export function toOrderProduct(line: PricedLine, facts: ProductFacts = NO_FACTS)
     },
     tratamentoArquivo: { tipo: "Padrão", preco: 0 },
     precoTotalAcabamentos: line.acabamentos.total,
-    unidades: line.units,
-    ...(line.size ? { largura: line.size.widthCm, altura: line.size.heightCm, area: line.size.billedAreaM2 } : {}),
-    kit: line.input.bundle ? { id: line.input.bundle.id, nome: bundleTitle(line.input.bundle, line.input.options) } : null,
   };
 }
 
@@ -564,8 +550,6 @@ type PayloadInput = {
   delivery: OrderDelivery;
   /** Foto, categoria, embalagem e tipos de anexo de cada item (catálogo). */
   facts?: (line: PricedLine) => ProductFacts | null;
-  /** tipo_compra (tipoCompraDe); null enquanto a Padrão não informar o código. */
-  tipoCompra?: number | null;
   /** Créditos da conta usados na compra (divisaoDoPagamento, já limitado ao saldo); o resto vai em `method`. */
   credito?: number;
   /** Dias que não contam no prazo (GET /feriados); sem a lista, os feriados nacionais. */
@@ -573,30 +557,50 @@ type PayloadInput = {
   now?: Date;
 };
 
-export function buildOrderPayload({ customerId, lines, method, delivery, facts, tipoCompra = null, credito = 0, holidays, now = new Date() }: PayloadInput): OrderPayload {
-  const frete = round2(delivery.frete ?? 0);
-  const total = round2(orderTotal(lines) + frete);
-  const pago = round2(Math.min(total, Math.max(0, credito)));
+/** Pagamento como no exemplo; `pago` = a parte em créditos, que vai em credito_usado. */
+function pagamentoDoPedido(total: number, pago: number, tipo: string): { pagamento: OrderPayment; credito_usado?: number } {
   const restante = round2(total - pago);
+  if (pago > 0 && restante === 0) return { pagamento: { tipo: PAGAMENTO_CREDITO.apiType, valor: pago, status: 0 }, credito_usado: pago };
+  return { pagamento: { tipo, valor: restante, status: 0 }, ...(pago > 0 ? { credito_usado: pago } : {}) };
+}
+
+export function buildOrderPayload({ customerId, lines, method, delivery, facts, credito = 0, holidays, now = new Date() }: PayloadInput): OrderPayload {
+  const total = round2(orderTotal(lines) + round2(delivery.frete ?? 0));
+  const pago = round2(Math.min(total, Math.max(0, credito)));
   const clock = brasiliaClock(now);
   return {
     data: clock.data,
     hora: clock.hora,
+    entrega: entregaDoPedido(delivery),
     previsao: orderForecast(clock, lines.map((line) => line.leadDays), holidays),
-    idCliente: customerId,
     produtos: lines.map((line) => toOrderProduct(line, facts?.(line) ?? NO_FACTS)),
-    pagamento:
-      pago > 0 && restante === 0
-        ? { tipo: PAGAMENTO_CREDITO.apiType, valor: 0, status: 0, forma: "credito", parcelas: 1, credito: pago }
-        : { tipo: PAYMENT_METHODS[method].apiType, valor: restante, status: 0, forma: method, parcelas: 1, ...(pago > 0 ? { credito: pago } : {}) },
-    entrega: delivery,
-    frete,
-    credito_usado: pago,
-    tipo_compra: tipoCompra,
-    envio: CANAL_DO_PEDIDO,
-    nome_trabalho: orderJobName(lines),
-    precoTotal: total,
+    idCliente: customerId,
+    ...pagamentoDoPedido(total, pago, PAYMENT_METHODS[method].apiType),
   };
+}
+
+const ENVELOPE_DO_EXEMPLO = ["data", "hora", "entrega", "previsao", "produtos", "idCliente", "pagamento"] as const;
+const PRODUTO_FORA_DO_EXEMPLO = ["unidades", "largura", "altura", "area", "kit"];
+
+/**
+ * Pedido guardado na fila antes do alinhamento ao exemplo (03/11/2026): sai no formato de hoje. Tira tipo_compra, envio,
+ * nome_trabalho, precoTotal e frete do envelope (o frete continua na entrega com endereço), os extras dos produtos e
+ * forma/parcelas/credito do pagamento; a retirada vira {id, nome}. O pedido já no formato novo passa igual.
+ */
+export function noFormatoDoExemplo(guardado: OrderPayload | Record<string, unknown>): OrderPayload {
+  const antigo = guardado as Record<string, unknown> & { entrega?: unknown; produtos?: unknown[]; pagamento?: Record<string, unknown> };
+  const envelope = Object.fromEntries(ENVELOPE_DO_EXEMPLO.filter((campo) => campo in antigo).map((campo) => [campo, antigo[campo]])) as OrderPayload;
+  const entrega = antigo.entrega as Record<string, unknown> | undefined;
+  if (entrega && entrega.tipo === "Retirada") envelope.entrega = entregaDoPedido(entrega as OrderDelivery);
+  envelope.produtos = (antigo.produtos ?? []).map((produto) => Object.fromEntries(Object.entries(produto as Record<string, unknown>).filter(([campo]) => !PRODUTO_FORA_DO_EXEMPLO.includes(campo)))) as OrderProduct[];
+  const pagamento = antigo.pagamento ?? {};
+  const credito = Number(antigo.credito_usado ?? pagamento.credito ?? 0);
+  const tipo = String(pagamento.tipo ?? "");
+  // Antes, o pago todo em crédito ia com valor 0 e o crédito à parte: agora o valor é o dos créditos.
+  const valor = tipo === PAGAMENTO_CREDITO.apiType && credito > 0 ? credito : Number(pagamento.valor ?? 0);
+  envelope.pagamento = { tipo, valor, status: Number(pagamento.status ?? 0) };
+  if (credito > 0) envelope.credito_usado = round2(credito);
+  return envelope;
 }
 
 // ---------------------------------------------------------------------------------- entrada do checkout

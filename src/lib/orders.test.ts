@@ -10,17 +10,18 @@ import {
   paymentProblem,
   SEM_ENDERECO,
   extractOrderNumber,
+  freteDoPedido,
   isLineError,
   itemJobName,
+  noFormatoDoExemplo,
   orderDelivery,
-  orderJobName,
   orderTotal,
   missingArt,
   MISSING_ART,
   parseOrderRequest,
   priceLine,
   resolveVariationId,
-  tipoCompraDe,
+  totalDoPedido,
   totalsDiffer,
   type LinePrices,
   type OrderItemInput,
@@ -161,19 +162,23 @@ test("arte.web2print: SIM só com o PDF que o editor do site gera (pedido da Pad
   assert.equal(artePeloWebToPrint(line(item({ files: [pdf] }), cardPrices), { semArquivo: true }), false);
 });
 
-test("nome do trabalho: texto da arte ou nome do produto, com a contagem de itens", () => {
+test("nome do trabalho do item: texto da arte ou nome do produto", () => {
   assert.equal(itemJobName(item()), "Padaria Pão Quente");
   assert.equal(itemJobName(item({ options: {} })), "Cartão de Visita");
-  const a = line(item(), cardPrices);
-  const b = line(item({ key: "b", options: {} }), cardPrices);
-  assert.equal(orderJobName([a]), "Padaria Pão Quente");
-  assert.equal(orderJobName([a, b]), "Padaria Pão Quente + 1 item");
-  assert.ok(orderJobName([line(item({ options: { "Texto da arte": "x".repeat(200) } }), cardPrices), b, b]).length <= 60);
+  assert.ok(itemJobName(item({ options: { "Texto da arte": "x".repeat(200) } })).length <= 60);
 });
+
+/** Campos do exemplo de pedido aceito que a Padrão mandou (../retornos-api/exemplo-pedido-padrao-09-10.json). */
+const ENVELOPE_DO_EXEMPLO = ["data", "hora", "entrega", "previsao", "produtos", "idCliente", "pagamento"];
+const PRODUTO_DO_EXEMPLO = [
+  "id", "arte", "price", "groupId", "package", "descricao", "precoTotal", "quantidade", "variations", "productName", "productType",
+  "nomeTrabalho", "productImage", "tipoProducao", "desc_trabalho", "nome_trabalho", "productionTime", "groupCategoryId",
+  "tratamentoArquivo", "precoTotalAcabamentos",
+];
 
 const CDN = "https://padrao-color.b-cdn.net/uploads-clientes/";
 
-test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
+test("payload do POST /gerarpedido no formato do exemplo aceito da Padrão", () => {
   const files = [
     { url: `${CDN}cartao1791545356518.pdf`, nome: "cartao1791545356518.pdf", kind: "arquivo" as const },
     { url: `${CDN}cartaogabarito1791545356600.pdf`, nome: "cartaogabarito1791545356600.pdf", kind: "pdf" as const },
@@ -187,20 +192,24 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
       ? { image: "https://img.padraocolor.com.br/cartao.webp", categoryId: 3, packaging: [0.5, 10, 5, 12, 2] as const, attachments: ["Impressão Frente", "Impressão Verso"] }
       : null;
   // 09/10/2026, 08:31:49 em Brasília (11:31:49 UTC).
-  const payload = buildOrderPayload({ customerId: 575, lines: [cards, banner], method: "pix", delivery, facts, tipoCompra: 7, now: new Date("2026-10-09T11:31:49Z") });
+  const payload = buildOrderPayload({ customerId: 575, lines: [cards, banner], method: "pix", delivery, facts, now: new Date("2026-10-09T11:31:49Z") });
+  assert.deepEqual(Object.keys(payload), ENVELOPE_DO_EXEMPLO, "só os campos do envelope do exemplo (sem tipo_compra, envio, nome_trabalho, precoTotal, frete)");
   assert.equal(payload.data, "09/10/2026");
   assert.equal(payload.hora, "08:31:49");
   assert.equal(payload.previsao, "15/10/2026", "maior prazo (3 d.u.) a partir de sexta, sem o feriado de 12/10");
   const posFeriado = buildOrderPayload({ customerId: 575, lines: [cards, banner], method: "pix", delivery, facts, holidays: new Set(["2026-10-12", "2026-10-13"]), now: new Date("2026-10-09T11:31:49Z") });
   assert.equal(posFeriado.previsao, "16/10/2026", "os feriados da API entram no prazo");
   assert.equal(payload.idCliente, 575);
-  assert.equal(payload.tipo_compra, 7, "inteiro: a API recusa texto em tipo_compra");
-  assert.equal(payload.envio, "Site", "o canal vai em envio, como no GET /pedidos");
-  assert.equal(payload.nome_trabalho, "Padaria Pão Quente + 1 item");
-  assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 180.38, status: 0, forma: "pix", parcelas: 1 });
-  assert.equal(payload.precoTotal, 180.38, "130,38 + 50 (banner de 0,8 m² cobra o mínimo de 1 m²), sem desconto no PIX");
-  assert.deepEqual(payload.entrega, { tipo: "Retirada", endereco: null, loja: { id: 1, nome: "Loja Alcântara - RJ" }, frete: 0 });
-  assert.equal(payload.frete, 0, "retirada nunca cobra frete");
+  assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 180.38, status: 0 }, "como no exemplo: valor = o total pago na forma");
+  assert.equal(totalDoPedido(payload), 180.38, "130,38 + 50 (banner de 0,8 m² cobra o mínimo de 1 m²), sem desconto no PIX");
+  assert.deepEqual(payload.entrega, { id: null, nome: "Loja Alcântara - RJ" }, "retirada como no exemplo; código da Alcântara ainda não veio");
+  const saoJoao = buildOrderPayload({ customerId: 575, lines: [cards], method: "retirada", delivery: { tipo: "Retirada", endereco: null, loja: { id: 3, nome: "Loja São João" }, frete: 0 } });
+  assert.deepEqual(saoJoao.entrega, { id: "J", nome: "Loja São João" }, "o código da loja do exemplo");
+  assert.deepEqual(saoJoao.pagamento, { tipo: "Pagamento na Retirada", valor: 130.38, status: 0 });
+  for (const produto of payload.produtos) {
+    assert.deepEqual(Object.keys(produto).sort(), [...PRODUTO_DO_EXEMPLO].sort(), "só os campos do produto do exemplo");
+    assert.deepEqual(Object.keys(produto.arte), ["tipo", "preco", "web2print", "anexos"], "arte do exemplo + web2print (pedido da Padrão de 03/11)");
+  }
   assert.deepEqual(payload.produtos[0], {
     id: 22,
     groupId: 248,
@@ -230,26 +239,11 @@ test("payload do POST /gerarpedido no formato do pedido da Padrão", () => {
     },
     tratamentoArquivo: { tipo: "Padrão", preco: 0 },
     precoTotalAcabamentos: 0,
-    unidades: 2000,
-    kit: null,
   });
   const second = payload.produtos[1];
-  assert.equal(second.largura, 100);
-  assert.equal(second.altura, 80);
-  assert.equal(second.area, 0.8);
   assert.equal(second.package, null);
   assert.deepEqual(second.arte, { tipo: 1, preco: 0, web2print: "NAO", anexos: [] });
-  assert.equal(second.desc_trabalho, "Arte: enviar depois");
-  assert.deepEqual(second.kit, { id: "festa-1", nome: "Kit Aniversário" });
-
-  // Sem o código da Padrão, tipo_compra fica null (o pedido não sai: fila-pedidos/processar.ts).
-  assert.equal(buildOrderPayload({ customerId: 575, lines: [cards], method: "pix", delivery }).tipo_compra, null);
-});
-
-test("tipo_compra do ambiente: só inteiro positivo", () => {
-  assert.equal(tipoCompraDe("3"), 3);
-  assert.equal(tipoCompraDe(" 12 "), 12);
-  for (const valor of [undefined, "", "Site", "0", "-1", "1.5", "2a", "1e3"]) assert.equal(tipoCompraDe(valor), null, String(valor));
+  assert.equal(second.desc_trabalho, "Arte: enviar depois · Kit: Kit Aniversário · Medida: 100 × 80 cm", "medida livre e kit vão na descrição");
 });
 
 test("créditos Padrão Color no pedido: parte do total ou o pedido inteiro", () => {
@@ -257,17 +251,50 @@ test("créditos Padrão Color no pedido: parte do total ou o pedido inteiro", ()
   const delivery = orderDelivery({ kind: "retirada", loja: 1 }, { registered: null, rota: { tipo: "transportadora" } });
   assert.ok(typeof delivery !== "string");
   const sem = buildOrderPayload({ customerId: 575, lines: [cards], method: "pix", delivery });
-  assert.equal(sem.credito_usado, 0);
-  assert.deepEqual(sem.pagamento, { tipo: "PIX", valor: 130.38, status: 0, forma: "pix", parcelas: 1 });
+  assert.equal("credito_usado" in sem, false, "sem créditos, o envelope é só o do exemplo");
+  assert.deepEqual(sem.pagamento, { tipo: "PIX", valor: 130.38, status: 0 });
 
   const parte = buildOrderPayload({ customerId: 575, lines: [cards], method: "cartao", delivery, credito: 100 });
   assert.equal(parte.credito_usado, 100);
-  assert.equal(parte.precoTotal, 130.38, "o total não muda: o crédito é forma de pagamento");
-  assert.deepEqual(parte.pagamento, { tipo: "Cartão de Crédito", valor: 30.38, status: 0, forma: "cartao", parcelas: 1, credito: 100 });
+  assert.deepEqual(parte.pagamento, { tipo: "Cartão de Crédito", valor: 30.38, status: 0 }, "o resto na forma escolhida");
+  assert.equal(totalDoPedido(parte), 130.38, "o total não muda: o crédito é forma de pagamento");
 
   const tudo = buildOrderPayload({ customerId: 575, lines: [cards], method: "pix", delivery, credito: 500 });
   assert.equal(tudo.credito_usado, 130.38, "nunca mais que o total");
-  assert.deepEqual(tudo.pagamento, { tipo: "Crédito", valor: 0, status: 0, forma: "credito", parcelas: 1, credito: 130.38 });
+  assert.deepEqual(tudo.pagamento, { tipo: "Crédito", valor: 130.38, status: 0 }, "pago todo com créditos: o valor é o dos créditos");
+});
+
+test("pedido guardado na fila no formato antigo sai no formato do exemplo", () => {
+  const cards = line(item(), cardPrices);
+  const novo = buildOrderPayload({ customerId: 575, lines: [cards], method: "cartao", delivery: { tipo: "Retirada", endereco: null, loja: { id: 3, nome: "Loja São João" }, frete: 0 }, credito: 100 });
+  assert.deepEqual(noFormatoDoExemplo(novo), novo, "o formato novo passa igual");
+  const produtoAntigo = { ...novo.produtos[0], unidades: 2000, kit: null, largura: 100, altura: 80, area: 0.8 };
+  const antigo = {
+    data: novo.data,
+    hora: novo.hora,
+    previsao: novo.previsao,
+    idCliente: 575,
+    produtos: [produtoAntigo],
+    pagamento: { tipo: "Cartão de Crédito", valor: 30.38, status: 0, forma: "cartao", parcelas: 1, credito: 100 },
+    entrega: { tipo: "Retirada", endereco: null, loja: { id: 3, nome: "Loja São João" }, frete: 0 },
+    frete: 0,
+    credito_usado: 100,
+    tipo_compra: 31,
+    envio: "Site",
+    nome_trabalho: "Padaria Pão Quente",
+    precoTotal: 130.38,
+  };
+  const convertido = noFormatoDoExemplo(antigo);
+  assert.deepEqual(Object.keys(convertido), [...ENVELOPE_DO_EXEMPLO, "credito_usado"]);
+  assert.deepEqual(convertido.entrega, { id: "J", nome: "Loja São João" });
+  assert.deepEqual(convertido.pagamento, { tipo: "Cartão de Crédito", valor: 30.38, status: 0 });
+  assert.deepEqual(Object.keys(convertido.produtos[0]).sort(), [...PRODUTO_DO_EXEMPLO].sort());
+  // Pago todo em crédito no formato antigo (valor 0): o valor passa a ser o dos créditos.
+  const tudo = noFormatoDoExemplo({ ...antigo, pagamento: { tipo: "Crédito", valor: 0, status: 0, forma: "credito", parcelas: 1, credito: 130.38 }, credito_usado: 130.38 });
+  assert.deepEqual(tudo.pagamento, { tipo: "Crédito", valor: 130.38, status: 0 });
+  // Entrega com endereço: continua a do site, com o frete dentro.
+  const rota = { tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "VERDE", taxa: 17, cobrada: true }, frete: 17 };
+  assert.deepEqual(noFormatoDoExemplo({ ...antigo, entrega: rota, frete: 17 }).entrega, rota);
 });
 
 test("entrada do checkout: usarCredito só com true", () => {
@@ -320,17 +347,14 @@ test("previsão do pedido: maior prazo em dias úteis, contando de hoje só até
   assert.equal(orderForecast(manha("2026-10-13"), [2], new Set(["2026-10-14"])), "16/10/2026", "dia cadastrado na lista (mesmo sem ser feriado) não conta");
 });
 
-test("kit e festa: título do grupo e nome do trabalho da compra", () => {
+test("kit e festa: título do grupo na descrição do item", () => {
   const party = { id: "festa-aniversario", name: "Crie Sua Festa" };
   assert.equal(bundleTitle(party, { Festa: "Aniversário", Tema: "Safari" }), "Crie Sua Festa — Aniversário");
   assert.equal(bundleTitle({ id: "kit-casamento", name: "Kit Casamento" }, { Kit: "Kit Casamento" }), "Kit Casamento");
   const a = line(item({ key: "a", bundle: party, options: { Festa: "Aniversário", "Texto da arte": "Ana 5 anos" } }), cardPrices);
-  const b = line(item({ key: "b", bundle: party, options: { Festa: "Aniversário" } }), cardPrices);
-  assert.equal(orderJobName([a, b]), "Crie Sua Festa — Aniversário", "tudo do mesmo kit/festa");
-  assert.equal(orderJobName([a, line(item({ key: "c" }), cardPrices)]), "Ana 5 anos + 1 item");
   const payload = buildOrderPayload({ customerId: 1, lines: [a], method: "cartao", delivery: { tipo: "Retirada", endereco: null } });
-  assert.deepEqual(payload.produtos[0].kit, { id: "festa-aniversario", nome: "Crie Sua Festa — Aniversário" });
   assert.equal(payload.produtos[0].nome_trabalho, "Ana 5 anos");
+  assert.match(payload.produtos[0].desc_trabalho, /Kit: Crie Sua Festa — Aniversário/, "o exemplo não tem o campo kit");
   assert.match(payload.produtos[0].desc_trabalho, /Festa: Aniversário/);
 });
 
@@ -409,9 +433,9 @@ test("transportadora: cobra o serviço cotado agora; sem cotação, frete combin
 test("frete entra no total do pedido e no pagamento", () => {
   const cards = line(item(), cardPrices);
   const payload = buildOrderPayload({ customerId: 1, lines: [cards], method: "pix", delivery: { tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "Rota Verde", taxa: 17, cobrada: true }, frete: 17 } });
-  assert.equal(payload.frete, 17);
-  assert.equal(payload.precoTotal, Math.round((cards.total + 17) * 100) / 100);
-  assert.equal(payload.pagamento.valor, payload.precoTotal);
+  assert.equal(freteDoPedido(payload.entrega), 17, "o frete fica na entrega com endereço");
+  assert.equal(totalDoPedido(payload), Math.round((cards.total + 17) * 100) / 100);
+  assert.equal(payload.pagamento.valor, totalDoPedido(payload));
 });
 
 test("pagar na retirada: só com a liberação, no Delivery Padrão ou numa loja própria", () => {

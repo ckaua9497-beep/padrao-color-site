@@ -347,12 +347,12 @@ export type ProductionResult = { ok: true; simulated: boolean; numero: string | 
 /**
  * Manda o pedido pago para a produção na API Padrão (POST /gerarpedido) em nome do cliente da multiloja
  * (PADRAO_MULTILOJA_CLIENTE_ID), no preço BASE (o que a Padrão cobra). Sem PADRAO_ORDERS_ENABLED=true, só monta
- * e devolve o payload (simulação), sem chamar a API.
- * Premissas a validar com a Padrão: tipo_compra é o código inteiro da multiloja (PADRAO_TIPO_COMPRA_MULTILOJA; a API
- * recusa texto nesse campo) e o pagamento já foi recebido pela multiloja. Sem o código, o pedido não sai.
+ * e devolve o payload (simulação), sem chamar a API. O pedido segue o formato do exemplo aceito da Padrão (orders.ts),
+ * com a entrega no endereço do comprador e o código do pedido da loja no começo do desc_trabalho de cada item.
+ * Premissa a validar com a Padrão: o pagamento já foi recebido pela multiloja (vai como cartão).
  */
 export async function sendToProduction(pedido: Pedido): Promise<ProductionResult> {
-  const { enabled, customerId, tipoCompra } = padraoProduction();
+  const { enabled, customerId } = padraoProduction();
   const itens = await listItens(pedido.id);
   // Artes que o comprador enviou (banco da multiloja) sobem para o Bunny e vão em arte.anexos, como no site.
   const bunny = bunnyConfig();
@@ -386,25 +386,23 @@ export async function sendToProduction(pedido: Pedido): Promise<ProductionResult
     if (isLineError(line)) return { ok: false, message: `${item.nome}: ${line.error}` };
     lines.push(line);
   }
-  const payload = {
-    ...buildOrderPayload({
-      customerId: customerId ?? 0,
-      lines,
-      method: "cartao",
-      delivery: { tipo: "Entrega", endereco: pedido.entrega },
-      facts: productFacts,
-      tipoCompra,
-      holidays: await feriados(),
-    }),
-    nome_trabalho: `${pedido.codigo} ${pedido.cliente.nome}`.slice(0, 60),
-  };
+  const montado = buildOrderPayload({
+    customerId: customerId ?? 0,
+    lines,
+    method: "cartao",
+    delivery: { tipo: "Entrega", endereco: pedido.entrega },
+    facts: productFacts,
+    holidays: await feriados(),
+  });
+  // O envelope do exemplo não tem nome_trabalho: o pedido da loja e o comprador vão no começo da descrição de cada item.
+  const origem = `Multiloja: pedido ${pedido.codigo} · ${pedido.cliente.nome}`;
+  const payload = { ...montado, produtos: montado.produtos.map((p) => ({ ...p, desc_trabalho: `${origem} · ${p.desc_trabalho}`.slice(0, 1000) })) };
   if (!enabled || !customerId) {
     await setPedidoStatus(pedido.id, "em_producao", "padrao", "Enviado para produção (simulação: PADRAO_ORDERS_ENABLED desligado).");
     return { ok: true, simulated: true, numero: null, payload, semArte: artes.pendentes };
   }
-  if (tipoCompra === null) return { ok: false, message: "Falta o código de tipo_compra da Padrão para a multiloja (PADRAO_TIPO_COMPRA_MULTILOJA): o pedido não foi enviado." };
   try {
-    const result = await gerarPedido({ ...payload, tipo_compra: tipoCompra });
+    const result = await gerarPedido(payload);
     const numero = extractOrderNumber(result);
     if (numero) await setPedidoPadrao(pedido.id, String(numero));
     await setPedidoStatus(pedido.id, "em_producao", "padrao", numero ? `Pedido ${numero} na Padrão Color.` : "Enviado para produção na Padrão Color.");

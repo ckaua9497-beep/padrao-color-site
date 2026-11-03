@@ -106,16 +106,18 @@ export const getPedidos = ({ pedido, dataInicial, dataFinal, pag, reg }: FiltroP
   });
 
 /**
- * O PDF não traz o contrato completo de `produtos` e `pagamento` ("contrato de pedido fornecido para a integração").
- * tipo_compra é inteiro: a API recusa texto nesse campo (teste de 29/10/2026).
+ * O PDF não traz o contrato completo ("contrato de pedido fornecido para a integração"): o corpo segue o exemplo de pedido
+ * aceito que a Padrão mandou (orders.ts, OrderPayload). O envelope do PDF (tipo_compra, nome_trabalho, precoTotal) não vai.
  */
 export type GerarPedido = {
-  idCliente: number;
+  data: string;
+  hora: string;
+  entrega: Record<string, unknown>;
+  previsao: string | null;
   produtos: unknown[];
+  idCliente: number;
   pagamento: Record<string, unknown>;
-  tipo_compra: number;
-  nome_trabalho: string;
-  precoTotal: number;
+  credito_usado?: number;
 };
 export const gerarPedido = (body: GerarPedido, token?: string) => apiRequest<Record<string, unknown>>("/gerarpedido", { method: "POST", body, token, timeoutMs: 40_000 });
 

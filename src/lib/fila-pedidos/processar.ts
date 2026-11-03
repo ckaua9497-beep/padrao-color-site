@@ -1,7 +1,7 @@
 import "server-only";
 
 import { hkdfSync } from "node:crypto";
-import { ordersEnabled, tipoCompraSite } from "@/lib/api/checkout";
+import { ordersEnabled } from "@/lib/api/checkout";
 import { ApiError, apiUnavailable } from "@/lib/api/client";
 import { gerarPedido, getCliente, getContaCorrente } from "@/lib/api/padrao";
 import { creditoDisponivel, divisaoDoPagamento } from "@/lib/creditos";
@@ -18,18 +18,17 @@ import { productFacts } from "@/lib/order-facts";
 import {
   addressFromApi,
   buildOrderPayload,
-  CANAL_DO_PEDIDO,
   extractOrderNumber,
   isLineError,
   missingArt,
   missingTerms,
+  noFormatoDoExemplo,
   orderDelivery,
   orderTotal,
   paymentProblem,
   priceLine,
   SEM_ENDERECO,
   totalsDiffer,
-  SEM_TIPO_COMPRA,
   type LineError,
   type LinePrices,
   type OrderItemInput,
@@ -163,19 +162,16 @@ export async function prepararPedido(pedido: OrderRequest, conta: { id: number; 
     method: pedido.payment,
     delivery: deliveryInfo,
     facts: (line) => productFacts(line, vivos.get(line.groupId)),
-    tipoCompra: tipoCompraSite(),
     credito: divisao.credito,
     holidays: await feriados(),
   });
   return { tipo: "pronto", payload, quote, total, lines };
 }
 
-/** POST /gerarpedido. Sem o código de tipo_compra nada sai: volta como recusa (a equipe confere na fila). */
+/** POST /gerarpedido, no formato do exemplo aceito da Padrão (orders.ts). */
 export async function enviarPedido(payload: OrderPayload, token?: string): Promise<Envio> {
-  const tipoCompra = payload.tipo_compra;
-  if (tipoCompra === null) return { tipo: "falha", classe: "recusado", erro: new Error(SEM_TIPO_COMPRA) };
   try {
-    return { tipo: "criado", numero: extractOrderNumber(await gerarPedido({ ...payload, tipo_compra: tipoCompra }, token)) };
+    return { tipo: "criado", numero: extractOrderNumber(await gerarPedido(payload, token)) };
   } catch (error) {
     return { tipo: "falha", classe: classificarFalha("pedido", falhaDe(error)), erro: error };
   }
@@ -280,15 +276,13 @@ async function processarEntrada(entrada: EntradaFila): Promise<Reenvio> {
     if (preparo.tipo === "entrega") return conferir(`Entrega: ${preparo.erro}`.slice(0, 300));
     payload = preparo.payload;
   }
+  // Guardado antes do alinhamento ao exemplo da Padrão (tipo_compra, envio, precoTotal…): sai no formato de hoje.
+  payload = noFormatoDoExemplo(payload);
 
   if (!ordersEnabled()) {
     await concluir(entrada.id, { numero: null, simulado: true, payload, texto: "Simulado (PADRAO_ORDERS_ENABLED desligado): nada foi enviado à Padrão." });
     return { protocolo: entrada.protocolo, resultado: "simulado", mensagem: "Simulado: o envio de pedidos está desligado." };
   }
-
-  // Guardado antes do código de tipo_compra (ou com o "Site" antigo, que a API recusa): vale o código configurado agora.
-  if (typeof payload.tipo_compra !== "number") payload = { ...payload, tipo_compra: tipoCompraSite(), envio: CANAL_DO_PEDIDO };
-  if (payload.tipo_compra === null) return conferir(SEM_TIPO_COMPRA, payload);
 
   payload = await subirGuardados(payload);
   const envio = await enviarPedido(payload, token ?? undefined);

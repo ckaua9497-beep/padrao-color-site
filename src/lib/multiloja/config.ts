@@ -1,6 +1,5 @@
 import "server-only";
 
-import { tipoCompraDe } from "../orders";
 import { NO_FEES, PAYMENT_KINDS, type PaymentRates } from "./core";
 import { isRota, rotasSalvas, type Rota, type Rotas } from "./pagamento-rotas";
 import { getSetting, openSecret } from "./settings";
@@ -224,12 +223,10 @@ export async function pagarmeConfig(): Promise<PagarmeConfig | null> {
 // ---------------------------------------------------------------------------------- produção na Padrão
 
 /** Envio dos pedidos pagos para produção na API Padrão (POST /gerarpedido) com o cliente da multiloja. */
-export function padraoProduction(): { enabled: boolean; customerId: number | null; tipoCompra: number | null } {
+export function padraoProduction(): { enabled: boolean; customerId: number | null } {
   const id = Number(process.env.PADRAO_MULTILOJA_CLIENTE_ID ?? "");
   return {
     enabled: process.env.PADRAO_ORDERS_ENABLED === "true",
     customerId: Number.isInteger(id) && id > 0 ? id : null,
-    // tipo_compra é inteiro na API: o código da Padrão para o pedido da multiloja (a Padrão ainda não informou).
-    tipoCompra: tipoCompraDe(process.env.PADRAO_TIPO_COMPRA_MULTILOJA),
   };
 }
