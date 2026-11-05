@@ -710,10 +710,10 @@ export default function CheckoutView({ ordersEnabled }: { ordersEnabled: boolean
                 <LoginForm onSignup={() => setAuthTab("criar")} recoverHref="/conta/recuperar?volta=%2Fcheckout" />
               ) : (
                 <SignupForm
-                  onSuccess={({ loggedIn, message }) => {
+                  onSuccess={({ loggedIn, message, revenda }) => {
                     if (loggedIn) return;
                     setAuthTab("entrar");
-                    setAuthInfo({ tone: "success", text: message ?? "Conta criada! Entre para continuar." });
+                    setAuthInfo({ tone: "success", text: [message ?? "Conta criada! Entre para continuar.", revenda?.texto].filter(Boolean).join(" ") });
                   }}
                 />
               )}

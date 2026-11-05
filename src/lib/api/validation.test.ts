@@ -118,14 +118,17 @@ test("volta depois do login: só caminhos internos", () => {
   assert.equal(safeReturnPath(null, "/"), "/");
 });
 
-test("cadastro: erros por campo", () => {
-  const valid = {
+test("cadastro: erros por campo, com os obrigatórios do modelo da Padrão", () => {
+  const pf = {
     ...EMPTY_SIGNUP,
+    perfil: "cliente",
+    pessoa: "pf",
     documento: "529.982.247-25",
     nome: "Maria da Silva",
+    apelido: "Maria",
+    nascimento: "1990-05-20",
     email: "maria@exemplo.com.br",
     senha: "senha123",
-    confirmacao: "senha123",
     telefone: "(21) 99999-9999",
     cep: "25520-000",
     logradouro: "Rua Nicolau Cheven",
@@ -134,14 +137,19 @@ test("cadastro: erros por campo", () => {
     cidade: "São João de Meriti",
     estado: "RJ",
   };
-  assert.deepEqual(signupErrors(valid), {});
-  assert.deepEqual(Object.keys(signupErrors({ ...valid, nome: "Maria" })), ["nome"], "CPF pede nome e sobrenome");
-  assert.deepEqual(signupErrors({ ...valid, documento: "11.222.333/0001-81", nome: "Gráfica" }), {}, "CNPJ aceita razão social de uma palavra");
-  assert.deepEqual(Object.keys(signupErrors({ ...valid, confirmacao: "outra123" })), ["confirmacao"]);
-  assert.deepEqual(signupErrors({ ...valid, confirmacao: "" }, { confirmPassword: false }), {});
-  assert.deepEqual(Object.keys(signupErrors({ ...valid, estado: "XX", nascimento: "2999-01-01" })).sort(), ["estado", "nascimento"]);
-  // Data digitada antes de trocar para CNPJ: o campo some e não pode travar o cadastro.
-  assert.deepEqual(signupErrors({ ...valid, documento: "11.222.333/0001-81", nome: "Gráfica", nascimento: "0202-01-01" }), {});
+  assert.deepEqual(signupErrors(pf), {});
+  assert.deepEqual(Object.keys(signupErrors({ ...pf, nome: "Maria" })), ["nome"], "CPF pede nome e sobrenome");
+  assert.deepEqual(Object.keys(signupErrors({ ...pf, apelido: "", nascimento: "" })).sort(), ["apelido", "nascimento"], "nome de exibição e nascimento têm *");
+  assert.deepEqual(Object.keys(signupErrors({ ...pf, estado: "XX", nascimento: "2999-01-01" })).sort(), ["estado", "nascimento"]);
+  assert.deepEqual(Object.keys(signupErrors({ ...pf, perfil: "", pessoa: "" })).sort(), ["perfil", "pessoa"]);
+  assert.deepEqual(Object.keys(signupErrors({ ...pf, telefone2: "123", emailSecundario: "x" })).sort(), ["emailSecundario", "telefone2"], "opcionais: só confere quando preenchidos");
+  assert.deepEqual(signupErrors({ ...pf, telefone2: "(21) 3333-4444", emailSecundario: "financeiro@exemplo.com.br", referencia: "Perto da praça" }), {});
+
+  const pj = { ...pf, perfil: "revendedor", pessoa: "pj", documento: "11.222.333/0001-81", nome: "Gráfica", apelido: "Gráfica Rio", cpfResponsavel: "529.982.247-25" };
+  assert.deepEqual(signupErrors(pj), {}, "CNPJ aceita razão social de uma palavra; nome do responsável é opcional");
+  assert.deepEqual(Object.keys(signupErrors({ ...pj, cpfResponsavel: "" })), ["cpfResponsavel"], "CPF do responsável tem *");
+  assert.deepEqual(Object.keys(signupErrors({ ...pj, documento: "529.982.247-25" })), ["documento"], "pessoa jurídica pede CNPJ");
+  assert.deepEqual(Object.keys(signupErrors({ ...pf, documento: "11.222.333/0001-81" })), ["documento"], "pessoa física pede CPF");
   assert.equal(isValidBirthDate("1990-05-20", new Date("2026-10-06")), true);
   assert.equal(isValidBirthDate("1850-05-20", new Date("2026-10-06")), false);
 });

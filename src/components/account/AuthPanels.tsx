@@ -31,16 +31,20 @@ export function LoginPanel({ returnTo, defaultUser, expired = false }: { returnT
   );
 }
 
-/** /conta/cadastro: cria a conta; com login automático segue para a volta, senão pede para entrar. */
+/**
+ * /conta/cadastro: cria a conta; com login automático segue para a volta, senão pede para entrar. O revendedor vê antes
+ * a situação do cadastro (aprovado na hora ou em avaliação: revenda.ts).
+ */
 export function SignupPanel({ returnTo }: { returnTo: string }) {
   const router = useRouter();
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<{ texto: string; revenda?: string; logado: boolean } | null>(null);
   if (done) {
     return (
       <div className="space-y-5">
-        <FormAlert tone="success">{done}</FormAlert>
-        <Button href={`/conta/entrar?volta=${encodeURIComponent(returnTo)}`} variant="buy" size="md" block>
-          Entrar
+        <FormAlert tone="success">{done.texto}</FormAlert>
+        {done.revenda && <FormAlert tone="info">{done.revenda}</FormAlert>}
+        <Button href={done.logado ? returnTo : `/conta/entrar?volta=${encodeURIComponent(returnTo)}`} variant="buy" size="md" block>
+          {done.logado ? "Continuar" : "Entrar"}
         </Button>
       </div>
     );
@@ -48,9 +52,10 @@ export function SignupPanel({ returnTo }: { returnTo: string }) {
   return (
     <SignupForm
       navigatesOnLogin
-      onSuccess={({ loggedIn, message }) => {
-        if (!loggedIn) {
-          setDone(message ?? "Conta criada! Entre com seu CPF/CNPJ ou e-mail e a senha.");
+      onSuccess={({ loggedIn, message, revenda }) => {
+        if (!loggedIn || revenda) {
+          setDone({ texto: loggedIn ? "Conta criada! Você já está conectado." : (message ?? "Conta criada! Entre com seu CPF/CNPJ ou e-mail e a senha."), revenda: revenda?.texto, logado: loggedIn });
+          if (loggedIn) router.refresh();
           return;
         }
         router.replace(returnTo);

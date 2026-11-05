@@ -201,20 +201,27 @@ export function isValidBirthDate(value: string, today = new Date()): boolean {
   return value >= "1900-01-01" && value <= today.toISOString().slice(0, 10);
 }
 
-/** Campos do cadastro (POST /cadastrarcliente), como o formulário guarda. */
+/**
+ * Campos do cadastro (POST /cadastrarcliente), como o formulário guarda: os do "Novo modelo de cadastro" da Padrão (PDF de
+ * 05/11/2026), de pessoa física ou jurídica, com o tipo de cliente (revenda.ts).
+ */
 export type SignupInput = {
+  /** "cliente" ou "revendedor" ("Como você se identifica?"). */
+  perfil: string;
+  /** "pf" ou "pj": qual documento o formulário pede. */
+  pessoa: string;
   documento: string;
-  /** Nome completo (CPF) ou razão social (CNPJ). */
+  /** Nome completo (PF) ou razão social (PJ). */
   nome: string;
-  /** Como prefere ser chamado (CPF) ou nome fantasia (CNPJ). */
+  /** Nome de exibição (PF) ou nome fantasia (PJ). */
   apelido: string;
-  email: string;
-  senha: string;
-  confirmacao: string;
-  telefone: string;
+  /** AAAA-MM-DD: do cliente (PF) ou do responsável (PJ). */
   nascimento: string;
   inscricaoEstadual: string;
+  inscricaoMunicipal: string;
+  ramo: string;
   responsavel: string;
+  cpfResponsavel: string;
   cep: string;
   logradouro: string;
   numero: string;
@@ -222,21 +229,28 @@ export type SignupInput = {
   bairro: string;
   cidade: string;
   estado: string;
+  referencia: string;
+  telefone: string;
+  telefone2: string;
+  email: string;
+  emailSecundario: string;
+  senha: string;
 };
 
 export type SignupErrors = Partial<Record<keyof SignupInput, string>>;
 
 export const EMPTY_SIGNUP: SignupInput = {
+  perfil: "",
+  pessoa: "",
   documento: "",
   nome: "",
   apelido: "",
-  email: "",
-  senha: "",
-  confirmacao: "",
-  telefone: "",
   nascimento: "",
   inscricaoEstadual: "",
+  inscricaoMunicipal: "",
+  ramo: "",
   responsavel: "",
+  cpfResponsavel: "",
   cep: "",
   logradouro: "",
   numero: "",
@@ -244,29 +258,40 @@ export const EMPTY_SIGNUP: SignupInput = {
   bairro: "",
   cidade: "",
   estado: "",
+  referencia: "",
+  telefone: "",
+  telefone2: "",
+  email: "",
+  emailSecundario: "",
+  senha: "",
 };
 
-/** Erros por campo (vazio = cadastro aceito). O servidor repete a validação sem a confirmação de senha. */
-export function signupErrors(input: SignupInput, { confirmPassword = true } = {}): SignupErrors {
+/** Erros por campo (vazio = cadastro aceito); os campos com * no modelo da Padrão são obrigatórios. O servidor repete. */
+export function signupErrors(input: SignupInput): SignupErrors {
   const errors: SignupErrors = {};
-  const kind = documentKind(input.documento);
+  const pj = input.pessoa === "pj";
   const nome = input.nome.trim();
-  if (!isValidDocument(input.documento)) errors.documento = "Informe um CPF ou CNPJ válido.";
-  if (nome.length < 3) errors.nome = kind === "cnpj" ? "Informe a razão social." : "Informe seu nome completo.";
-  else if (kind === "cpf" && !/\S+\s+\S+/.test(nome)) errors.nome = "Informe nome e sobrenome.";
-  if (!isValidEmail(input.email)) errors.email = "Informe um e-mail válido.";
-  const password = passwordMessage(input.senha);
-  if (password) errors.senha = password;
-  if (confirmPassword && input.confirmacao !== input.senha) errors.confirmacao = "As senhas não conferem.";
-  if (!isValidPhone(input.telefone)) errors.telefone = "Informe o telefone com DDD.";
-  // Só pessoa física: com CNPJ o campo some do formulário e a data não vai para a API.
-  if (kind !== "cnpj" && input.nascimento && !isValidBirthDate(input.nascimento)) errors.nascimento = "Data de nascimento inválida.";
+  if (input.perfil !== "cliente" && input.perfil !== "revendedor") errors.perfil = "Escolha como você se identifica.";
+  if (input.pessoa !== "pf" && !pj) errors.pessoa = "Escolha pessoa física ou jurídica.";
+  if (pj ? !isValidCnpj(input.documento) : !isValidCpf(input.documento)) errors.documento = pj ? "Informe um CNPJ válido." : "Informe um CPF válido.";
+  if (nome.length < 3) errors.nome = pj ? "Informe a razão social." : "Informe seu nome completo.";
+  else if (!pj && !/\S+\s+\S+/.test(nome)) errors.nome = "Informe nome e sobrenome.";
+  if (input.apelido.trim().length < 2) errors.apelido = pj ? "Informe o nome fantasia." : "Informe o nome de exibição.";
+  if (!input.nascimento) errors.nascimento = "Informe a data de nascimento.";
+  else if (!isValidBirthDate(input.nascimento)) errors.nascimento = "Data de nascimento inválida.";
+  if (pj && !isValidCpf(input.cpfResponsavel)) errors.cpfResponsavel = "Informe o CPF do responsável.";
   if (!isValidCep(input.cep)) errors.cep = "Informe um CEP válido.";
-  if (input.logradouro.trim().length < 3) errors.logradouro = "Informe a rua.";
+  if (input.logradouro.trim().length < 3) errors.logradouro = "Informe o endereço.";
   if (!input.numero.trim()) errors.numero = "Informe o número (ou S/N).";
   if (input.bairro.trim().length < 2) errors.bairro = "Informe o bairro.";
   if (input.cidade.trim().length < 2) errors.cidade = "Informe a cidade.";
   if (!isValidUf(input.estado)) errors.estado = "UF inválida.";
+  if (!isValidPhone(input.telefone)) errors.telefone = "Informe o telefone com DDD.";
+  if (input.telefone2.trim() && !isValidPhone(input.telefone2)) errors.telefone2 = "Telefone com DDD, ou deixe em branco.";
+  if (!isValidEmail(input.email)) errors.email = "Informe um e-mail válido.";
+  if (input.emailSecundario.trim() && !isValidEmail(input.emailSecundario)) errors.emailSecundario = "E-mail inválido, ou deixe em branco.";
+  const password = passwordMessage(input.senha);
+  if (password) errors.senha = password;
   return errors;
 }
 

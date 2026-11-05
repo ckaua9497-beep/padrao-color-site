@@ -16,7 +16,7 @@ export default async function SignupPage({ searchParams }: { searchParams: Promi
   if (await getSession()) redirect(returnTo);
 
   return (
-    <AuthShell title="Criar conta" subtitle="Cadastro de pessoa física ou jurídica. Leva menos de 2 minutos." crumb="Criar conta" wide>
+    <AuthShell title="Criar conta" subtitle="Cliente ou revendedor gráfico, pessoa física ou jurídica. Leva poucos minutos." crumb="Criar conta" wide>
       <p className="-mt-2 mb-6 text-sm text-muted">
         Já tem conta?{" "}
         <Link href={`/conta/entrar?volta=${encodeURIComponent(returnTo)}`} className="font-semibold text-ink underline underline-offset-4">

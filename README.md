@@ -218,6 +218,34 @@ direita:
   transportadora de novo e confere o total com o frete; a escolha de entrega ou pagamento que não vale volta com o motivo. A
   confirmar com a Padrão: onde vão o endereço e o serviço da transportadora (hoje dentro do `entrega`).
 
+### Cadastro: cliente ou revendedor gráfico (`src/lib/revenda.ts`)
+
+Fluxo do "Novo modelo de cadastro" da Padrão (PDF de 05/11/2026), em `/conta/cadastro` e na criação de conta do checkout
+(`SignupForm.tsx`):
+- **"Como você se identifica?"**: Cliente ou Revendedor gráfico, cada um com CPF ou CNPJ. O formulário vem com o tipo
+  marcado ("Pessoa Física" / "Pessoa Jurídica") e "Trocar" volta à escolha sem perder o que foi digitado.
+- **Campos do modelo** (os com * são obrigatórios; `signupErrors` em `validation.ts`). Pessoa física: nome completo, nome de
+  exibição, CPF e data de nascimento. Pessoa jurídica: razão social, nome fantasia, CNPJ, inscrição estadual e municipal,
+  ramo de atividade, nome do responsável (opcional), CPF e data de nascimento do responsável. Os dois: CEP, endereço,
+  número, complemento, bairro, cidade, estado, referência, telefone 1 e 2, e-mail principal e secundário, e uma senha só
+  ("Defina sua senha de acesso", com o botão de mostrar).
+- **Cliente final** (CPF ou CNPJ): cadastro normal, preço de cliente.
+- **Revendedor com CPF:** sempre passa pela avaliação da Padrão.
+- **Revendedor com CNPJ:** o servidor consulta o CNPJ na Receita pela BrasilAPI (`src/lib/cnpj-receita.ts`, pública, sem
+  chave, `CNPJ_API_URL` para outro host) e aprova na hora quando ele está ATIVO e tem, como atividade principal ou
+  secundária, um CNAE de `CNAES_REVENDA`. Sem CNAE da lista, situação diferente de ativa ou sem resposta em 8 s: avaliação
+  da Padrão (nunca recusa por isso).
+- **CNAEs:** os 33 códigos da lista da Padrão (Cadu, 05/11/2026), como ela mandou (`CNAES_REVENDA`).
+- **Mini questionário** do revendedor (`QUESTIONARIO_REVENDA`, provisório para a Padrão validar): há quanto tempo revende,
+  como atende, o que mais vende, quanto pretende comprar por mês (obrigatórias), site ou rede social e como conheceu a
+  Padrão. Mude `QUESTIONARIO_VERSAO` quando mudar as perguntas.
+- **Na API** a avaliação é feita no sistema da Padrão: o `POST /cadastrarcliente` leva `perfil` ("CLIENTE FINAL" ou
+  "REVENDEDOR") e, no revendedor, `revenda {situacao: "APROVADO" | "EM ANALISE", motivo, cnaes, questionario}`
+  (`camposDoPerfil`), além dos campos do modelo (`emailsecundario`, `telefone2`, `inscricaomunicipal`, `ramoatividade`,
+  `cpfResponsavel`, `nascimento` do responsável na PJ, `endereco.referencia`). Os nomes `perfil`, `revenda` e `referencia`
+  são provisórios: a Padrão vai informar onde eles ficam. O preço de revenda só aparece quando a Padrão liga a tabela do
+  cliente (`GET /cliente` `tabela`). Depois de criar a conta, o revendedor vê se foi aprovado ou se está em avaliação.
+
 ### Dados do cliente e rota de entrega (`src/lib/cliente.ts`)
 
 - Formato conferido com um `GET /cliente` real (26/10/2026): o saldo vem em `conta_corrente.credito` (o `saldo` antigo ainda

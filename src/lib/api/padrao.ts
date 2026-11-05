@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ApiError, apiDate, apiRequest } from "./client";
+import type { CamposDoPerfil } from "../revenda";
 import type {
   ApiAcabamento,
   ApiCategoria,
@@ -79,7 +80,8 @@ export type CadastroCliente = {
   inscricaoestadual?: string;
   inscricaomunicipal?: string;
   ramoatividade?: string;
-  endereco?: Pick<ApiEndereco, "logradouro" | "numero" | "bairro" | "cidade" | "estado" | "cep"> & { complemento?: string };
+  /** `referencia` é do modelo de cadastro da Padrão (05/11/2026); o PDF da API não traz o campo (a confirmar). */
+  endereco?: Pick<ApiEndereco, "logradouro" | "numero" | "bairro" | "cidade" | "estado" | "cep"> & { complemento?: string; referencia?: string };
   responsavel?: string;
   cpfResponsavel?: string;
   telefone1?: string;
@@ -87,7 +89,7 @@ export type CadastroCliente = {
   emailsecundario?: string;
   tipo?: string;
   nascimento?: string;
-};
+} & Partial<CamposDoPerfil>;
 
 /** Exige Bearer: quem ainda não tem conta é cadastrado com o token da integração. */
 export const cadastrarCliente = (body: CadastroCliente) => apiRequest<Record<string, unknown>>("/cadastrarcliente", { method: "POST", body });

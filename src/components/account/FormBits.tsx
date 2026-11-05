@@ -56,26 +56,45 @@ export function PasswordField({
 }
 
 /** UF em lista (mesma altura do TextField). */
-export function UfSelect({ value, onChange, error, className }: { value: string; onChange: (value: string) => void; error?: string | null; className?: string }) {
+/** Lista de opções com o visual dos campos de texto. */
+export function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  error,
+  placeholder = "—",
+  autoComplete,
+  className,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly string[];
+  error?: string | null;
+  placeholder?: string;
+  autoComplete?: string;
+  className?: string;
+}) {
   const id = useId();
   return (
     <div className={className}>
       <label htmlFor={id} className="mb-1.5 block text-[15px] font-bold">
-        UF
+        {label}
       </label>
       <select
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        autoComplete="address-level1"
+        autoComplete={autoComplete}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-erro` : undefined}
         className={cx("h-[62px] w-full rounded-control border bg-white px-4 text-body transition-colors focus:border-ink", error ? "border-coral-700" : "border-line")}
       >
-        <option value="">—</option>
-        {UFS.map((uf) => (
-          <option key={uf} value={uf}>
-            {uf}
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
           </option>
         ))}
       </select>
@@ -88,7 +107,10 @@ export function UfSelect({ value, onChange, error, className }: { value: string;
   );
 }
 
-/** Bloco de formulário com título (seções do cadastro e da conta). */
+export function UfSelect({ value, onChange, error, label = "UF", className }: { value: string; onChange: (value: string) => void; error?: string | null; label?: string; className?: string }) {
+  return <SelectField label={label} value={value} onChange={onChange} options={UFS} error={error} autoComplete="address-level1" className={className} />;
+}
+
 export function FormSection({ title, description, children, className }: { title: string; description?: string; children: ReactNode; className?: string }) {
   return (
     <fieldset className={cx("min-w-0", className)}>
