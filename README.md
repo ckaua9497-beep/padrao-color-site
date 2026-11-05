@@ -103,16 +103,22 @@ Variáveis novas das outras frentes (conta, pedidos, pagamento) ficam descritas 
   `variations` (opções da variação), `productName`, `productType`, `nomeTrabalho`, `productImage`, `tipoProducao`,
   `desc_trabalho` (a linha da arte e o que o site acrescenta: texto, kit, tamanhos, medida), `nome_trabalho`,
   `productionTime`, `groupCategoryId`, `tratamentoArquivo` e `precoTotalAcabamentos`.
-  - **Retirada como no exemplo:** `entrega: {id, nome}`, com o código da loja no sistema da Padrão (`LOJAS_RETIRADA[].codigo`):
-    "J" = Loja São João, o do exemplo; as outras lojas ainda não têm código e vão com `id: null` e o nome.
+  - **Entrega como o site atual manda** (modelo e códigos da Padrão de 05/11/2026; os pedidos de teste do site novo chegaram
+    sem o tipo de entrega porque o `entrega` ia sem `id`): sempre `entrega: {id, taxaEntrega}`. `id` = código de entrega no
+    sistema da Padrão: "S" = Delivery Padrão (rota), "F" = transportadora e uma letra por loja de retirada
+    (`LOJAS_RETIRADA[].codigo`): "J" São João, "T" Balcão de Niterói, "N" Mesquita, "A" Alcântara, "P" São Pedro, "Z" Juiz de
+    Fora e "V" Balcão de Vitória-ES (o ponto da Serra). `taxaEntrega` = o frete que o pedido cobra: a taxa da rota quando entra
+    no pedido (0 com o pagamento na retirada liberado), o serviço da transportadora, 0 na retirada. A retirada leva também o
+    `nome` da loja (o exemplo de 09/10 traz `{id: "J", nome: "Loja São João"}`).
   - **Pagamento como no exemplo:** `valor` = o que é pago na forma de `tipo` (sem créditos, o total do pedido: itens + frete,
     `totalDoPedido`).
   - **Fora do exemplo, só onde ele não cobre o caso:** `arte.web2print` (pedido da Padrão de 03/11), `credito_usado` no envelope
-    quando a compra usa créditos, e a entrega com endereço (Delivery Padrão, transportadora, multiloja), que segue no formato do
-    site `{tipo, endereco, rota | transportadora, frete}`.
+    quando a compra usa créditos, e, na transportadora ("F", também a multiloja), o `endereco` de entrega e o serviço
+    escolhido (`transportadora {servico, nome, prazo}`, `null` = frete combinado) dentro do `entrega`.
   - **Saíram** `tipo_compra`, `envio`, `nome_trabalho`, `precoTotal` e `frete` do envelope e `unidades`, `largura`, `altura`,
     `area` e `kit` do produto (a medida e o kit foram para o `desc_trabalho`). Pedido guardado na fila no formato antigo sai no
-    formato novo no reenvio (`noFormatoDoExemplo`). As premissas ainda abertas estão no comentário do arquivo.
+    formato novo no reenvio (`noFormatoDoExemplo`), inclusive a entrega (a do site e a retirada `{id, nome}` viram
+    `{id, taxaEntrega}`). As premissas ainda abertas estão no comentário do arquivo.
 - **Arte feita no Web to Print** (pedido da Padrão de 03/11/2026, aba "Melhorias"): cada produto do pedido leva
   `arte.web2print` "SIM" quando a arte foi montada no editor do site (o item leva o PDF que o site gera, `kind: "pdf"`, no
   gabarito ou na área da arte) e "NAO" com arquivo pronto do cliente, criação pela equipe ou produto sem arquivo
@@ -207,11 +213,10 @@ direita:
   ou o `conta_corrente` do `GET /cliente`) e divide. No pedido: `credito_usado` no envelope (só quando há créditos; o exemplo
   da Padrão não cobre o caso) e `pagamento.valor` = o que é pago na forma escolhida; pago todo em crédito, `pagamento.tipo`
   "Crédito" com o valor dos créditos. Esses nomes estão a confirmar com a Padrão.
-- **No pedido** (`orders.ts`): retirada como no exemplo da Padrão, `entrega {id: código da loja, nome}` ("J" = São João; as
-  outras ainda sem código, `id: null`); com endereço, `entrega {tipo, endereco, rota | transportadora, frete}`, com o frete somado
-  ao `pagamento.valor`. O servidor cota a transportadora de novo e confere o total com o frete; a escolha de entrega ou
-  pagamento que não vale volta com o motivo. A confirmar com a Padrão: os códigos das outras lojas e o formato da entrega com
-  endereço.
+- **No pedido** (`orders.ts`): `entrega {id, taxaEntrega}` com o código de entrega da Padrão ("S" rota, "F" transportadora, a
+  letra da loja na retirada; ver "Pedido" acima), com a `taxaEntrega` somada ao `pagamento.valor`. O servidor cota a
+  transportadora de novo e confere o total com o frete; a escolha de entrega ou pagamento que não vale volta com o motivo. A
+  confirmar com a Padrão: onde vão o endereço e o serviço da transportadora (hoje dentro do `entrega`).
 
 ### Dados do cliente e rota de entrega (`src/lib/cliente.ts`)
 

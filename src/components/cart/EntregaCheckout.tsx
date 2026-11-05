@@ -6,7 +6,7 @@ import { TextField } from "@/components/ui/TextField";
 import { cx } from "@/components/ui/cx";
 import { formatCep } from "@/lib/api/validation";
 import type { RotaDoCliente } from "@/lib/cliente";
-import { LOJAS_RETIRADA, MODO_ENTREGA, type ModoEntrega } from "@/lib/entrega";
+import { LOJAS_RETIRADA, MODO_ENTREGA, textoDoCodigoDeEntrega, type ModoEntrega } from "@/lib/entrega";
 import { formatBRL } from "@/lib/format";
 import type { OpcaoEntrega } from "@/lib/frete-pedido";
 import type { DeliveryAddress, EntregaDoPedido } from "@/lib/orders";
@@ -48,15 +48,12 @@ export function addressText(address: DeliveryAddress): string {
   return [street, address.bairro, `${address.cidade}/${address.estado}`, address.cep ? `CEP ${formatCep(address.cep)}` : ""].filter(Boolean).join(" · ");
 }
 
-/** A entrega do pedido em uma linha (simulação do checkout). Retirada como no exemplo da Padrão: o código e o nome da loja. */
+/** A entrega do pedido em uma linha (simulação do checkout): o código de entrega da Padrão, o que ele quer dizer e a taxa. */
 export function entregaTexto(entrega: EntregaDoPedido): string {
-  if (!("tipo" in entrega)) return `Retirada · ${entrega.nome} · código da loja ${entrega.id ?? "a confirmar com a Padrão"} · sem frete`;
-  const partes: string[] = [entrega.tipo];
-  if (entrega.rota) partes.push(entrega.rota.nome);
-  if (entrega.loja) partes.push(entrega.loja.nome);
+  const partes: string[] = [`${entrega.id} = ${textoDoCodigoDeEntrega(entrega.id)}`];
   if (entrega.transportadora) partes.push(`${entrega.transportadora.nome} (${entrega.transportadora.prazo})`);
   if (entrega.endereco) partes.push(addressText(entrega.endereco));
-  partes.push(entrega.frete ? `frete ${formatBRL(entrega.frete)}` : "sem frete no pedido");
+  partes.push(entrega.taxaEntrega ? `taxaEntrega ${formatBRL(entrega.taxaEntrega)}` : "taxaEntrega 0 (sem frete no pedido)");
   return partes.join(" · ");
 }
 

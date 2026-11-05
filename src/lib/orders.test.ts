@@ -24,9 +24,11 @@ import {
   totalDoPedido,
   totalsDiffer,
   type LinePrices,
+  type OrderDelivery,
   type OrderItemInput,
   type PricedLine,
 } from "./orders.ts";
+import { LOJAS_RETIRADA } from "./entrega.ts";
 
 const CARDS: Variation[] = [
   { id: 22, p: 65.19, pe: 70.4, q: 1000, d: 3, de: 1, v: { Papel: "Couchê 250g", Formato: "9x5 cm" } },
@@ -202,9 +204,9 @@ test("payload do POST /gerarpedido no formato do exemplo aceito da Padrão", () 
   assert.equal(payload.idCliente, 575);
   assert.deepEqual(payload.pagamento, { tipo: "PIX", valor: 180.38, status: 0 }, "como no exemplo: valor = o total pago na forma");
   assert.equal(totalDoPedido(payload), 180.38, "130,38 + 50 (banner de 0,8 m² cobra o mínimo de 1 m²), sem desconto no PIX");
-  assert.deepEqual(payload.entrega, { id: null, nome: "Loja Alcântara - RJ" }, "retirada como no exemplo; código da Alcântara ainda não veio");
+  assert.deepEqual(payload.entrega, { id: "A", taxaEntrega: 0, nome: "Loja Alcântara - RJ" }, "retirada: o código de entrega da loja, sem taxa");
   const saoJoao = buildOrderPayload({ customerId: 575, lines: [cards], method: "retirada", delivery: { tipo: "Retirada", endereco: null, loja: { id: 3, nome: "Loja São João" }, frete: 0 } });
-  assert.deepEqual(saoJoao.entrega, { id: "J", nome: "Loja São João" }, "o código da loja do exemplo");
+  assert.deepEqual(saoJoao.entrega, { id: "J", taxaEntrega: 0, nome: "Loja São João" });
   assert.deepEqual(saoJoao.pagamento, { tipo: "Pagamento na Retirada", valor: 130.38, status: 0 });
   for (const produto of payload.produtos) {
     assert.deepEqual(Object.keys(produto).sort(), [...PRODUTO_DO_EXEMPLO].sort(), "só os campos do produto do exemplo");
@@ -286,15 +288,19 @@ test("pedido guardado na fila no formato antigo sai no formato do exemplo", () =
   };
   const convertido = noFormatoDoExemplo(antigo);
   assert.deepEqual(Object.keys(convertido), [...ENVELOPE_DO_EXEMPLO, "credito_usado"]);
-  assert.deepEqual(convertido.entrega, { id: "J", nome: "Loja São João" });
+  assert.deepEqual(convertido.entrega, { id: "J", taxaEntrega: 0, nome: "Loja São João" });
   assert.deepEqual(convertido.pagamento, { tipo: "Cartão de Crédito", valor: 30.38, status: 0 });
   assert.deepEqual(Object.keys(convertido.produtos[0]).sort(), [...PRODUTO_DO_EXEMPLO].sort());
   // Pago todo em crédito no formato antigo (valor 0): o valor passa a ser o dos créditos.
   const tudo = noFormatoDoExemplo({ ...antigo, pagamento: { tipo: "Crédito", valor: 0, status: 0, forma: "credito", parcelas: 1, credito: 130.38 }, credito_usado: 130.38 });
   assert.deepEqual(tudo.pagamento, { tipo: "Crédito", valor: 130.38, status: 0 });
-  // Entrega com endereço: continua a do site, com o frete dentro.
+  // Entrega no formato do site (até 03/11) e retirada {id, nome} (03 a 05/11): saem com o código de entrega da Padrão.
   const rota = { tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "VERDE", taxa: 17, cobrada: true }, frete: 17 };
-  assert.deepEqual(noFormatoDoExemplo({ ...antigo, entrega: rota, frete: 17 }).entrega, rota);
+  assert.deepEqual(noFormatoDoExemplo({ ...antigo, entrega: rota, frete: 17 }).entrega, { id: "S", taxaEntrega: 17 });
+  const sedex = { tipo: "Transportadora", endereco: ENDERECO, transportadora: { servico: 2, nome: "Correios SEDEX", prazo: "1 a 3 dias úteis" }, frete: 10.16 };
+  assert.deepEqual(noFormatoDoExemplo({ ...antigo, entrega: sedex }).entrega, { id: "F", taxaEntrega: 10.16, endereco: ENDERECO, transportadora: sedex.transportadora });
+  assert.deepEqual(noFormatoDoExemplo({ ...antigo, entrega: { id: null, nome: "Loja Mesquita" } }).entrega, { id: "N", taxaEntrega: 0, nome: "Loja Mesquita" });
+  assert.deepEqual(noFormatoDoExemplo({ ...antigo, entrega: { id: "J", nome: "Loja São João" } }).entrega, { id: "J", taxaEntrega: 0, nome: "Loja São João" });
 });
 
 test("entrada do checkout: usarCredito só com true", () => {
@@ -430,10 +436,26 @@ test("transportadora: cobra o serviço cotado agora; sem cotação, frete combin
   assert.equal(orderDelivery({ kind: "transportadora", address: null, servico: null }, { registered: null, rota: VERDE }), SEM_ENDERECO);
 });
 
+test("entrega no formato da Padrão: {id, taxaEntrega} com o código de entrega (modelo de 05/11/2026)", () => {
+  const cards = line(item(), cardPrices);
+  const pedido = (delivery: OrderDelivery) => buildOrderPayload({ customerId: 1, lines: [cards], method: "pix", delivery });
+  const rota = pedido({ tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "Rota Verde", taxa: 17, cobrada: true }, frete: 17 });
+  assert.deepEqual(rota.entrega, { id: "S", taxaEntrega: 17 }, "Delivery Padrão: 'S', a taxa da rota cobrada no pedido");
+  const naEntrega = pedido({ tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "Rota Preta", taxa: 17, cobrada: false }, frete: 0 });
+  assert.deepEqual(naEntrega.entrega, { id: "S", taxaEntrega: 0 }, "como no modelo: pagamento na retirada liberado, taxa fora do pedido");
+  const sedex = { servico: 2, nome: "Correios SEDEX", prazo: "1 a 3 dias úteis" };
+  assert.deepEqual(pedido({ tipo: "Transportadora", endereco: ENDERECO, transportadora: sedex, frete: 10.16 }).entrega, { id: "F", taxaEntrega: 10.16, endereco: ENDERECO, transportadora: sedex });
+  assert.deepEqual(pedido({ tipo: "Transportadora", endereco: ENDERECO, transportadora: null, frete: 0 }).entrega, { id: "F", taxaEntrega: 0, endereco: ENDERECO, transportadora: null }, "frete combinado");
+  assert.deepEqual(pedido({ tipo: "Entrega", endereco: ENDERECO }).entrega, { id: "F", taxaEntrega: 0, endereco: ENDERECO, transportadora: null }, "multiloja e checkout antigo: no endereço, por transportadora");
+  const codigos = LOJAS_RETIRADA.map((loja) => pedido({ tipo: "Retirada", endereco: null, loja: { id: loja.id, nome: loja.nome }, frete: 0 }).entrega.id);
+  assert.deepEqual(codigos, ["J", "T", "N", "A", "P", "Z", "V"], "São João, Niterói, Mesquita, Alcântara, São Pedro, Juiz de Fora e Serra-ES (Vitória)");
+  assert.deepEqual(pedido({ tipo: "Retirada", endereco: null }).entrega, { id: "J", taxaEntrega: 0, nome: "Loja São João" }, "pedido antigo sem loja: São João");
+});
+
 test("frete entra no total do pedido e no pagamento", () => {
   const cards = line(item(), cardPrices);
   const payload = buildOrderPayload({ customerId: 1, lines: [cards], method: "pix", delivery: { tipo: "Delivery Padrão", endereco: ENDERECO, rota: { nome: "Rota Verde", taxa: 17, cobrada: true }, frete: 17 } });
-  assert.equal(freteDoPedido(payload.entrega), 17, "o frete fica na entrega com endereço");
+  assert.equal(freteDoPedido(payload.entrega), 17, "o frete é a taxaEntrega");
   assert.equal(totalDoPedido(payload), Math.round((cards.total + 17) * 100) / 100);
   assert.equal(payload.pagamento.valor, totalDoPedido(payload));
 });

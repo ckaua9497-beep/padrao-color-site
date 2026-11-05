@@ -6,7 +6,7 @@ import { areaQuote, areaRules, cleanOptionLabel } from "./pricing.ts";
 import { isValidCep, isValidUf, onlyDigits } from "./api/validation.ts";
 import { aceiteValido, levaArte, textoDoAceite, type AceiteTermos } from "./termos-arte.ts";
 import { addBusinessDays, brDate, brasiliaClock, feriadosNacionais, inicioDaContagem, type Relogio } from "./dias-uteis.ts";
-import { LOJA_PADRAO, lojaRetirada, pagaNaRetiradaPermitido, type ModoEntrega } from "./entrega.ts";
+import { ENTREGA_ROTA, ENTREGA_TRANSPORTADORA, LOJAS_RETIRADA, LOJA_PADRAO, lojaDoCodigo, lojaRetirada, pagaNaRetiradaPermitido, type ModoEntrega } from "./entrega.ts";
 import type { RotaDoCliente } from "./cliente";
 import type { OpcaoFrete } from "./frete";
 
@@ -24,7 +24,7 @@ import type { OpcaoFrete } from "./frete";
  *   limpo), productName, productType, nomeTrabalho, productImage, tipoProducao ("expresso"/"economico"), desc_trabalho,
  *   nome_trabalho, productionTime (dias úteis), groupCategoryId, tratamentoArquivo e precoTotalAcabamentos.
  * - Fora do exemplo, só onde ele não cobre o caso: `arte.web2print` (pedido da Padrão de 03/11/2026), `credito_usado`
- *   no envelope quando a compra usa créditos, e a entrega com endereço (o exemplo só tem a retirada na loja).
+ *   no envelope quando a compra usa créditos, e o endereço e o serviço da transportadora em `entrega`.
  * Premissas a confirmar com a Padrão (trocar aqui):
  * - arte.tipo = 1 com a arte do cliente (o exemplo traz 1 com anexo); sem arquivo, vai com anexos vazio (cliente manda
  *   depois). Criação de arte pela equipe (preço da variação, `criacao_arte`): arte.tipo = 2 e arte.preco = o preço dela,
@@ -42,10 +42,13 @@ import type { OpcaoFrete } from "./frete";
  * - Acabamentos extras (acabamentos.ts): o valor vai em precoTotalAcabamentos e a lista em desc_trabalho
  *   ("Acabamentos: Serrilha (2×)…"); precoTotal do item = price × quantidade (só o produto). O prazo dos acabamentos
  *   entra em productionTime e na previsão.
- * - entrega (entregaDoPedido): na retirada, como no exemplo, {id: código da loja no sistema da Padrão, nome} ("J" =
- *   Loja São João; os outros códigos ainda não vieram e vão null, com o nome). Com endereço, o formato do site:
- *   {tipo: "Delivery Padrão" | "Transportadora" | "Entrega", endereco, rota {nome, taxa, cobrada}, transportadora
- *   {servico, nome, prazo}, frete}; o frete (taxa da rota cobrada ou transportadora) entra no pagamento.valor.
+ * - entrega (entregaDoPedido): sempre {id, taxaEntrega}, como o site atual manda (modelo e códigos da Padrão de
+ *   05/11/2026: os pedidos de teste do site novo chegaram sem o tipo de entrega porque iam sem `id`). id "S" = Delivery
+ *   Padrão (rota), "F" = transportadora, a letra da loja na retirada ("J" = Loja São João…, entrega.ts). taxaEntrega = o
+ *   frete que o pedido cobra: a taxa da rota quando ela entra no pedido (0 com o pagamento na retirada liberado), o
+ *   serviço da transportadora cotado, 0 na retirada; entra no pagamento.valor. A retirada leva também o nome da loja (o
+ *   exemplo de 09/10 traz {id: "J", nome: "Loja São João"}); a transportadora, o endereço de entrega e o serviço
+ *   escolhido (endereco, transportadora {servico, nome, prazo} | null = frete combinado), que o modelo não tem.
  * - pagamento "retirada": tipo "Pagamento na Retirada" (como no exemplo), só com a liberação no cadastro, no Delivery
  *   Padrão ou numa loja própria. Pix e cartão: "PIX" e "Cartão de Crédito" (nomes a confirmar). Sem boleto (a Padrão
  *   não trabalha com boleto, 26/10/2026). status 0 = aguardando.
@@ -441,8 +444,18 @@ export type OrderProduct = {
 /** Como no exemplo da Padrão: valor = o que é pago na forma `tipo` (sem créditos, o total do pedido). */
 export type OrderPayment = { tipo: string; valor: number; status: number };
 
-/** Retirada como no exemplo ({id: "J", nome: "Loja São João"}; id null = código ainda não informado); com endereço, a do site. */
-export type EntregaDoPedido = { id: string | null; nome: string } | OrderDelivery;
+/**
+ * Entrega do pedido como o site atual da Padrão manda: {id: código de entrega, taxaEntrega: frete cobrado no pedido}
+ * ("S" rota, "F" transportadora, a letra da loja na retirada). A retirada leva o nome da loja; a transportadora, o
+ * endereço e o serviço.
+ */
+export type EntregaDoPedido = {
+  id: string;
+  taxaEntrega: number;
+  nome?: string;
+  endereco?: DeliveryAddress;
+  transportadora?: { servico: number; nome: string; prazo: string } | null;
+};
 
 /** O pedido no formato do exemplo aceito (cabeçalho do arquivo). */
 export type OrderPayload = {
@@ -457,15 +470,20 @@ export type OrderPayload = {
   credito_usado?: number;
 };
 
-/** Entrega do pedido: na retirada, o código e o nome da loja, como no exemplo; com endereço, como o site calculou. */
+/** Entrega do pedido no formato da Padrão; o pedido antigo sem loja retira em São João de Meriti. */
 export function entregaDoPedido(delivery: OrderDelivery): EntregaDoPedido {
-  if (delivery.tipo !== "Retirada") return delivery;
-  const loja = lojaRetirada(delivery.loja?.id ?? LOJA_PADRAO);
-  return { id: loja?.codigo ?? null, nome: loja?.nome ?? delivery.loja?.nome ?? "" };
+  if (delivery.tipo === "Retirada") {
+    const loja = lojaRetirada(delivery.loja?.id) ?? lojaRetirada(LOJA_PADRAO)!;
+    return { id: loja.codigo, taxaEntrega: 0, nome: loja.nome };
+  }
+  const taxaEntrega = round2(Math.max(0, delivery.frete ?? 0));
+  if (delivery.tipo === "Delivery Padrão") return { id: ENTREGA_ROTA, taxaEntrega };
+  // Transportadora, e a entrega no endereço do checkout antigo e da multiloja (sempre por transportadora).
+  return { id: ENTREGA_TRANSPORTADORA, taxaEntrega, ...(delivery.endereco ? { endereco: delivery.endereco } : {}), transportadora: delivery.transportadora ?? null };
 }
 
-/** Frete do pedido: só a entrega com endereço tem (a retirada nunca cobra). */
-export const freteDoPedido = (entrega: EntregaDoPedido): number => ("frete" in entrega ? round2(entrega.frete ?? 0) : 0);
+/** Frete do pedido: a taxaEntrega (a retirada nunca cobra). */
+export const freteDoPedido = (entrega: EntregaDoPedido): number => round2(Math.max(0, Number(entrega.taxaEntrega) || 0));
 
 /** Total do pedido: os itens (produto, acabamentos e criação de arte) mais o frete; = pagamento.valor + credito_usado. */
 export function totalDoPedido(payload: Pick<OrderPayload, "produtos" | "entrega">): number {
@@ -583,15 +601,27 @@ const ENVELOPE_DO_EXEMPLO = ["data", "hora", "entrega", "previsao", "produtos", 
 const PRODUTO_FORA_DO_EXEMPLO = ["unidades", "largura", "altura", "area", "kit"];
 
 /**
+ * Entrega guardada na fila em qualquer formato anterior → {id, taxaEntrega}: a do site ({tipo, endereco, rota |
+ * transportadora, frete}, até 03/11/2026) e a retirada {id: "J" | null, nome} (de 03 a 05/11/2026). Já no formato de
+ * hoje, passa igual.
+ */
+function entregaGuardada(entrega: Record<string, unknown>): EntregaDoPedido {
+  if (typeof entrega.tipo === "string") return entregaDoPedido(entrega as OrderDelivery);
+  if (typeof entrega.id === "string" && typeof entrega.taxaEntrega === "number") return entrega as EntregaDoPedido;
+  const loja = lojaDoCodigo(entrega.id) ?? LOJAS_RETIRADA.find((l) => l.nome === entrega.nome);
+  return entregaDoPedido({ tipo: "Retirada", endereco: null, ...(loja ? { loja: { id: loja.id, nome: loja.nome } } : {}) });
+}
+
+/**
  * Pedido guardado na fila antes do alinhamento ao exemplo (03/11/2026): sai no formato de hoje. Tira tipo_compra, envio,
- * nome_trabalho, precoTotal e frete do envelope (o frete continua na entrega com endereço), os extras dos produtos e
- * forma/parcelas/credito do pagamento; a retirada vira {id, nome}. O pedido já no formato novo passa igual.
+ * nome_trabalho, precoTotal e frete do envelope (o frete vai na taxaEntrega), os extras dos produtos e
+ * forma/parcelas/credito do pagamento; a entrega vira {id, taxaEntrega} (entregaGuardada). O pedido já no formato novo
+ * passa igual.
  */
 export function noFormatoDoExemplo(guardado: OrderPayload | Record<string, unknown>): OrderPayload {
   const antigo = guardado as Record<string, unknown> & { entrega?: unknown; produtos?: unknown[]; pagamento?: Record<string, unknown> };
   const envelope = Object.fromEntries(ENVELOPE_DO_EXEMPLO.filter((campo) => campo in antigo).map((campo) => [campo, antigo[campo]])) as OrderPayload;
-  const entrega = antigo.entrega as Record<string, unknown> | undefined;
-  if (entrega && entrega.tipo === "Retirada") envelope.entrega = entregaDoPedido(entrega as OrderDelivery);
+  if (isRecord(antigo.entrega)) envelope.entrega = entregaGuardada(antigo.entrega);
   envelope.produtos = (antigo.produtos ?? []).map((produto) => Object.fromEntries(Object.entries(produto as Record<string, unknown>).filter(([campo]) => !PRODUTO_FORA_DO_EXEMPLO.includes(campo)))) as OrderProduct[];
   const pagamento = antigo.pagamento ?? {};
   const credito = Number(antigo.credito_usado ?? pagamento.credito ?? 0);
